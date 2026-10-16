@@ -36,6 +36,8 @@ import type {
 const BASE = "https://connect-api.cloud.huawei.com/api";
 const COMPILE_TIMEOUT_MS = 15 * 60 * 1000; // 编译轮询上限（AGC 文档 ~2 分钟，留余量）
 const COMPILE_POLL_MS = 15_000;
+/** AppTest 测试群组 API 前缀（与 publish API 同域不同路径段） */
+const APP_TEST_BASE = "https://connect-api.cloud.huawei.com/api/app-test/v1";
 
 /** AGC 返回体外壳（ret.code !== 0 即失败） */
 interface AgcRet {
@@ -89,6 +91,15 @@ interface TestVersionResp extends AgcRet {
 /** Testing API：添加测试软件包响应 */
 interface TestPkgResp extends AgcRet {
   pkgVersion?: string[];
+}
+
+/** AppTest 测试群组列表响应（rtnCode 外壳，非 publish API 的 ret.code） */
+interface TestGroupListResp {
+  rtnCode?: number | string;
+  rtnDesc?: string;
+  businessCode?: number | string;
+  groups?: Array<{ groupId?: string; groupName?: string; groupType?: number }>;
+  pageInfo?: { current?: number; pageSize?: number; totalRecord?: number; totalPage?: number };
 }
 
 /** AGC JSON API 封装：判 ret.code !== 0 抛错 —— v1 agc.mjs agcJson 原样 */
@@ -204,7 +215,9 @@ export class AgcHarmonyChannel implements Channel {
         action: "stage-only",
         afterApproval: "none(beta)",
         notes:
-          "Testing API 邀请测试：上传→新建测试版本→绑定软件包；提交审核与测试群组到控制台完成，不自动提审",
+          ctx.target.submitTest === "true"
+            ? "Testing API 邀请测试：上传→新建测试版本→绑定软件包→（可选绑测试群组）自动提交测试审核"
+            : "Testing API 邀请测试：上传→新建测试版本→绑定软件包；提交审核与测试群组到控制台完成，不自动提审",
       };
     }
     return {
@@ -235,7 +248,7 @@ export class AgcHarmonyChannel implements Channel {
       return {
         ok: false,
         error:
-          "AGC 测试发布（releaseType=6）不做自动提审，请到 AGC 控制台「测试」提交测试版本并指定测试群组",
+          "AGC 测试发布（releaseType=6）的自动提审走 beta 配置 test['agc-harmony'].submit=true（上传绑定后自动提交测试版本审核）",
       };
     }
     const { clientId, token, headers } = await this.authHeaders(ctx);
@@ -419,8 +432,8 @@ export class AgcHarmonyChannel implements Channel {
   /**
    * 测试发布（releaseType=6，2026-10 起走 Testing API——旧 app-package-info 直绑链路已被华为下线，
    * 其 releaseType 枚举仅剩 1=全网 / 7=企业非公开）：
-   * 上传 .hap → 新建测试版本（testType=3 邀请测试）→ 添加测试软件包 → 等云端编译 → 更新测试版本绑定；
-   * 不自动提交审核，测试群组/邀请码由控制台人工完成。
+   * 上传 .app → 新建测试版本（testType 3=邀请测试 4=公开测试）→ 添加测试软件包 → 等云端编译 → 更新测试版本绑定；
+   * target.submitTest='true' 时：（可选按 testGroup 绑测试群组）自动提交测试版本审核；否则由控制台人工完成。
    */
   private async uploadBeta(
     ctx: ChannelContext,
@@ -477,7 +490,8 @@ export class AgcHarmonyChannel implements Channel {
     }
     ctx.emit({ type: "progress", detail: "文件上传完成" });
 
-    // step 1：新建测试版本（releaseType=6 HarmonyOS 测试发布；testType 3=邀请测试 4=公开测试）
+    // step 1：新建测试版本（releaseType=6 HarmonyOS 测试发布；testType 3=邀请测试 4=公开测试，target.testType 透传）
+    const testType = ctx.target.testType === "4" ? 4 : 3;
     const verJson = await agcJson<TestVersionResp>(
       `${BASE}/publish/v2/test/app/version?appId=${encodeURIComponent(appId)}`,
       {
@@ -485,7 +499,7 @@ export class AgcHarmonyChannel implements Channel {
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify({
           releaseType: 6,
-          testType: 3,
+          testType,
           testDesc: (ctx.updateDescription ?? "applift 测试发布").slice(0, 50),
         }),
       },
@@ -526,12 +540,90 @@ export class AgcHarmonyChannel implements Channel {
       "绑定测试软件包",
     );
 
+    // step 5（可选，target.submitTest='true'）：绑定测试群组 → 提交测试审核
+    // 提审接口：POST /api/publish/v2/test/app/version/submit?appId=xx，body { versionId }
+    if (ctx.target.submitTest === "true") {
+      const groupName = ctx.target.testGroup?.trim();
+      if (groupName) {
+        const groupId = await this.resolveTestGroupId(ctx, appId, groupName, headers);
+        // 群组绑定走「更新测试版本」openTestInfo.testTaskInfo.groupInfos（Testing API 文档结构，仅传确认过的字段）
+        await agcJson(
+          `${BASE}/publish/v2/test/app/version?appId=${encodeURIComponent(appId)}`,
+          {
+            method: "PUT",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              versionId,
+              pkgId,
+              openTestInfo: { testTaskInfo: { groupInfos: [{ groupId, groupName }] } },
+            }),
+          },
+          "绑定测试群组",
+        );
+        ctx.emit({
+          type: "progress",
+          detail: `测试群组「${groupName}」已绑定（groupId: ${groupId}）`,
+        });
+      }
+      ctx.emit({ type: "phase", phase: "submit", message: "提交测试版本审核…" });
+      await agcJson(
+        `${BASE}/publish/v2/test/app/version/submit?appId=${encodeURIComponent(appId)}`,
+        {
+          method: "POST",
+          headers: { ...headers, "Content-Type": "application/json" },
+          body: JSON.stringify({ versionId }),
+        },
+        "提交测试审核",
+      );
+      ctx.emit({
+        type: "phase",
+        phase: "done",
+        message: `测试版本已提交审核（versionId: ${versionId}）`,
+      });
+      return { ok: true, ref: versionId };
+    }
+
     ctx.emit({
       type: "phase",
       phase: "done",
-      message: "测试版本已就绪（未提交审核）；到 AGC 控制台「测试」提交并指定测试群组",
+      message:
+        "测试版本已就绪（未提交审核）；到控制台提交或配置 test['agc-harmony'].submit 自动提审",
     });
     return { ok: true, ref: versionId };
+  }
+
+  /**
+   * 按群组名查测试群组 groupId（AppTest API GET /test-group/list，appId 走 header，rtnCode 外壳）。
+   * 分页遍历；匹配不到报错提示到控制台建组。
+   * 文档: agc-help-test-api-get-test-grouplist-0000002271000717
+   */
+  private async resolveTestGroupId(
+    ctx: ChannelContext,
+    appId: string,
+    groupName: string,
+    headers: Record<string, string>,
+  ): Promise<string> {
+    ctx.emit({ type: "progress", detail: `按群组名「${groupName}」查询 AGC 测试群组…` });
+    for (let current = 1; current <= 50; current++) {
+      const qs = new URLSearchParams({ current: String(current), pageSize: "50" });
+      const res = await fetch(`${APP_TEST_BASE}/test-group/list?${qs}`, {
+        headers: { ...headers, appId },
+      });
+      if (!res.ok) throw new Error(`AGC 查询测试群组失败 HTTP ${res.status}`);
+      const json = (await res.json()) as TestGroupListResp;
+      if (Number(json.rtnCode) !== 0) {
+        throw new Error(
+          `AGC 查询测试群组失败: rtnCode=${json.rtnCode ?? "?"}${json.rtnDesc ? ` ${json.rtnDesc}` : ""}`,
+        );
+      }
+      const hit = json.groups?.find((g) => g.groupName === groupName);
+      if (hit?.groupId) return hit.groupId;
+      const totalPage = json.pageInfo?.totalPage ?? current;
+      if (current >= totalPage) break;
+    }
+    throw new Error(
+      `AGC 未找到名为「${groupName}」的测试群组：到 AGC 控制台「测试 → 测试群组」创建后再试`,
+    );
   }
 
   /** v1 更新文案段（releaseHarmonyApp step 4 / uploadToAgc 尾段）：查默认语言 → 写 newFeatures，失败仅警告不阻断 */

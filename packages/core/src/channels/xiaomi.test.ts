@@ -18,6 +18,8 @@ const certPath = path.join(tmp, "mi-cert.pem");
 const keyPath = path.join(tmp, "mi-key.pem");
 const apkPath = path.join(tmp, "app-release.apk");
 const apkBytes = Buffer.from("fake-apk-bytes-for-xiaomi");
+const iconPath = path.join(tmp, "icon.png");
+fs.writeFileSync(iconPath, Buffer.from("fake-icon-bytes"));
 
 const PASSWORD = "mi-pass-123";
 const CREDS = {
@@ -68,7 +70,7 @@ function makeCtx(
 ) {
   return makeTestCtx({
     credentials: { ...CREDS, ...overrides.credentials },
-    target: { pkgName: "com.qianyun.driver", ...overrides.target },
+    target: { pkgName: "com.qianyun.driver", icon: iconPath, ...overrides.target },
     artifactPath: apkPath,
     updateDescription: overrides.updateDescription,
   });
@@ -277,7 +279,10 @@ describe("XiaomiChannel.submit", () => {
       expect(pSig?.sig).toEqual([
         { name: "RequestData", hash: md5String(form.get("RequestData") as string) },
         { name: "apk", hash: md5File(apkPath) },
+        { name: "icon", hash: md5File(iconPath) },
       ]);
+      const iconBlob = form.get("icon") as Blob;
+      expect(iconBlob.size).toBe(15);
       const blob = form.get("apk") as Blob;
       expect(blob.size).toBe(apkBytes.length);
       expect(String(events[1]?.detail ?? "")).toContain("com.qianyun.driver");
@@ -386,7 +391,7 @@ describe("XiaomiChannel.submit", () => {
           MI_CERT_PATH: certPath,
           MI_APP_NAME: "千云司机端",
         },
-        target: { pkgName: "com.qianyun.driver" },
+        target: { pkgName: "com.qianyun.driver", icon: iconPath },
         artifactPath: apkPath,
         updateDescription: "别名键回归验证",
       }).ctx;
@@ -396,6 +401,34 @@ describe("XiaomiChannel.submit", () => {
         password: string;
       };
       expect(pSig.password).toBe(PASSWORD);
+    } finally {
+      restore();
+    }
+  });
+
+  it("未配置 icon → 中止并提示配置位置（官方必选，apkgo 同）", async () => {
+    const { restore } = mockFetch([
+      { match: "/dev/query", response: { json: { result: 0 } } },
+      { match: "/dev/push", response: { json: { result: 0 } } },
+    ]);
+    try {
+      const ctx = makeCtx({ target: { icon: "" } }).ctx;
+      await expect(new XiaomiChannel().submit(ctx)).rejects.toThrow(
+        "小米提审缺少 icon：applift.config.ts → android.stores.xiaomi.icon",
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it("icon 文件不存在 → 中止报路径", async () => {
+    const { restore } = mockFetch([
+      { match: "/dev/query", response: { json: { result: 0 } } },
+      { match: "/dev/push", response: { json: { result: 0 } } },
+    ]);
+    try {
+      const ctx = makeCtx({ target: { icon: "/nonexistent/icon.png" } }).ctx;
+      await expect(new XiaomiChannel().submit(ctx)).rejects.toThrow("小米 icon 文件不存在");
     } finally {
       restore();
     }

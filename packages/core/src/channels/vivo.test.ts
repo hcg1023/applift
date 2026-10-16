@@ -82,7 +82,7 @@ function expectSigned(params: URLSearchParams | FormData, business: Record<strin
   expect(get("timestamp")).toBe(String(NOW)); // 毫秒级
   expect(get("format")).toBe("json");
   expect(get("v")).toBe("1.0");
-  expect(get("sign_method")).toBe("hmac"); // 对拍 python _vivo_common.build_common_params
+  expect(get("sign_method")).toBe("HMAC-SHA256"); // 与官方文档及 apkgo 一致
   expect(get("target_app_key")).toBe("developer");
   for (const [k, v] of Object.entries(business)) expect(get(k)).toBe(v);
   const unsigned: Record<string, string> = {};
@@ -140,8 +140,8 @@ describe("VivoChannel.status", () => {
     return [{ match: API_BASE, response: { json: { code: 0, subCode: 0, data } } }];
   }
 
-  it("请求形状：复用 app.query.details（未确证的 app.audit.status 已删）、body packageName、公共参数+签名", async () => {
-    const mf = mockFetch(statusRoutes({ auditStatus: 1 }));
+  it("请求形状：复用 app.query.details、body packageName、公共参数+签名（sign_method=HMAC-SHA256）", async () => {
+    const mf = mockFetch(statusRoutes({ status: 2 }));
     await expect(
       new VivoChannel().status(makeTestCtx({ credentials: CREDS, target: TARGET }).ctx),
     ).resolves.toEqual({
@@ -151,11 +151,12 @@ describe("VivoChannel.status", () => {
     expect(call.method).toBe("POST");
     expect(call.headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
     const params = new URLSearchParams(call.body as string);
+    expect(params.get("sign_method")).toBe("HMAC-SHA256");
     expectSigned(params, { method: "app.query.details", packageName: TARGET.pkgName });
   });
 
-  it("auditStatus=0 → approved live", async () => {
-    mockFetch(statusRoutes({ auditStatus: 0 }));
+  it("status=3 → approved live（apkgo mapVivoAuditState）", async () => {
+    mockFetch(statusRoutes({ status: 3 }));
     await expect(
       new VivoChannel().status(makeTestCtx({ credentials: CREDS, target: TARGET }).ctx),
     ).resolves.toEqual({
@@ -164,8 +165,8 @@ describe("VivoChannel.status", () => {
     });
   });
 
-  it("auditStatus=2 → rejected（auditMessage 作 reason）", async () => {
-    mockFetch(statusRoutes({ auditStatus: 2, auditMessage: "应用描述不合规" }));
+  it("status=4 → rejected（auditMessage 作 reason）", async () => {
+    mockFetch(statusRoutes({ status: 4, auditMessage: "应用描述不合规" }));
     await expect(
       new VivoChannel().status(makeTestCtx({ credentials: CREDS, target: TARGET }).ctx),
     ).resolves.toEqual({
@@ -174,23 +175,40 @@ describe("VivoChannel.status", () => {
     });
   });
 
-  it("未知编号 → unknown raw 含编号", async () => {
-    mockFetch(statusRoutes({ auditStatus: 7 }));
+  it("status=1 → unknown 草稿、status=5 → unknown 已撤销", async () => {
+    mockFetch(statusRoutes({ status: 1 }));
     await expect(
       new VivoChannel().status(makeTestCtx({ credentials: CREDS, target: TARGET }).ctx),
     ).resolves.toEqual({
       state: "unknown",
-      raw: "auditStatus=7（未验证编号）",
+      raw: "status=1（草稿，未提交审核）",
+    });
+    mockFetch(statusRoutes({ status: 5 }));
+    await expect(
+      new VivoChannel().status(makeTestCtx({ credentials: CREDS, target: TARGET }).ctx),
+    ).resolves.toEqual({
+      state: "unknown",
+      raw: "status=5（已撤销）",
     });
   });
 
-  it("无 auditStatus → unknown raw 含提示", async () => {
+  it("未知编号 → unknown raw 含编号", async () => {
+    mockFetch(statusRoutes({ status: 7 }));
+    await expect(
+      new VivoChannel().status(makeTestCtx({ credentials: CREDS, target: TARGET }).ctx),
+    ).resolves.toEqual({
+      state: "unknown",
+      raw: "status=7（未验证编号）",
+    });
+  });
+
+  it("无 status → unknown raw 含提示", async () => {
     mockFetch(statusRoutes({}));
     await expect(
       new VivoChannel().status(makeTestCtx({ credentials: CREDS, target: TARGET }).ctx),
     ).resolves.toEqual({
       state: "unknown",
-      raw: expect.stringContaining("app.query.details 无 auditStatus"),
+      raw: expect.stringContaining("app.query.details 无 status"),
     });
   });
 
@@ -200,22 +218,22 @@ describe("VivoChannel.status", () => {
       new VivoChannel().status(makeTestCtx({ credentials: CREDS, target: TARGET }).ctx),
     ).resolves.toEqual({
       state: "unknown",
-      raw: expect.stringContaining("app.query.details 无 auditStatus"),
+      raw: expect.stringContaining("app.query.details 无 status"),
     });
   });
 
-  it("auditStatus 非数值 → unknown raw 透传原值", async () => {
-    mockFetch(statusRoutes({ auditStatus: "pending" }));
+  it("status 非数值 → unknown raw 透传原值", async () => {
+    mockFetch(statusRoutes({ status: "pending" }));
     await expect(
       new VivoChannel().status(makeTestCtx({ credentials: CREDS, target: TARGET }).ctx),
     ).resolves.toEqual({
       state: "unknown",
-      raw: "auditStatus=pending",
+      raw: "status=pending",
     });
   });
 
-  it("audit_status 蛇形命名兜底（python vivo_query.py 同序）", async () => {
-    mockFetch(statusRoutes({ audit_status: 1 }));
+  it("旧字段 audit_status 蛇形命名兜底（status 缺失时回退，编号按 apkgo 表）", async () => {
+    mockFetch(statusRoutes({ audit_status: 2 }));
     await expect(
       new VivoChannel().status(makeTestCtx({ credentials: CREDS, target: TARGET }).ctx),
     ).resolves.toEqual({
@@ -224,7 +242,7 @@ describe("VivoChannel.status", () => {
   });
 
   it("驳回原因字段兜底 auditMsg（auditMessage 缺失）", async () => {
-    mockFetch(statusRoutes({ auditStatus: 2, auditMsg: "截图不合规" }));
+    mockFetch(statusRoutes({ status: 4, auditMsg: "截图不合规" }));
     await expect(
       new VivoChannel().status(makeTestCtx({ credentials: CREDS, target: TARGET }).ctx),
     ).resolves.toEqual({
@@ -234,7 +252,7 @@ describe("VivoChannel.status", () => {
   });
 
   it("驳回原因为空串 → reason undefined", async () => {
-    mockFetch(statusRoutes({ auditStatus: 2, auditMessage: "" }));
+    mockFetch(statusRoutes({ status: 4, auditMessage: "" }));
     await expect(
       new VivoChannel().status(makeTestCtx({ credentials: CREDS, target: TARGET }).ctx),
     ).resolves.toEqual({

@@ -5,9 +5,9 @@
  *   sig = RSA_encrypt(证书公钥, JSON({sig: [{name, hash: MD5}...], password}))
  *   分段: 1024bit key → 每段 117 字节（128 - PKCS1 padding 11）
  * 链路: /dev/query 校验账号对包名权限 + 提审前版本回归预检 → /dev/push 上传即提审（synchroType=1 更新包，
- *       无法只传包不提审）。现行文档（2026-09 更新）文件参数表 icon 标「必选」、appInfo.privacyUrl 标「必选」，
- *       旧版「未传字段如 icon/privacyUrl 不覆盖线上值」表述已不被现行文档支持；synchroType=1 不带素材是否仍被
- *       受理待真机验证，若被拒需补传 icon 文件（其 MD5 追加进 SIG 的 sig 数组）。
+ *       icon 现行文档标必选；apkgo xiaomi.go（2026-10 源码仲裁）确认每次 push 必带 icon
+ *       （取 listing 图标或从 APK 提取）——applift 从项目配置 android.stores.xiaomi.icon 读取，
+ *       未配置即中止；privacyUrl 是否强制仍待真机验证（apkgo 未传该字段）。
  *       另 2026-02-04 起 testAccount 须用新结构化格式（如 {"zh_CN":{"accounts":[...]}}），当前未传暂不受影响。
  * 移植自（MIT）: AngChow/android-publish scripts/_mi_common.py + mi_submit.py
  * 官方文档: https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1134
@@ -160,7 +160,14 @@ export class XiaomiChannel implements Channel {
       );
     }
 
-    // push（上传即提审）；仅附 apk 不带素材 —— icon/privacyUrl 现行文档标必选，是否强制待真机验证（见文件头注释）
+    // push（上传即提审）；icon 每次必带（apkgo xiaomi.go:219-237 仲裁：所有 synchroType 均要求，
+    // SIG 的 sig 数组需覆盖实际附带的每个文件），取项目配置 android.stores.xiaomi.icon
+    const iconPath = String(ctx.target.icon ?? "");
+    if (!iconPath)
+      throw new Error(
+        "小米提审缺少 icon：applift.config.ts → android.stores.xiaomi.icon 配置图标路径（官方必选，apkgo 同）",
+      );
+    if (!fs.existsSync(iconPath)) throw new Error(`小米 icon 文件不存在: ${iconPath}`);
     const appInfo = {
       appName,
       packageName: pkgName,
@@ -168,7 +175,15 @@ export class XiaomiChannel implements Channel {
     };
     const request = { userName, appInfo: JSON.stringify(appInfo), synchroType: 1 };
     const requestJson = JSON.stringify(request);
-    const sig = generateMiSig(requestJson, [["apk", ctx.artifactPath]], password, certPem);
+    const sig = generateMiSig(
+      requestJson,
+      [
+        ["apk", ctx.artifactPath],
+        ["icon", iconPath],
+      ],
+      password,
+      certPem,
+    );
 
     const fileName = path.basename(ctx.artifactPath);
     ctx.emit({ type: "phase", phase: "upload", message: `上传 ${fileName}（上传即提审）` });
@@ -177,6 +192,7 @@ export class XiaomiChannel implements Channel {
     form.append("SIG", sig);
     // FormData 无法携带流式 body（Blob 需完整材料，undici 限制），整读内存代价已知（docs/REVIEW.md P2-3）
     form.append("apk", new Blob([fs.readFileSync(ctx.artifactPath)]), fileName);
+    form.append("icon", new Blob([fs.readFileSync(iconPath)]), path.basename(iconPath));
     const res = await fetch(`${MI_API_BASE}/dev/push`, {
       method: "POST",
       body: form,

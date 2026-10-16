@@ -49,7 +49,7 @@ function installMock() {
         queryCalls += 1;
         return queryCalls === 1
           ? { json: { code: 0, subCode: 0, data: { onlineType: 1, compatibleDevice: 0 } } }
-          : { json: { code: 0, subCode: 0, data: { auditStatus: 1 } } };
+          : { json: { code: 0, subCode: 0, data: { status: 2 } } };
       },
     },
   ]);
@@ -106,7 +106,7 @@ describe("vivo 渠道 业务流程", () => {
       "done",
     ]);
 
-    // 不变量 4：auditStatus=1 → reviewing
+    // 不变量 4：status=2 → reviewing（apkgo mapVivoAuditState）
     expect(st).toEqual({ state: "reviewing" });
   });
 });

@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { hmacSign, tsSeconds, formPost } from "./shared/sign.js";
 import { formatSize } from "../util.js";
+import { isApkArm64Only } from "./shared/apk-abi.js";
 import type {
   Channel,
   ChannelCapabilities,
@@ -175,15 +176,27 @@ export class YybChannel implements Channel {
     if (!stagedInfo)
       throw new Error("应用宝渠道缺少上传流水号（stage 未执行，serial_number/md5 不可用）");
 
-    // update_app 字段集 —— 对拍 python/android-publish submit_apk.py main():
-    // pkg_name/app_id/deploy_type(1 立即|2 定时)/apk32_flag=1/apk32_file_serial_number/apk32_file_md5 + feature(文案)
+    // update_app 字段集 —— 对拍 apkgo tencent.go（2026-10 源码仲裁）：
+    // pkg_name/app_id/deploy_type(1 立即|2 定时) + feature(文案)；
+    // apk32_flag 分支：arm64-only 包须 apk32_flag=2 + apk64_flag=1 + apk64 流水号/md5（否则服务端 4000045 拒），
+    // 32/64 兼容与无 native 库的通用包走 apk32_flag=1（flag 取值域 1/2，不能传 0）
     ctx.emit({ type: "phase", phase: "submit" });
+    const arm64Only = isApkArm64Only(ctx.artifactPath);
     const businessParams: Record<string, string> = {
       pkg_name: pkgName,
       app_id: appId,
-      apk32_flag: "1",
-      apk32_file_serial_number: stagedInfo.serialNumber,
-      apk32_file_md5: stagedInfo.md5,
+      ...(arm64Only
+        ? {
+            apk32_flag: "2",
+            apk64_flag: "1",
+            apk64_file_serial_number: stagedInfo.serialNumber,
+            apk64_file_md5: stagedInfo.md5,
+          }
+        : {
+            apk32_flag: "1",
+            apk32_file_serial_number: stagedInfo.serialNumber,
+            apk32_file_md5: stagedInfo.md5,
+          }),
       feature: ctx.updateDescription ?? "",
     };
     if (ctx.releaseTime) {

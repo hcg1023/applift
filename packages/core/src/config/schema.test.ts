@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ProjectConfigSchema, StoresSchema } from "./schema.js";
+import { ProjectConfigSchema, StoresSchema, TestConfigSchema } from "./schema.js";
 
 describe("StoresSchema 规范化", () => {
   it("① 对象写法原样保留（向后兼容）", () => {
@@ -80,5 +80,38 @@ describe("ProjectConfigSchema android.stores 集成", () => {
       android: { ...base.android, stores: { huawei: { appId: "1000123" } } },
     });
     expect(config.android?.stores.huawei?.appId).toBe("1000123");
+  });
+});
+
+describe("TestConfigSchema（beta 多渠道）", () => {
+  it("全空 → test 可整体缺省，各渠道缺省值正确（pgyer.platforms=['android']、agc submit=false、testType=3）", () => {
+    const config = ProjectConfigSchema.parse({});
+    expect(config.test).toBeUndefined();
+
+    const test = TestConfigSchema.parse({ pgyer: {}, "agc-harmony": {} });
+    expect(test.pgyer?.platforms).toEqual(["android"]);
+    expect(test["agc-harmony"]?.submit).toBe(false);
+    expect(test["agc-harmony"]?.testType).toBe(3);
+    expect(test.testflight).toBeUndefined();
+  });
+
+  it("完整配置解析", () => {
+    const config = ProjectConfigSchema.parse({
+      test: {
+        pgyer: { platforms: ["android", "ios"], installPassword: "1234" },
+        "agc-harmony": { submit: true, group: "内测组", testType: 4 },
+        testflight: { note: "TF 备注" },
+      },
+    });
+    expect(config.test?.pgyer?.platforms).toEqual(["android", "ios"]);
+    expect(config.test?.pgyer?.installPassword).toBe("1234");
+    expect(config.test?.["agc-harmony"]).toEqual({ submit: true, group: "内测组", testType: 4 });
+    expect(config.test?.testflight?.note).toBe("TF 备注");
+  });
+
+  it("非法值报错（platforms 枚举 / testType 枚举 / submit 非布尔）", () => {
+    expect(TestConfigSchema.safeParse({ pgyer: { platforms: ["windows"] } }).success).toBe(false);
+    expect(TestConfigSchema.safeParse({ "agc-harmony": { testType: 5 } }).success).toBe(false);
+    expect(TestConfigSchema.safeParse({ "agc-harmony": { submit: "yes" } }).success).toBe(false);
   });
 });

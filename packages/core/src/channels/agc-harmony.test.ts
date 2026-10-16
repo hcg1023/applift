@@ -325,10 +325,13 @@ describe("AgcHarmonyChannel.submit 全链路", () => {
       fs.unlinkSync(hap);
     }
   });
-  it("releaseType=6 不自动提审", async () => {
+  it("releaseType=6 submit() 不直接提审（自动提审走 test['agc-harmony'].submit 配置）", async () => {
     const { ctx } = baseCtx({ target: { appId: "app-1", releaseType: "6" } });
     const r = await new AgcHarmonyChannel().submit(ctx);
-    expect(r).toEqual({ ok: false, error: expect.stringContaining("不做自动提审") });
+    expect(r).toEqual({
+      ok: false,
+      error: expect.stringContaining("test['agc-harmony'].submit"),
+    });
   });
 
   it("缺少凭据抛错（含键名）", async () => {

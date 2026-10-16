@@ -30,7 +30,20 @@ applift doctor --cwd <项目目录>   # 框架/包名推导/凭据核对/产物�
 applift beta android --note "说明"        # 蒲公英，扫码即装
 applift beta harmony                # AGC 邀请测试（Testing API，需 .app 整包；--via pgyer 改蒲公英）
 applift beta ios                      # 蒲公英（ipa 扫码即装）；TestFlight 走 release ios 的 asc 渠道
+applift beta                             # 无参数：读 applift.config.ts 的 test 段，多渠道并行内测
 ```
+
+`test` 段配置（全可选，写进 applift.config.ts）：
+
+```ts
+test: {
+  pgyer: { platforms: ["android", "ios"], installPassword: "1234" },  // 缺省 platforms=["android"]
+  "agc-harmony": { submit: true, group: "内测组", testType: 3 },       // submit=true 上传绑定后自动提审（默认 false）
+  testflight: { note: "TestFlight 备注" },                              // asc 渠道上传 ipa 进 TestFlight
+},
+```
+
+逐渠道并行发布，任一失败退出码 1；`agc-harmony.group` 按群组名匹配（匹配不到报错，需先到 AGC 控制台建组）。
 
 ### 4. 正式发版（两段式，L3 不可逆）
 

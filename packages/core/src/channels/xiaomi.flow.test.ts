@@ -17,6 +17,7 @@ import { mockFetch, makeTestCtx } from "../test-utils.js";
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "applift-xiaomi-flow-"));
 const certPath = path.join(tmp, "mi-cert.pem");
 const apkPath = path.join(tmp, "app-release.apk");
+const iconPath = path.join(tmp, "icon.png");
 const APK_BYTES = Buffer.from("fake-apk-bytes-for-xiaomi-flow");
 
 beforeAll(() => {
@@ -25,7 +26,9 @@ beforeAll(() => {
     `openssl req -x509 -newkey rsa:1024 -nodes -keyout ${tmp}/mi-key.pem -out ${certPath} -days 1 -subj "/CN=applift-flow"`,
   );
   fs.writeFileSync(apkPath, APK_BYTES);
+  fs.writeFileSync(iconPath, Buffer.from("fake-icon-flow"));
 });
+
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 afterEach(() => vi.unstubAllGlobals());
 
@@ -65,7 +68,7 @@ describe("小米渠道 业务流程", () => {
     const ch = new XiaomiChannel();
     const { ctx, events } = makeTestCtx({
       credentials: CREDS,
-      target: { pkgName: "com.qianyun.driver", versionCode: "101" }, // 101 >= 线上 100，预检放行
+      target: { pkgName: "com.qianyun.driver", versionCode: "101", icon: iconPath }, // 101 >= 线上 100，预检放行
       artifactPath: apkPath,
       updateDescription: "小米流程测试更新说明",
     });

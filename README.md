@@ -18,6 +18,17 @@ pnpm add -D @applift/cli
 applift init            # 向导：识别框架 → 生成 applift.config.ts → 引导配凭据
 applift doctor          # 体检：框架/包名推导/凭据核对/产物版本
 applift beta android --note "修复xx"    # 内测：三端均走蒲公英扫码即装（ios 的 ipa / harmony 的 hap --via pgyer）
+applift beta                             # 多渠道内测：读 applift.config.ts 的 test 段并行发（pgyer/agc-harmony/testflight）
+```
+
+多渠道内测配置示例（applift.config.ts，全可选）：
+
+```ts
+test: {
+  pgyer: { platforms: ["android", "ios"], installPassword: "1234" }, // 蒲公英多平台，缺省只发 android
+  "agc-harmony": { submit: true, group: "内测组" },                   // AGC 邀请测试；submit=true 自动提审
+  testflight: { note: "TestFlight 备注" },                            // asc 上传 ipa 进 TestFlight
+},
 ```
 
 正式发版（两段式，交互向导引导）：

@@ -41,9 +41,9 @@ function commonParams(accessKey: string, method: string): Record<string, string>
     timestamp: tsMillis(),
     format: "json",
     v: "1.0",
-    // 对拍 python/android-publish 权威（_vivo_common.build_common_params）：sign_method 固定 'hmac'；
-    // 注意："hmac" 字面值未见于现行官方文档（文档记载 HMAC-SHA256），v1 实测可用，存在服务端收紧风险
-    sign_method: "hmac",
+    // sign_method 与现行官方文档及 apkgo（vivo.go:661）一致取 HMAC-SHA256；
+    // 旧 'hmac' 系 v1 网关兼容值，已按 2026-10 apkgo 源码仲裁更正
+    sign_method: "HMAC-SHA256",
     target_app_key: "developer",
   };
 }
@@ -245,35 +245,37 @@ export class VivoChannel implements Channel {
   }
 
   /**
-   * 审核状态查询: 复用 app.query.details 的 data.auditStatus（对拍 python vivo_query.py；
-   * 未确证的 app.audit.status method 已删——python/apkgo 均无此调用）。
-   * 映射 0=审核通过 1=审核中 2=驳回 沿自 v1，待真机校准；
-   * 注意：该编号映射未在现行中国站文档成文（国际站同型接口字典编号整体错一位），需真机校准；
-   * 交叉见证：apkgo vivo.go 读 data.status 且编号不同（1草稿/2待审核/3通过/4不通过/5撤销），冲突以真机为准。
+   * 审核状态查询: 复用 app.query.details 的 data.status（apkgo vivo.go mapVivoAuditState 权威，
+   * 2026-10 源码仲裁：编号 1=草稿 2=待审核 3=审核通过 4=审核不通过 5=已撤销；
+   * 旧 auditStatus 字段与 0/1/2 编号表系 v1 python 误记，已弃用）。
    */
   async status(ctx: Pick<ChannelContext, "credentials" | "target">): Promise<ReviewStatus> {
     required(ctx, "pkgName", "审核状态查询必需");
     const data = await this.queryDetails(ctx);
-    const auditStatus = data.auditStatus ?? data.audit_status; // python 同序兜底（vivo_query.py:37）
-    if (auditStatus === undefined) {
+    const st = data.status ?? data.auditStatus ?? data.audit_status; // apkgo 读 status；旧字段兜底兼容
+    if (st === undefined) {
       return {
         state: "unknown",
-        raw: `app.query.details 无 auditStatus: ${JSON.stringify(data).slice(0, 200)}`,
+        raw: `app.query.details 无 status: ${JSON.stringify(data).slice(0, 200)}`,
       };
     }
-    const num = Number(auditStatus);
+    const num = Number(st);
     if (!Number.isFinite(num)) {
-      return { state: "unknown", raw: `auditStatus=${String(auditStatus)}` };
+      return { state: "unknown", raw: `status=${String(st)}` };
     }
     switch (num) {
-      case 0:
-        return { state: "approved", live: true };
-      case 1:
-        return { state: "reviewing" };
       case 2:
+        return { state: "reviewing" };
+      case 3:
+        return { state: "approved", live: true };
+      case 4:
         return { state: "rejected", reason: this.auditReason(data) };
+      case 1:
+        return { state: "unknown", raw: "status=1（草稿，未提交审核）" };
+      case 5:
+        return { state: "unknown", raw: "status=5（已撤销）" };
       default:
-        return { state: "unknown", raw: `auditStatus=${num}（未验证编号）` };
+        return { state: "unknown", raw: `status=${num}（未验证编号）` };
     }
   }
 

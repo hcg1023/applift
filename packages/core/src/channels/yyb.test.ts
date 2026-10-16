@@ -14,6 +14,7 @@ import { YybChannel } from "./yyb.js";
 import { hmacSign } from "./shared/sign.js";
 import { formatSize } from "../util.js";
 import { mockFetch, makeTestCtx } from "../test-utils.js";
+import { buildZip } from "./shared/apk-abi.test.js";
 import type { MockCall } from "../test-utils.js";
 
 const API_BASE = "https://p.open.qq.com/open_file/developer_api";
@@ -432,6 +433,36 @@ describe("YybChannel.submit", () => {
     expect(events[0]).toEqual({ type: "phase", phase: "submit" });
     expect(String(events[1]?.message)).toContain("已提交审核");
     m.restore();
+  });
+
+  it("arm64-only APK → apk32_flag=2 + apk64_flag=1 + apk64 流水号/md5（apkgo 三分支同构）", async () => {
+    const ch = await stagedChannel();
+    const m = mockFetch([
+      { match: "/update_app", response: { json: { ret: 0, app_id: 20240001 } } },
+    ]);
+    const arm64Apk = path.join(
+      os.tmpdir(),
+      `yyb-arm64-${process.pid}-${Math.random().toString(36).slice(2)}.apk`,
+    );
+    fs.writeFileSync(arm64Apk, buildZip(["lib/arm64-v8a/libapp.so", "classes.dex"]));
+    const { ctx } = makeTestCtx({
+      credentials: CREDS,
+      target: TARGET,
+      artifactPath: arm64Apk,
+      updateDescription: "arm64-only 包提审",
+    });
+    try {
+      await ch.submit(ctx);
+      const params = expectApiCall(m.calls[0], "/update_app");
+      expect(params.get("apk32_flag")).toBe("2");
+      expect(params.get("apk64_flag")).toBe("1");
+      expect(params.get("apk64_file_serial_number")).toBe(SERIAL);
+      expect(params.get("apk64_file_md5")).toBe(APK_MD5);
+      expect(params.get("apk32_file_serial_number")).toBe(null);
+    } finally {
+      fs.rmSync(arm64Apk, { force: true });
+      m.restore();
+    }
   });
 
   it("无 updateDescription 时 feature 缺省为空串（python: 未传 --feature 不填字段 → 此处空串占位）", async () => {

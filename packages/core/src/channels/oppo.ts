@@ -371,6 +371,8 @@ export class OppoChannel implements Channel {
           ? "errno=911215 应用审核中：该版本已在 OPPO 审核队列，本次未重复创建任务"
           : "errno=911216 版本更新任务处理中：上一提交任务仍在处理，本次未创建新任务，稍后可用 status 查询审核状态",
       });
+      // apkgo 语义：911216 既有任务仍在异步处理，轮询确认结果；911215 已进审核队列为终态
+      if (!inReview) await this.pollTaskState(ctx, auth, versionCode);
       ctx.emit({ type: "phase", phase: "done", message: `已受理（errno=${upd.errno}）` });
       return { ok: true, ref: `errno=${upd.errno} ${inReview ? "已在审核队列" : "任务处理中"}` };
     }

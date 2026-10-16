@@ -179,9 +179,9 @@ async function loadPluginHost(
 program
   .command("beta")
   .description(
-    "内测分发（android/ios → 蒲公英扫码即装；harmony 默认 AGC 测试发布，--via pgyer 改走蒲公英）",
+    "内测分发：无参数读 applift.config.ts 的 test 段并行发布多渠道；beta <platform> 快捷路径（android/ios → 蒲公英；harmony 默认 AGC 测试发布，--via pgyer 改走蒲公英）",
   )
-  .argument("<platform>", "android | harmony | ios")
+  .argument("[platform]", "android | harmony | ios（缺省读配置 test 段多渠道并行）")
   .option("--artifact <path>", "产物路径（缺省自动探测最新构建产物）")
   .option("--note <text>", "更新说明")
   .option("--via <target>", "harmony 分发通道：agc（默认，AGC 指定设备测试发布）| pgyer", "agc")
@@ -189,7 +189,7 @@ program
   .option("--cwd <dir>", "项目目录", process.cwd())
   .action(
     async (
-      platform: string,
+      platform: string | undefined,
       cmdOpts: {
         artifact?: string;
         note?: string;
@@ -208,6 +208,141 @@ program
         KNOWN_CREDENTIAL_KEYS,
       );
       const detected = detectBundleIds(cmdOpts.cwd);
+
+      /** 产物探测：--artifact 直用（渠道自行校验扩展名）；否则按平台 patterns 找最新且扩展名匹配的产物 */
+      const findArtifactFor = (plat: string, exts: string[]): string | undefined => {
+        if (cmdOpts.artifact) {
+          const explicit = path.resolve(cmdOpts.artifact);
+          return exts.includes(path.extname(explicit).toLowerCase()) ? explicit : undefined;
+        }
+        const framework = detectFrameworkWith(cmdOpts.cwd, pluginFrameworks);
+        const patterns = projCfg.artifacts?.[plat] ?? framework?.artifactPatterns(plat) ?? [];
+        return findArtifacts(cmdOpts.cwd, patterns).find((f) =>
+          exts.includes(path.extname(f).toLowerCase()),
+        );
+      };
+
+      // ---------- 无 platform：读 config.test 多渠道并行发布 ----------
+      if (!platform) {
+        const test = projCfg.test;
+        if (!test || (!test.pgyer && !test["agc-harmony"] && !test.testflight)) {
+          throw new Error(
+            'beta 无参数需要在 applift.config.ts 配置 test 段（pgyer / "agc-harmony" / testflight 至少一个），或用 beta <platform> 快捷路径',
+          );
+        }
+        const PGYER_EXTS: Record<string, string[]> = {
+          android: [".apk"],
+          ios: [".ipa"],
+          harmony: [".hap"],
+        };
+        const tasks: Array<{ label: string; run: () => Promise<string> }> = [];
+
+        if (test.pgyer) {
+          const pgyer = registry.get("pgyer");
+          if (!pgyer) throw new Error("pgyer 渠道未注册");
+          for (const plat of test.pgyer.platforms) {
+            tasks.push({
+              label: `pgyer(${plat})`,
+              run: async () => {
+                const exts = PGYER_EXTS[plat] ?? [];
+                const artifactPath = findArtifactFor(plat, exts);
+                if (!artifactPath)
+                  throw new Error(
+                    `未找到 ${plat} 构建产物（${exts.join("/")}），先构建或用 --artifact 指定`,
+                  );
+                const ctx = makeContext(
+                  pgyer,
+                  creds,
+                  resolveChannelTarget("pgyer", projCfg, detected),
+                  artifactPath,
+                  cmdOpts.note,
+                  { installPassword: cmdOpts.installPassword ?? test.pgyer?.installPassword },
+                );
+                const r = await pgyer.stage(ctx);
+                if (!r.ok) throw new Error(r.error ?? "上传失败");
+                return `蒲公英 ${path.basename(artifactPath)} 发布成功，扫码即装`;
+              },
+            });
+          }
+        }
+
+        if (test["agc-harmony"]) {
+          const agc = registry.get("agc-harmony");
+          if (!agc) throw new Error("agc-harmony 渠道未注册");
+          const agcCfg = test["agc-harmony"];
+          tasks.push({
+            label: "agc-harmony",
+            run: async () => {
+              const artifactPath = findArtifactFor("harmony", [".app"]);
+              if (!artifactPath)
+                throw new Error(
+                  "未找到 harmony .app 整包（DevEco「构建 App」产物），先构建或用 --artifact 指定",
+                );
+              const ctx = makeContext(
+                agc,
+                creds,
+                {
+                  ...resolveChannelTarget("agc-harmony", projCfg, detected),
+                  releaseType: "6",
+                  ...(agcCfg.submit ? { submitTest: "true" } : {}),
+                  ...(agcCfg.group ? { testGroup: agcCfg.group } : {}),
+                  testType: String(agcCfg.testType),
+                },
+                artifactPath,
+                cmdOpts.note,
+              );
+              const r = await agc.stage(ctx);
+              if (!r.ok) throw new Error(r.error ?? "AGC 测试发布失败");
+              return agcCfg.submit
+                ? `AGC 测试版本已提交审核（versionId: ${r.ref ?? "?"}）`
+                : `AGC 测试版本已就绪（versionId: ${r.ref ?? "?"}，未提审）`;
+            },
+          });
+        }
+
+        if (test.testflight) {
+          const asc = registry.get("asc");
+          if (!asc) throw new Error("asc 渠道未注册");
+          const tfNote = test.testflight.note;
+          tasks.push({
+            label: "testflight",
+            run: async () => {
+              const artifactPath = findArtifactFor("ios", [".ipa"]);
+              if (!artifactPath)
+                throw new Error("未找到 ios .ipa 产物，先构建或用 --artifact 指定");
+              const ctx = makeContext(
+                asc,
+                creds,
+                resolveChannelTarget("asc", projCfg, detected),
+                artifactPath,
+                cmdOpts.note ?? tfNote,
+              );
+              const r = await asc.stage(ctx);
+              if (!r.ok) throw new Error(r.error ?? "上传失败");
+              return `TestFlight 上传成功 ${path.basename(artifactPath)}（Apple 处理完成后 TestFlight 可见）`;
+            },
+          });
+        }
+
+        process.stderr.write(`内测多渠道并行发布：${tasks.map((t) => t.label).join("、")}\n`);
+        const settled = await Promise.allSettled(tasks.map((t) => t.run()));
+        let failed = false;
+        settled.forEach((r, i) => {
+          const { label } = tasks[i]!;
+          if (r.status === "fulfilled") {
+            process.stderr.write(`${pc.green("✓")} ${label} — ${r.value}\n`);
+          } else {
+            failed = true;
+            process.stderr.write(
+              `${pc.red("✗")} ${label} — ${(r.reason as Error)?.message ?? r.reason}\n`,
+            );
+          }
+        });
+        if (failed) process.exitCode = 1;
+        return;
+      }
+
+      // ---------- 快捷路径：beta <platform>（原行为不变） ----------
       let artifactPath = cmdOpts.artifact ? path.resolve(cmdOpts.artifact) : undefined;
       if (!artifactPath) {
         const framework = detectFrameworkWith(cmdOpts.cwd, pluginFrameworks);

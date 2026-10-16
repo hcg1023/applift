@@ -38,7 +38,36 @@ export const StoresSchema = z
   .default({});
 export type Stores = z.infer<typeof StoresSchema>;
 
-/** 项目级配置（applift.config.ts 的形状） */
+/** 项目级配置（applift.config.ts 的形状）；test 段见上方 TestConfigSchema */
+/**
+ * 内测分发配置（applift beta 无平台参数时并行发布的渠道开关）：
+ * - pgyer: 蒲公英多平台上传（缺省只发 android）
+ * - agc-harmony: AGC 邀请测试（Testing API，submit=true 上传绑定后自动提审）
+ * - testflight: App Store Connect 上传（ipa 进 TestFlight）
+ */
+export const TestConfigSchema = z.object({
+  pgyer: z
+    .object({
+      platforms: z.array(z.enum(["android", "harmony", "ios"])).default(["android"]),
+      installPassword: z.string().optional(),
+    })
+    .optional(),
+  "agc-harmony": z
+    .object({
+      /** 上传绑定后自动提交测试审核（默认 false：只到「已就绪」，群组/提审到控制台人工完成） */
+      submit: z.boolean().default(false),
+      /** 测试群组名（submit 时按名查 groupId 绑定；匹配不到报错提示到控制台建组） */
+      group: z.string().optional(),
+      /** 3=邀请测试（默认）4=公开测试 */
+      testType: z.union([z.literal(3), z.literal(4)]).default(3),
+    })
+    .optional(),
+  testflight: z
+    .object({
+      note: z.string().optional(),
+    })
+    .optional(),
+});
 export const ProjectConfigSchema = z.object({
   /** 项目显示名 */
   name: z.string().optional(),
@@ -86,7 +115,11 @@ export const ProjectConfigSchema = z.object({
     })
     .catchall(z.array(z.string()).optional())
     .optional(),
+  /** 内测分发（beta 无平台参数时的多渠道并行配置） */
+  test: TestConfigSchema.optional(),
 });
+
+export type TestConfig = z.infer<typeof TestConfigSchema>;
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
 /** 全局行为配置（~/.applift/config.toml） */
