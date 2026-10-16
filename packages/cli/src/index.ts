@@ -54,10 +54,14 @@ function detectFrameworkWith(cwd: string, extra: FrameworkAdapter[]) {
 
 const program = new Command("applift");
 
+const pkg = JSON.parse(
+  fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+) as { version: string };
+
 program
   .name("applift")
   .description("三端 App 发版工具（内测 / 多商店提审 / 插件扩展）")
-  .version("0.2.0");
+  .version(pkg.version);
 
 export function makeContext(
   channel: Channel,
