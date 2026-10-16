@@ -139,7 +139,7 @@ export class PgyerChannel implements Channel {
     if (!upRes.ok) throw new Error(`COS 上传失败 HTTP ${upRes.status}`);
 
     ctx.emit({ type: "phase", phase: "wait", message: "等待蒲公英处理" });
-    const deadline = Date.now() + 5 * 60 * 1000;
+    const deadline = Date.now() + 15 * 60 * 1000;
     while (Date.now() < deadline) {
       await sleep(3000);
       const info = await pgyerPost<BuildInfoResp>(HOSTS[0], "/apiv2/app/buildInfo", {
@@ -162,7 +162,11 @@ export class PgyerChannel implements Channel {
       }
       // code===0 但短链未出，或 1247 入库中 → 继续轮询
     }
-    return { ok: false, error: "蒲公英 5 分钟内未完成处理" };
+    return {
+      ok: false,
+      error:
+        "蒲公英 15 分钟内未完成处理（大包云端处理慢属正常，可到 pgyer.com 控制台确认实际状态）",
+    };
   }
 
   async submit(): Promise<SubmitResult> {

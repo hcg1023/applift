@@ -275,7 +275,7 @@ describe("PgyerChannel", () => {
     await expect(p).resolves.toEqual({ ok: true, ref: "bk-123" });
   });
 
-  it("5 分钟超时返回错误", async () => {
+  it("15 分钟超时返回错误", async () => {
     vi.useFakeTimers();
     const fetchMock = mockFetch(
       baseRoutes(() => ({ json: { code: 1247, message: "buildKey not found" } })),
@@ -283,11 +283,15 @@ describe("PgyerChannel", () => {
     const { ctx } = makeTestCtx({ credentials: { PGYER_API_KEY: "pk" }, artifactPath: ARTIFACT });
 
     const p = ch.stage(ctx);
-    // 推进 5 分钟以上，驱动所有轮询轮次
-    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 10_000);
-    await expect(p).resolves.toEqual({ ok: false, error: "蒲公英 5 分钟内未完成处理" });
-    // 3000ms 一轮 → 100 轮
-    expect(fetchMock.calls.filter((c) => c.url.includes("buildInfo"))).toHaveLength(100);
+    // 推进 15 分钟以上，驱动所有轮询轮次
+    await vi.advanceTimersByTimeAsync(15 * 60 * 1000 + 10_000);
+    await expect(p).resolves.toEqual({
+      ok: false,
+      error:
+        "蒲公英 15 分钟内未完成处理（大包云端处理慢属正常，可到 pgyer.com 控制台确认实际状态）",
+    });
+    // 3000ms 一轮 → 300 轮
+    expect(fetchMock.calls.filter((c) => c.url.includes("buildInfo"))).toHaveLength(300);
   });
 
   it("submit 返回不支持错误; status 返回 unknown", async () => {
