@@ -32,7 +32,13 @@ export interface FrameworkAdapter {
 function subdirs(cwd: string, depth: number): string[] {
   if (depth <= 0) return [];
   const out: string[] = [];
-  for (const name of fs.readdirSync(cwd, { withFileTypes: true })) {
+  let names: fs.Dirent[];
+  try {
+    names = fs.readdirSync(cwd, { withFileTypes: true });
+  } catch {
+    return []; // 无权限目录（如 Linux 根下 lost+found）视为无内容
+  }
+  for (const name of names) {
     if (
       !name.isDirectory() ||
       name.name.startsWith(".") ||
@@ -147,10 +153,14 @@ export const nativeIosAdapter: FrameworkAdapter = {
     if (rnAdapter.detect(cwd)) return false;
     // Xcode 工程常嵌在子目录（如 newdriver-ios/clouddriver/）：两层内探测
     for (const dir of [cwd, ...subdirs(cwd, 1)]) {
+      let entries: string[];
+      try {
+        entries = fs.readdirSync(dir);
+      } catch {
+        continue; // 无权限目录跳过
+      }
       if (
-        fs
-          .readdirSync(dir)
-          .some((f) => String(f).endsWith(".xcodeproj") || String(f).endsWith(".xcworkspace"))
+        entries.some((f) => String(f).endsWith(".xcodeproj") || String(f).endsWith(".xcworkspace"))
       ) {
         return true;
       }
