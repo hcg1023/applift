@@ -42,7 +42,7 @@ function commonParams(accessKey: string, method: string): Record<string, string>
     format: "json",
     v: "1.0",
     // 对拍 python/android-publish 权威（_vivo_common.build_common_params）：sign_method 固定 'hmac'；
-    // apkgo 的 'HMAC-SHA256' 属另一接口代，不采
+    // 注意："hmac" 字面值未见于现行官方文档（文档记载 HMAC-SHA256），v1 实测可用，存在服务端收紧风险
     sign_method: "hmac",
     target_app_key: "developer",
   };
@@ -67,8 +67,10 @@ export class VivoChannel implements Channel {
     status: true,
   };
   readonly errorHints = {
-    "1002": "参数缺失或不合法（常见：更新说明少于 5 字）",
-    "46001": "访问频率超限（正式环境每接口 50 次/天）",
+    "10001": "签名校验失败（检查 VIVO_ACCESS_SECRET 是否正确）",
+    "10005": "时间戳失效（检查系统时间偏差）",
+    "10011": "当天调用次数超限（约 50 次/天）",
+    "12010": "应用审核中，不允许更新",
   };
 
   /**
@@ -201,12 +203,17 @@ export class VivoChannel implements Channel {
     const { serialnumber, versionCode, fileMd5 } = this.lastUpload!;
     if (!serialnumber) throw new Error("vivo 提审缺少 serialnumber（上传未返回）");
 
-    // updateDesc 需 5-200 字（对拍 python vivo_submit.py：短于 5 字服务端拒收）；
+    // updateDesc 需 5-200 字（对拍 python vivo_submit.py：短于 5 字服务端拒收，超 200 字同样拒收，本地先行校验）；
     // 缺文案时不再伪造占位，直接拒绝并提示补 --update-desc
     const updateDesc = (ctx.updateDescription ?? "").trim();
     if (updateDesc.length < 5) {
       throw new Error(
         `vivo 提审 updateDesc 需 5-200 字（当前 ${updateDesc.length} 字），请提供更新说明`,
+      );
+    }
+    if (updateDesc.length > 200) {
+      throw new Error(
+        `vivo 提审 updateDesc 需 5-200 字（当前 ${updateDesc.length} 字，超出上限），请精简更新说明`,
       );
     }
 
@@ -241,6 +248,7 @@ export class VivoChannel implements Channel {
    * 审核状态查询: 复用 app.query.details 的 data.auditStatus（对拍 python vivo_query.py；
    * 未确证的 app.audit.status method 已删——python/apkgo 均无此调用）。
    * 映射 0=审核通过 1=审核中 2=驳回 沿自 v1，待真机校准；
+   * 注意：该编号映射未在现行中国站文档成文（国际站同型接口字典编号整体错一位），需真机校准；
    * 交叉见证：apkgo vivo.go 读 data.status 且编号不同（1草稿/2待审核/3通过/4不通过/5撤销），冲突以真机为准。
    */
   async status(ctx: Pick<ChannelContext, "credentials" | "target">): Promise<ReviewStatus> {

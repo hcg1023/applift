@@ -153,6 +153,27 @@ describe("HuaweiAndroidChannel.status", () => {
     });
   });
 
+  it("releaseState=1 且同时有 auditInfo.auditOpinion 与 auditDesc → 优先 auditOpinion", async () => {
+    mockFetch([
+      { match: "oauth2/v1/token", response: { status: 200, json: TOKEN_BODY } },
+      {
+        match: "publish/v2/app-info",
+        response: {
+          status: 200,
+          json: {
+            ret: { code: 0 },
+            appInfo: { releaseState: 1, auditDesc: "旧字段原因" },
+            auditInfo: { auditOpinion: "新版拒绝意见" },
+          },
+        },
+      },
+    ]);
+    await expect(new HuaweiAndroidChannel().status(makeCtx())).resolves.toEqual({
+      state: "rejected",
+      reason: "新版拒绝意见",
+    });
+  });
+
   it("未知 releaseState → unknown raw 含编号", async () => {
     mockFetch([
       { match: "oauth2/v1/token", response: { status: 200, json: TOKEN_BODY } },
@@ -253,7 +274,7 @@ describe("HuaweiAndroidChannel.stage", () => {
     expect(fc.headers["Content-Type"]).toBe("application/json");
     expect(JSON.parse(String(fc.body ?? ""))).toEqual({
       fileType: 5,
-      files: { fileName: path.basename(artifactPath), fileDestUrl: "obj-777" },
+      files: [{ fileName: path.basename(artifactPath), fileDestUrl: "obj-777" }],
     });
 
     // 事件
@@ -416,7 +437,7 @@ describe("HuaweiAndroidChannel.submit", () => {
     const events: Array<{ type: string; [k: string]: unknown }> = [];
     const ctx = makeCtx({
       updateDescription: "修复闪退",
-      remark: "hotfix-1",
+      remark: "hotfix-修复闪退问题",
       emit: (e) => events.push(e),
     });
 
@@ -442,7 +463,7 @@ describe("HuaweiAndroidChannel.submit", () => {
     expect(sc.headers["Authorization"]).toBe("Bearer tok-123");
     const sq = new URL(sc.url).searchParams;
     expect(sq.get("appId")).toBe("app-001");
-    expect(sq.get("remark")).toBe("hotfix-1");
+    expect(sq.get("remark")).toBe("hotfix-修复闪退问题");
 
     // 事件序列：wait → submit → done
     const phases = events.filter((e) => e.type === "phase").map((e) => e.phase);
@@ -502,6 +523,30 @@ describe("HuaweiAndroidChannel.submit", () => {
     await expect(promise).rejects.toThrow("appId");
   });
 
+  it("remark 少于 10 字时本地校验直接抛错（不发请求）", async () => {
+    const mf = mockFetch([]);
+    await expect(
+      new HuaweiAndroidChannel().submit(makeCtx({ remark: "hotfix-1" })),
+    ).rejects.toThrow("remark）长度需在 10-300 字之间，当前 8 字");
+    expect(mf.calls.length).toBe(0);
+  });
+
+  it("remark 超过 300 字时本地校验直接抛错", async () => {
+    const mf = mockFetch([]);
+    await expect(
+      new HuaweiAndroidChannel().submit(makeCtx({ remark: "长".repeat(301) })),
+    ).rejects.toThrow("remark）长度需在 10-300 字之间，当前 301 字");
+    expect(mf.calls.length).toBe(0);
+  });
+
+  it("updateDescription 超过 500 字符时本地校验直接抛错", async () => {
+    const mf = mockFetch([]);
+    await expect(
+      new HuaweiAndroidChannel().submit(makeCtx({ updateDescription: "x".repeat(501) })),
+    ).rejects.toThrow("newFeatures）不能超过 500 字符，当前 501 字符");
+    expect(mf.calls.length).toBe(0);
+  });
+
   it("app-submit ret.code 非 0 抛错", async () => {
     mockFetch([
       { match: "oauth2/v1/token", response: { status: 200, json: TOKEN_BODY } },
@@ -518,7 +563,7 @@ describe("HuaweiAndroidChannel.submit", () => {
 });
 
 describe("HuaweiAndroidChannel.updateListing", () => {
-  it("brief+description 写入 v3 app-language-info（请求形状：URL/method/body 字段）", async () => {
+  it("brief+description 写入 v2 app-language-info（请求形状：URL/method/body 字段）", async () => {
     const mock = mockFetch([
       { match: "oauth2/v1/token", response: { status: 200, json: TOKEN_BODY } },
       { match: "app-language-info", response: { status: 200, json: { ret: { code: 0 } } } },
@@ -529,7 +574,7 @@ describe("HuaweiAndroidChannel.updateListing", () => {
       stores: { huawei: { brief: "渠道覆盖简介" } },
     });
     const call = mock.find("app-language-info")!;
-    expect(call.url).toContain("/api/publish/v3/app-language-info?appId=app-001");
+    expect(call.url).toContain("/api/publish/v2/app-language-info?appId=app-001");
     expect(call.method).toBe("PUT");
     expect(JSON.parse(call.body as string)).toEqual({
       lang: "zh-CN",

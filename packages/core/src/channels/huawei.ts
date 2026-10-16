@@ -139,7 +139,10 @@ export class HuaweiAndroidChannel implements Channel, ListingCapableChannel {
       {
         method: "PUT",
         headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({ fileType: 5, files: { fileName, fileDestUrl: urlInfo.objectId } }),
+        body: JSON.stringify({
+          fileType: 5,
+          files: [{ fileName, fileDestUrl: urlInfo.objectId }],
+        }),
       },
       "登记软件包",
     );
@@ -149,6 +152,16 @@ export class HuaweiAndroidChannel implements Channel, ListingCapableChannel {
 
   async submit(ctx: ChannelContext): Promise<SubmitResult> {
     const appId = required(ctx, "appId");
+    // 本地校验（华为文档约束）：remark 10-300 字；newFeatures ≤500 字符
+    if (ctx.remark !== undefined && ctx.remark !== "") {
+      const remarkLen = [...ctx.remark].length;
+      if (remarkLen < 10 || remarkLen > 300)
+        throw new Error(`华为提审备注（remark）长度需在 10-300 字之间，当前 ${remarkLen} 字`);
+    }
+    if (ctx.updateDescription !== undefined && [...ctx.updateDescription].length > 500)
+      throw new Error(
+        `华为更新说明（newFeatures）不能超过 500 字符，当前 ${[...ctx.updateDescription].length} 字符`,
+      );
     const { headers } = await this.authHeaders(ctx);
     if (ctx.updateDescription) {
       try {
@@ -192,8 +205,9 @@ export class HuaweiAndroidChannel implements Channel, ListingCapableChannel {
   }
 
   /**
-   * 更新商店应用信息：简介/描述走 v3 app-language-info（briefInfo/appDesc）。
-   * 图标/截图：华为 v3 app-file-info 的 fileType 取值未在官方文档确证（软件包=5 已验证，图标清单值不确定），
+   * 更新商店应用信息：简介/描述走 v2 app-language-info（briefInfo/appDesc）。
+   * 注：v3 app-language-info 为鸿蒙（HarmonyOS）专属接口族，安卓现行文档只有 v2。
+   * 图标/截图：华为 app-file-info 的 fileType 取值未在官方文档确证（软件包=5 已验证，图标清单值不确定），
    * 未经真机验证前只上传 OBS 不做 file-info 绑定（skip 并在结果中标注），避免误写损坏草稿。
    */
   async updateListing(
@@ -207,12 +221,12 @@ export class HuaweiAndroidChannel implements Channel, ListingCapableChannel {
 
     if (effective.brief !== undefined || effective.description !== undefined) {
       const { headers } = await this.authHeaders(ctx);
-      // 华为 v3 接口：简介 briefInfo + 描述 appDesc，同一接口按 lang 写入
+      // 华为 v2 接口：简介 briefInfo + 描述 appDesc，同一接口按 lang 写入
       const body: Record<string, string> = { lang: "zh-CN" };
       if (effective.brief !== undefined) body.briefInfo = effective.brief;
       if (effective.description !== undefined) body.appDesc = effective.description;
       await hwJson(
-        `${BASE}/publish/v3/app-language-info?appId=${encodeURIComponent(appId)}`,
+        `${BASE}/publish/v2/app-language-info?appId=${encodeURIComponent(appId)}`,
         {
           method: "PUT",
           headers: { ...headers, "Content-Type": "application/json" },
@@ -251,7 +265,10 @@ export class HuaweiAndroidChannel implements Channel, ListingCapableChannel {
     const appId = required(ctx, "appId", "审核状态查询必需");
     const { headers } = await this.authHeaders(ctx);
     const json = await hwJson<
-      HuaweiRet & { appInfo?: { releaseState?: number; auditDesc?: string } }
+      HuaweiRet & {
+        appInfo?: { releaseState?: number; auditDesc?: string };
+        auditInfo?: { auditOpinion?: string };
+      }
     >(
       `${BASE}/publish/v2/app-info?appId=${encodeURIComponent(appId)}`,
       { headers },
@@ -274,7 +291,11 @@ export class HuaweiAndroidChannel implements Channel, ListingCapableChannel {
         return { state: "reviewing" }; // 审核中 / 升级审核中
       case 1:
       case 8:
-        return { state: "rejected", reason: json.appInfo?.auditDesc }; // 审核不通过 / 升级审核不通过
+        // 拒绝原因：优先 auditInfo.auditOpinion（现行文档字段），回退旧 appInfo.auditDesc 兼容
+        return {
+          state: "rejected",
+          reason: json.auditInfo?.auditOpinion ?? json.appInfo?.auditDesc,
+        }; // 审核不通过 / 升级审核不通过
       case 2:
         return { state: "unknown", raw: "已下架（releaseState=2）" };
       case 7:

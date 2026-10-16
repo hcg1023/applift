@@ -3,6 +3,8 @@
  *
  * - stage: xcrun altool 上传 ipa（免 fastlane/Ruby 依赖，底层即 App Store Connect API）
  *   —— 自 v1 tools/publish/lib/asc.mjs 的 uploadIpaToAsc 迁移（逻辑不变）。
+ *   注意：xcrun altool 上传通道已被 Apple 列为弃用（deprecated），后续迁移至
+ *   ASC API buildUploads 资源或 Transporter（altool 本身仍可用，暂保留）。
  *   约定 p8 私钥：凭据 ASC_P8_PATH（支持 ~ 前缀）或 ~/.applift/private_keys/AuthKey_<ASC_KEY_ID>.p8
  *   （v1 放 tools/publish/private_keys/；altool 本身认 <cwd>/private_keys、~/private_keys、
  *    ~/.private_keys、~/.appstoreconnect/private_keys，见 xcrun altool --help）
@@ -50,8 +52,8 @@ type AscAppAttrs = { bundleId?: string; name?: string };
 type AscBuildAttrs = { version?: string; uploadedDate?: string; processingState?: string };
 /** preReleaseVersions 资源属性（version 即 CFBundleShortVersionString 营销版本号） */
 type AscPreReleaseAttrs = { version?: string };
-/** appStoreVersions 资源属性（releaseType: MANUAL / AUTOMATIC / SCHEDULED） */
-type AscVersionAttrs = { versionString?: string; appStoreState?: string; releaseType?: string };
+/** appStoreVersions 资源属性（releaseType: MANUAL / AFTER_APPROVAL / SCHEDULED） */
+type AscVersionAttrs = { versionString?: string; appVersionState?: string; releaseType?: string };
 
 export class AscChannel implements Channel {
   readonly id = "asc";
@@ -155,11 +157,11 @@ export class AscChannel implements Channel {
 
   /**
    * 提审 App Store —— 按 ASC 官方文档新实现，未经真实链路验证。
-   * 文档: appStoreVersionSubmissions / Create a Version Submission
+   * 文档: reviewSubmissions / Create a Review Submission / Submit a Review Submission
    *   https://developer.apple.com/documentation/appstoreconnectapi
    * 链路: 查 app（bundleId → 数字 id）→ 查最新已处理(VALID)构建 → 读取/创建 appStoreVersion
-   *   （releaseType 默认 MANUAL，ctx.releaseTime 提供时 SCHEDULED + earlyReleaseDate）
-   *   → 绑定构建到版本 → POST appStoreVersionSubmissions 进入审核
+   *   （releaseType 默认 MANUAL，ctx.releaseTime 提供时 SCHEDULED + earliestReleaseDate）
+   *   → 绑定构建到版本 → reviewSubmissions 三步流提交进入审核
    */
   async submit(ctx: ChannelContext): Promise<SubmitResult> {
     const { keyId, issuerId, p8Path } = this.resolveAuth(ctx);
@@ -202,15 +204,15 @@ export class AscChannel implements Channel {
       detail: `最新构建 build ${build.attributes?.version ?? ""}（版本 ${versionString}）`,
     });
 
-    // 3) 读取可编辑版本（PREPARE_FOR_SUBMISSION / READY_FOR_SUBMISSION），无则按构建版本号创建；
+    // 3) 读取可编辑版本（appVersionState=PREPARE_FOR_SUBMISSION），无则按构建版本号创建；
     //    releaseType 默认 MANUAL（审核通过后手动上架），ctx.releaseTime 提供时 SCHEDULED 定时上架
     const releaseType = ctx.releaseTime ? "SCHEDULED" : "MANUAL";
     const releaseAttrs = ctx.releaseTime
-      ? { releaseType, earlyReleaseDate: ctx.releaseTime }
+      ? { releaseType, earliestReleaseDate: ctx.releaseTime }
       : { releaseType };
     const versions = await ascGet<AscListResponse<AscVersionAttrs>>(
       jwt,
-      `/v1/apps/${app.id}/appStoreVersions?filter[platform]=IOS&filter[appStoreState]=PREPARE_FOR_SUBMISSION,READY_FOR_SUBMISSION&limit=5`,
+      `/v1/apps/${app.id}/appStoreVersions?filter[platform]=IOS&filter[appVersionState]=PREPARE_FOR_SUBMISSION&limit=5`,
     );
     let versionId = versions.data[0]?.id;
     if (versionId) {
@@ -249,24 +251,42 @@ export class AscChannel implements Channel {
       data: [{ type: "builds", id: build.id }],
     });
 
-    // 5) 创建版本提交（进入 App Store 审核）
-    const submission = await ascRequest<AscSingleResponse<Record<string, unknown>>>(
+    // 5) 提交审核（reviewSubmissions 三步流；旧 appStoreVersionSubmissions 端点已废弃下线）
+    //    a) 创建 reviewSubmission（关联 App）
+    const reviewSubmission = await ascRequest<AscSingleResponse<Record<string, unknown>>>(
       jwt,
-      "/v1/appStoreVersionSubmissions",
+      "/v1/reviewSubmissions",
       "POST",
       {
         data: {
-          type: "appStoreVersionSubmissions",
-          relationships: { appStoreVersion: { data: { type: "appStoreVersions", id: versionId } } },
+          type: "reviewSubmissions",
+          attributes: {},
+          relationships: { app: { data: { type: "apps", id: app.id } } },
         },
       },
     );
+    const reviewSubmissionId = reviewSubmission.data?.id;
+    if (!reviewSubmissionId) throw new Error("ASC 创建 reviewSubmission 未返回 id");
+    //    b) 添加条目（关联 appStoreVersion）
+    await ascRequest(jwt, `/v1/reviewSubmissions/${reviewSubmissionId}/items`, "POST", {
+      data: {
+        type: "reviewSubmissionItems",
+        attributes: {},
+        relationships: {
+          appStoreVersion: { data: { type: "appStoreVersions", id: versionId } },
+        },
+      },
+    });
+    //    c) 确认提交（action=SUBMIT）
+    await ascRequest(jwt, `/v1/reviewSubmissions/${reviewSubmissionId}`, "PATCH", {
+      data: { type: "reviewSubmissions", attributes: { action: "SUBMIT" } },
+    });
     ctx.emit({
       type: "phase",
       phase: "done",
       message: `已提交 App Store 审核（releaseType=${releaseType}，审核通过后${releaseType === "MANUAL" ? "手动" : "定时"}上架）`,
     });
-    return { ok: true, ref: submission.data?.id };
+    return { ok: true, ref: reviewSubmissionId };
   }
 
   async status(): Promise<ReviewStatus> {

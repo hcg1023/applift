@@ -2,7 +2,7 @@
  * 腾讯应用宝（安卓 APK）渠道。
  * 权威: AngChow/android-publish scripts/_yyb_common.py + submit_apk.py + query_status.py（MIT），apkgo pkg/store/tencent 交叉验证
  * 官方文档: https://wikinew.open.qq.com/index.html#/iwiki/4015262492
- * v2 链路: query_app_detail（校验应用 + 取线上版本）→ get_file_upload_info（pkg_name/app_id/file_type=apk/file_name → COS 预签名 URL + serial_number）
+ * v2 链路: query_app_detail（校验应用）→ get_file_upload_info（pkg_name/app_id/file_type=apk/file_name → COS 预签名 URL + serial_number）
  *   → PUT 预签名 URL 直传 COS（预签名自带鉴权，无需自签 sign）→ update_app 提审（serial_number + md5）
  * 签名: HmacSHA256（公共参数 user_id + timestamp(秒) + 业务参数，按 key ASCII 升序）——仅 open API 需要，COS 上传不需要
  * 限额: 上传 100 次/天、更新 50 次/天；审核状态 audit_status 1=审核中 2=驳回 3=通过 8=撤销
@@ -30,9 +30,9 @@ interface YybRet {
   Ret?: number;
 }
 
-/** /query_app_detail 响应（app_info 携线上版本） */
+/** /query_app_detail 响应（扁平字段 app_name；官方 API 不提供线上版本号） */
 interface YybAppDetail extends YybRet {
-  app_info?: { app_name?: string; version?: string };
+  app_name?: string;
 }
 
 /** /get_file_upload_info 响应 —— 对拍 python/android-publish get_upload_info: pre_sign_url + serial_number */
@@ -119,17 +119,16 @@ export class YybChannel implements Channel {
     const fileName = path.basename(ctx.artifactPath);
     const fileSize = fs.statSync(ctx.artifactPath).size;
 
-    // step 1: 查询应用详情（校验 app 存在 + 拿线上版本号）
+    // step 1: 查询应用详情（校验 app 存在；pkg_name 与 update_app 一致，官方无 app_info 包装层、也无线上版本号）
     ctx.emit({ type: "progress", detail: "查询应用详情" });
     const detail = await yybApi<YybAppDetail>(
       "/query_app_detail",
       { userId, accessSecret },
-      { app_id: appId },
+      { pkg_name: pkgName, app_id: appId },
     );
-    const appInfo = detail.app_info ?? {};
     ctx.emit({
       type: "progress",
-      detail: `${appInfo.app_name ?? ""} 线上版本 ${appInfo.version ?? "?"}`,
+      detail: `应用「${detail.app_name ?? appId}」校验通过`,
     });
 
     // step 2: 获取上传信息 —— 对拍 python/android-publish get_upload_info: pkg_name+app_id+file_type=apk+file_name

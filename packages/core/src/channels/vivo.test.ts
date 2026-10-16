@@ -124,6 +124,15 @@ describe("VivoChannel 元数据", () => {
     // 覆盖点在本文件下方 status describe；此处仅保留元数据冒烟
     expect(new VivoChannel().capabilities.status).toBe(true);
   });
+  it("errorHints 覆盖现行码表（10001/10005/10011/12010），旧码 1002/46001 已删", () => {
+    const ch = new VivoChannel();
+    expect(ch.errorHints).toEqual({
+      "10001": "签名校验失败（检查 VIVO_ACCESS_SECRET 是否正确）",
+      "10005": "时间戳失效（检查系统时间偏差）",
+      "10011": "当天调用次数超限（约 50 次/天）",
+      "12010": "应用审核中，不允许更新",
+    });
+  });
 });
 
 describe("VivoChannel.status", () => {
@@ -406,6 +415,21 @@ describe("VivoChannel.submit", () => {
     });
     await expect(ch.submit(ctx)).rejects.toThrow("vivo 提审 updateDesc 需 5-200 字（当前 2 字）");
     expect(urlencoded(mock.calls[0])!.get("method")).toBe("app.query.details");
+  });
+  it("updateDesc 超过 200 字时拒绝提审", async () => {
+    const mock = installMock();
+    const ch = new VivoChannel();
+    const { ctx } = makeTestCtx({
+      credentials: CREDS,
+      target: TARGET,
+      artifactPath: apkPath,
+      updateDescription: "长".repeat(201),
+    });
+    await expect(ch.submit(ctx)).rejects.toThrow(
+      "vivo 提审 updateDesc 需 5-200 字（当前 201 字，超出上限），请精简更新说明",
+    );
+    // 未发出提审请求（仅 stage 的 upload + submit 的 query.details）
+    expect(mock.calls).toHaveLength(2);
   });
 
   it("跳过 stage 直接 submit：先现场上传再提审，versionCode/fileMd5 透传", async () => {

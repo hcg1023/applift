@@ -1,6 +1,7 @@
 /**
  * OPPO 应用市场（安卓 APK）渠道 —— app/upd 发布字段集/参数名以 python/android-publish oppo_submit.py 为权威对拍。
- * v2 链路: GET token（48h 有效）→ get-upload-url → multipart 上传（stage）→ 查 app/info（复用线上字段）→ app/upd 发布（submit）
+ * v2 链路: GET token（48h 有效）→ get-upload-url → multipart 上传（stage）→ 查 app/info（复用线上字段）→ app/upd 发布
+ *      → task-state 轮询确认异步任务结果（submit；app/upd 为异步任务，errno=0 仅代表受理）
  * 签名: HmacSHA256（公共参数 access_token + timestamp(秒) + api_sign）
  */
 import fs from "node:fs";
@@ -8,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { hmacSign, tsSeconds } from "./shared/sign.js";
+import { sleep } from "../util.js";
 import type {
   Channel,
   ChannelCapabilities,
@@ -19,6 +21,10 @@ import type {
 } from "../channel.js";
 
 const API_BASE = "https://oop-openapi-cn.heytapmobi.com";
+
+/** app/upd 异步任务结果轮询：间隔 10s（现行文档建议等待 ≥10s）× 最多 5 次 */
+const TASK_STATE_POLL_INTERVAL_MS = 10_000;
+const TASK_STATE_MAX_POLLS = 5;
 
 /** OPPO 开放平台响应外壳：errno=0 成功，错误信息在 data.message */
 interface OppoRet {
@@ -184,7 +190,10 @@ function buildUpdParams(
     app_name: infoField(appInfo, "app_name"),
     second_category_id: infoField(appInfo, "second_category_id"),
     third_category_id: infoField(appInfo, "third_category_id"),
-    summary: infoField(appInfo, "summary").slice(0, 13),
+    // 文档要求 ≤13 字符且不含任何标点符号和空格 —— 截断后再滤（避免标点/空格残留在尾部）
+    summary: infoField(appInfo, "summary")
+      .slice(0, 13)
+      .replace(/[\p{P}\p{Z}\s]/gu, ""),
     detail_desc: infoField(appInfo, "detail_desc"),
     update_desc: updateDesc,
     privacy_source_url: infoField(appInfo, "privacy_source_url"),
@@ -221,6 +230,9 @@ export class OppoChannel implements Channel {
     "911215": "应用已有版本在审核中（等待审核完成或到控制台撤回后再提）",
     "911216": "版本更新任务处理中（稍后用 status 查询结果）",
     "800002": "参数校验失败：常见于简介/截图等商店资料不符合规格",
+    "910003": "上传 sign 失效（sign 单次有效），重新发起上传即可重试",
+    "911045": "client_id 与包名不匹配（检查 API 客户端与应用的归属关系）",
+    "300002": "api_sign 签名错误（检查 client_secret 与系统时间偏移）",
   };
 
   /** stage 产物暂存（apkUrl/md5），submit 按 pkgName 取回 */
@@ -315,12 +327,12 @@ export class OppoChannel implements Channel {
   async submit(ctx: ChannelContext): Promise<SubmitResult> {
     const auth = await this.auth(ctx);
 
-    // step 3: 查询应用详情（发布字段从线上复用）
+    // step 3: 查询应用详情（发布字段从线上复用）；业务参数为 snake_case pkg_name —— 现行文档 id=11004
     const info = checkErrno(
       await oppoApi(
         "/resource/v1/app/info",
         auth,
-        { pkgName: auth.pkgName },
+        { pkg_name: auth.pkgName },
         "GET",
         "查询应用详情",
       ),
@@ -347,7 +359,8 @@ export class OppoChannel implements Channel {
     const updParams = buildUpdParams(appInfo, staged.apkUrl, staged.md5, versionCode, updateDesc);
     ctx.emit({ type: "phase", phase: "submit" });
     const upd = await oppoApi("/resource/v1/app/upd", auth, updParams, "POST", "发布版本");
-    // errno 911215/911216 非失败语义 —— 对拍 apkgo oppo.go（python 无 task-state 轮询，确认不补轮询）:
+    // errno 911215/911216 非失败语义 —— 对拍 apkgo oppo.go（python 无 task-state 轮询；
+    // 现行文档另提供「获取任务状态」接口，errno=0 路径已补轮询，见下方 pollTaskState）:
     //   911215 应用审核中 —— 该版本已在 OPPO 审核队列，本次未重复创建任务（apkgo 视为成功终态）
     //   911216 版本更新任务处理中 —— 上一提交任务仍在处理，OPPO 保留了早前提交
     if (upd.errno === 911215 || upd.errno === 911216) {
@@ -362,6 +375,9 @@ export class OppoChannel implements Channel {
       return { ok: true, ref: `errno=${upd.errno} ${inReview ? "已在审核队列" : "任务处理中"}` };
     }
     checkErrno(upd, "发布版本");
+    // app/upd 是异步任务：errno=0 仅代表已受理，轮询 task-state 确认处理结果
+    // （包名校验失败等在异步段暴露，不轮询会误报成功）
+    await this.pollTaskState(ctx, auth, versionCode);
     ctx.emit({
       type: "phase",
       phase: "done",
@@ -371,8 +387,61 @@ export class OppoChannel implements Channel {
   }
 
   /**
+   * app/upd 异步任务结果轮询: POST /resource/v1/app/task-state（业务参数 pkg_name+version_code，
+   * 现行文档「获取任务状态」）。task_state: 1=待处理（继续等）、2=处理成功、3=处理失败（err_msg 透出）；
+   * 间隔 10s × 最多 5 次，超时视为已受理但异步结果未知（warn 提示，稍后可用 status 查询审核状态）。
+   */
+  private async pollTaskState(
+    ctx: ChannelContext,
+    auth: { clientId: string; clientSecret: string; pkgName: string; token: string },
+    versionCode: string,
+  ): Promise<void> {
+    for (let attempt = 1; attempt <= TASK_STATE_MAX_POLLS; attempt++) {
+      await sleep(TASK_STATE_POLL_INTERVAL_MS);
+      const st = checkErrno(
+        await oppoApi(
+          "/resource/v1/app/task-state",
+          auth,
+          { pkg_name: auth.pkgName, version_code: versionCode },
+          "POST",
+          "查询任务状态",
+        ),
+        "查询任务状态",
+      );
+      const taskState = st.data?.["task_state"];
+      if (taskState === 2) {
+        ctx.emit({
+          type: "progress",
+          detail: `任务处理成功（task_state=2，第 ${attempt} 次轮询确认）`,
+        });
+        return;
+      }
+      if (taskState === 3) {
+        const errMsg = st.data?.["err_msg"];
+        throw new Error(
+          `OPPO 发布任务处理失败（task_state=3）: ${
+            typeof errMsg === "string" && errMsg ? errMsg : JSON.stringify(st.data).slice(0, 200)
+          }`,
+        );
+      }
+      ctx.emit({
+        type: "progress",
+        detail: `任务处理中（task_state=${String(taskState)}，第 ${attempt}/${TASK_STATE_MAX_POLLS} 次）`,
+      });
+    }
+    ctx.emit({
+      type: "warn",
+      message: `任务状态轮询 ${TASK_STATE_MAX_POLLS} 次未到终态：app/upd 已受理但异步处理结果未知，请稍后用 status 查询审核状态`,
+    });
+  }
+
+  /**
    * 审核状态查询: GET /resource/v1/app/info（公共参数 + api_sign，同 stage）
-   * → data.audit_status（android-publish oppo_query.py: 1=待提审 2=审核中 3=通过 4=驳回）。
+   * → data.audit_status 按现行「审核状态对照表」映射（id=10998）:
+   *   1=审核中、4=运营审核中 → reviewing；2=审核通过、6=运营通过 → approved；111=上线 → approved+live；
+   *   3=测试不通过、5=运营打回、444=审核不通过 → rejected（原因读 refuse_reason，原样透出不解析）；
+   *   0=未发布、7=定时发布、22=已冻结 → unknown+raw；其余编号（00/11/-11 资质类、222 下架等）→ unknown。
+   * 旧映射（1=待提审 2=审核中 3=通过 4=驳回，出自 python oppo_query.py）与现行对照表整体错位，已重写。
    */
   async status(ctx: Pick<ChannelContext, "credentials" | "target">): Promise<ReviewStatus> {
     const clientId = this.required(ctx, "OPPO_CLIENT_ID");
@@ -383,7 +452,7 @@ export class OppoChannel implements Channel {
       await oppoApi(
         "/resource/v1/app/info",
         { clientId, clientSecret, token },
-        { pkgName },
+        { pkg_name: pkgName },
         "GET",
         "查询审核状态",
       ),
@@ -402,20 +471,30 @@ export class OppoChannel implements Channel {
       return { state: "unknown", raw: `audit_status=${String(auditStatus)}` };
     }
     switch (num) {
-      case 2:
+      case 1: // 审核中
+      case 4: // 运营审核中
         return { state: "reviewing" };
-      case 3:
+      case 2: // 审核通过（未上线）
+      case 6: // 运营通过（未上线）
+        return { state: "approved", live: false };
+      case 111: // 上线
         return { state: "approved", live: true };
-      case 4: {
-        // 驳回原因字段 refuse_reason —— 对拍 apkgo oppo.go appData（v1 的 audit_reject_reason/rejectReason 为推测字段名，删除）
+      case 3: // 测试不通过
+      case 5: // 运营打回
+      case 444: {
+        // 审核不通过；驳回原因字段 refuse_reason（id=11004 DetailBody）—— 线上常为 PHP 序列化串，原样透出不解析
         const reason = data["refuse_reason"];
         return {
           state: "rejected",
           reason: typeof reason === "string" && reason ? reason : undefined,
         };
       }
-      case 1:
-        return { state: "unknown", raw: "待提审（audit_status=1）" };
+      case 0: // 未发布
+        return { state: "unknown", raw: "未发布（audit_status=0）" };
+      case 7: // 定时发布
+        return { state: "unknown", raw: "定时发布（audit_status=7）" };
+      case 22: // 已冻结
+        return { state: "unknown", raw: "已冻结（audit_status=22）" };
       default:
         return { state: "unknown", raw: `audit_status=${num}（未验证编号）` };
     }

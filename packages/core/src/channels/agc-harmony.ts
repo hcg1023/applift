@@ -246,6 +246,13 @@ export class AgcHarmonyChannel implements Channel {
     // step 5: 轮询编译状态
     if (packageId) await this.awaitCompile(ctx, appId, packageId, headers);
 
+    // 官方要求：升级版本 newFeatures 必填——缺失可能在提审被拒（审计 2026-10）
+    if (!ctx.updateDescription)
+      ctx.emit({
+        type: "warn",
+        message: "未提供更新说明（--note）：AGC 升级版本要求 newFeatures 必填，提审可能被拒",
+      });
+
     // step 6: 提审（204144719/204144727 = 仍在编译，可重试）
     ctx.emit({ type: "phase", phase: "submit" });
     const submitDeadline = Date.now() + COMPILE_TIMEOUT_MS;

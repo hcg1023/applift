@@ -1,8 +1,7 @@
 /**
  * 荣耀渠道业务流程测试：同一渠道实例 + 同一真实临时产物，stage() → submit() → status()。
  * 业务不变量：
- *   1. 请求顺序 = iam token → get-file-upload-url → 签名地址上传 → update-file-info（绑定 objectId）
- *      → update-language-info（best-effort）→ submit-audit → get-audit-result
+ *      → get-app-detail（取现有文案）→ update-language-info（best-effort）→ submit-audit → get-app-current-release
  *   2. stage 绑定的 objectId 即产物登记凭据（提审的是刚上传的包，非线上旧包）
  *   3. 事件流 phase 序列完整：auth→upload→bind | submit→done
  *   4. status 终态与提审结果一致（auditResult=1 → approved，全网发布通过即上架）
@@ -29,8 +28,9 @@ function seqOf(calls: Array<{ url: string }>): string[] {
     if (c.url.includes("upload.example.com")) return "upload";
     if (c.url.includes("update-file-info")) return "update-file-info";
     if (c.url.includes("update-language-info")) return "update-language-info";
+    if (c.url.includes("get-app-detail")) return "get-app-detail";
     if (c.url.includes("submit-audit")) return "submit-audit";
-    if (c.url.includes("get-audit-result")) return "get-audit-result";
+    if (c.url.includes("get-app-current-release")) return "get-app-current-release";
     throw new Error(`未预期的请求: ${c.url}`);
   });
 }
@@ -49,9 +49,16 @@ describe("荣耀渠道 业务流程", () => {
       },
       { match: "upload.example.com", response: { json: { code: 0 } } },
       { match: "update-file-info", response: { json: { code: 0 } } },
+      {
+        match: "get-app-detail",
+        response: { json: { code: 0, data: { appName: "演示应用", intro: "应用介绍" } } },
+      },
       { match: "update-language-info", response: { json: { code: 0 } } },
       { match: "submit-audit", response: { json: { code: 0, data: "rel-20261016" } } },
-      { match: "get-audit-result", response: { json: { code: 0, data: [{ auditResult: 1 }] } } },
+      {
+        match: "get-app-current-release",
+        response: { json: { code: 0, data: { auditResult: 1 } } },
+      },
       { match: "/auth/token", response: { json: { access_token: "honor-tok" } } },
     ]);
     const ch = new HonorChannel();
@@ -79,10 +86,11 @@ describe("荣耀渠道 业务流程", () => {
       "upload",
       "update-file-info", // stage
       "token",
+      "get-app-detail",
       "update-language-info",
       "submit-audit", // submit
       "token",
-      "get-audit-result", // status
+      "get-app-current-release", // status
     ]);
 
     // 不变量 3：事件流 phase 序列

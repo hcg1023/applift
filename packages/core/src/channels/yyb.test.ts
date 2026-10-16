@@ -30,12 +30,12 @@ const APK_MD5 = crypto.createHash("md5").update(Buffer.from(APK_CONTENT, "utf8")
 const apkPath = path.join(os.tmpdir(), APK_NAME);
 const SERIAL = "3021000012345678";
 
-/** stage 成功链路的标准路由（detail 携带 app_info；upload_info 携带 pre_sign_url + 数字 serial_number） */
+/** stage 成功链路的标准路由（detail 扁平 app_name；upload_info 携带 pre_sign_url + 数字 serial_number） */
 function stageRoutes() {
   return [
     {
       match: "/query_app_detail",
-      response: { json: { ret: 0, app_info: { app_name: "千云司机端", version: "3.2.0" } } },
+      response: { json: { ret: 0, app_name: "千云司机端" } },
     },
     {
       match: "/get_file_upload_info",
@@ -235,13 +235,19 @@ describe("YybChannel.stage", () => {
     ]);
     expect(m.calls.some((c) => c.url.includes("update_app"))).toBe(false);
 
-    // step 1 签名覆盖 user_id/timestamp/app_id
+    // step 1 签名覆盖 user_id/timestamp/pkg_name/app_id
     const qp = expectApiCall(m.calls[0], "/query_app_detail");
     expect(qp.get("user_id")).toBe("1000123");
+    expect(qp.get("pkg_name")).toBe("com.qianyun.driver");
     expect(qp.get("app_id")).toBe("20240001");
     expect(qp.get("timestamp")).toMatch(/^\d+$/);
     expect(qp.get("sign")).toBe(
-      hmacSign(SECRET, { user_id: "1000123", timestamp: qp.get("timestamp"), app_id: "20240001" }),
+      hmacSign(SECRET, {
+        user_id: "1000123",
+        timestamp: qp.get("timestamp"),
+        pkg_name: "com.qianyun.driver",
+        app_id: "20240001",
+      }),
     );
 
     // step 2 —— 对拍 python get_upload_info: pkg_name+app_id+file_type=apk+file_name
@@ -273,7 +279,7 @@ describe("YybChannel.stage", () => {
     // 结果与事件
     expect(res).toEqual({ ok: true, ref: SERIAL });
     expect(events.map((e) => e.type)).toEqual(["progress", "progress", "phase", "phase"]);
-    expect(events[1]).toEqual({ type: "progress", detail: "千云司机端 线上版本 3.2.0" });
+    expect(events[1]).toEqual({ type: "progress", detail: "应用「千云司机端」校验通过" });
     expect(events[2]).toEqual({
       type: "phase",
       phase: "upload",
@@ -283,7 +289,7 @@ describe("YybChannel.stage", () => {
     m.restore();
   });
 
-  it("detail 无 app_info：进度降级，链路不受影响", async () => {
+  it("detail 无 app_name：进度回退为 app_id，链路不受影响", async () => {
     const m = mockFetch([
       { match: "/query_app_detail", response: { json: { ret: 0 } } },
       {
@@ -300,7 +306,7 @@ describe("YybChannel.stage", () => {
 
     const res = await new YybChannel().stage(ctx);
 
-    expect(events[1]).toEqual({ type: "progress", detail: " 线上版本 ?" });
+    expect(events[1]).toEqual({ type: "progress", detail: "应用「20240001」校验通过" });
     expect(res).toEqual({ ok: true, ref: SERIAL });
     m.restore();
   });
@@ -338,7 +344,7 @@ describe("YybChannel.stage", () => {
 
   it("get_file_upload_info ret!=0 抛错（兼容大写 Ret=0 成功）", async () => {
     const m = mockFetch([
-      { match: "/query_app_detail", response: { json: { ret: 0, app_info: {} } } },
+      { match: "/query_app_detail", response: { json: { ret: 0 } } },
       { match: "/get_file_upload_info", response: { json: { Ret: 1002, msg: "no permission" } } },
     ]);
     const { ctx } = makeTestCtx({ credentials: CREDS, target: TARGET, artifactPath: apkPath });
@@ -352,7 +358,7 @@ describe("YybChannel.stage", () => {
 
   it("返回缺少 pre_sign_url 或 serial_number 抛错", async () => {
     const m = mockFetch([
-      { match: "/query_app_detail", response: { json: { ret: 0, app_info: {} } } },
+      { match: "/query_app_detail", response: { json: { ret: 0 } } },
       {
         match: "/get_file_upload_info",
         response: { json: { ret: 0, serial_number: 3021000012345678 } },

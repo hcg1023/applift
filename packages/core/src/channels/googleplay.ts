@@ -41,10 +41,11 @@ interface UploadResult {
   versionCode?: number;
 }
 
-/** track releases 条目（status: completed/inProgress/halted/draft） */
+/** track releases 条目（status: completed/inProgress/halted/draft；userFraction 为分阶段发布比例，合并 PUT 时原样透传） */
 interface TrackRelease {
   versionCodes?: number[];
   status?: string;
+  userFraction?: number;
   releaseNotes?: Array<{ language?: string; text?: string }>;
 }
 
@@ -265,12 +266,28 @@ export class GooglePlayChannel implements Channel {
     ctx.emit({ type: "progress", detail: `上传成功（versionCode: ${versionCode}）` });
 
     // step 3: 部署到轨道（completed；releaseNotes zh-CN，仅 submit 有文案时携带）
+    // 先 GET 轨道现有 releases 再合并 PUT：目标 release（同 status=completed 配置）追加新 versionCode，
+    // 其余 releases 原样保留（status/userFraction 不变），避免整轨覆盖把旧版本从轨道剔除
+    const currentTrack = await apiFetch<{ releases?: TrackRelease[] }>(
+      `${API_BASE}/${pkgName}/edits/${editId}/tracks/${track}`,
+      token,
+      { method: "GET" },
+      `读取 ${track} 轨道现有 releases`,
+    );
+    const releases: TrackRelease[] = [...(currentTrack.releases ?? [])];
     const release: TrackRelease = { versionCodes: [versionCode], status: "completed" };
     if (releaseNotes) release.releaseNotes = [{ language: "zh-CN", text: releaseNotes }];
+    const target = releases.find((r) => r.status === "completed");
+    if (target) {
+      target.versionCodes = [...(target.versionCodes ?? []), versionCode];
+      if (release.releaseNotes) target.releaseNotes = release.releaseNotes;
+    } else {
+      releases.push(release);
+    }
     await apiFetch(
       `${API_BASE}/${pkgName}/edits/${editId}/tracks/${track}`,
       token,
-      { method: "PUT", body: JSON.stringify({ releases: [release] }) },
+      { method: "PUT", body: JSON.stringify({ releases }) },
       `部署 ${track} 轨道`,
     );
     ctx.emit({
@@ -300,8 +317,9 @@ export class GooglePlayChannel implements Channel {
   async status(ctx: Pick<ChannelContext, "credentials" | "target">): Promise<ReviewStatus> {
     const pkgName = this.requirePkgName(ctx);
     const token = await getAccessToken(ctx.credentials);
+    // 官方只读端点（无 editId）：GET /applications/{pkg}/tracks/production 直接读正式轨当前状态
     const track = await apiFetch<{ releases?: TrackRelease[] }>(
-      `${API_BASE}/${pkgName}/edits/-/tracks/production`,
+      `${API_BASE}/${pkgName}/tracks/production`,
       token,
       { method: "GET" },
       "查询 production 轨道",

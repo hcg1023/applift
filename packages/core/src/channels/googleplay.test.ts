@@ -226,7 +226,10 @@ describe("GooglePlayChannel.stage（internal 轨道）", () => {
     expect(upload.body).toBeInstanceOf(ReadableStream);
     expect(await readStreamToBuffer(upload.body)).toEqual(aabBytes);
     expect(upload.headers["Content-Length"]).toBe(String(aabBytes.length));
-    const track = mock.find("/tracks/internal")!;
+    // 部署前先 GET 轨道现有 releases（空轨道 → 维持仅新 release 的旧行为）
+    const trackGet = mock.find("/tracks/internal", "GET")!;
+    expect(trackGet.url).toBe(`${API_BASE}/${PKG}/edits/${EDIT_ID}/tracks/internal`);
+    const track = mock.find("/tracks/internal", "PUT")!;
     expect(track.method).toBe("PUT");
     expect(JSON.parse(track.body as string)).toEqual({
       releases: [{ versionCodes: [VERSION_CODE], status: "completed" }],
@@ -247,6 +250,44 @@ describe("GooglePlayChannel.stage（internal 轨道）", () => {
     const { ctx } = makeCtx({ artifactPath: apkPath });
     await new GooglePlayChannel().stage(ctx);
     expect(mock.find("uploadType=media")!.url).toContain(`/edits/${EDIT_ID}/apks?uploadType=media`);
+  });
+
+  it("internal 合并存量 completed release：无新文案时保留原 releaseNotes", async () => {
+    const mock = mockFetch([
+      { match: "oauth2.googleapis.com/token", response: { json: { access_token: TOKEN } } },
+      { match: /\/edits$/, response: { json: { id: EDIT_ID } } },
+      { match: "uploadType=media", response: { json: { versionCode: VERSION_CODE } } },
+      {
+        match: "/tracks/internal",
+        method: "GET",
+        response: {
+          json: {
+            releases: [
+              {
+                versionCodes: [7],
+                status: "completed",
+                releaseNotes: [{ language: "zh-CN", text: "旧文案" }],
+              },
+            ],
+          },
+        },
+      },
+      { match: "/tracks/internal", method: "PUT", response: { json: {} } },
+      { match: ":commit", response: { json: {} } },
+    ]);
+    const { ctx } = makeCtx();
+    await new GooglePlayChannel().stage(ctx);
+    const track = mock.find("/tracks/internal", "PUT")!;
+    // 存量 completed release 追加新 versionCode；stage 无文案 → 原 releaseNotes 原样保留
+    expect(JSON.parse(track.body as string)).toEqual({
+      releases: [
+        {
+          versionCodes: [7, VERSION_CODE],
+          status: "completed",
+          releaseNotes: [{ language: "zh-CN", text: "旧文案" }],
+        },
+      ],
+    });
   });
 
   it("非 aab/apk 产物报错", async () => {
@@ -280,7 +321,7 @@ describe("GooglePlayChannel.submit（production 轨道）", () => {
     const { ctx } = makeCtx({ updateDescription: "修复若干问题" });
     const result = await new GooglePlayChannel().submit(ctx);
     expect(result.ok).toBe(true);
-    const track = mock.find("/tracks/production")!;
+    const track = mock.find("/tracks/production", "PUT")!;
     expect(JSON.parse(track.body as string)).toEqual({
       releases: [
         {
@@ -288,6 +329,70 @@ describe("GooglePlayChannel.submit（production 轨道）", () => {
           status: "completed",
           releaseNotes: [{ language: "zh-CN", text: "修复若干问题" }],
         },
+      ],
+    });
+  });
+
+  it("合并存量 releases：目标 completed release 追加 versionCode，其余原样保留（status/userFraction 不变）", async () => {
+    const mock = mockFetch([
+      { match: "oauth2.googleapis.com/token", response: { json: { access_token: TOKEN } } },
+      { match: /\/edits$/, response: { json: { id: EDIT_ID } } },
+      { match: "uploadType=media", response: { json: { versionCode: VERSION_CODE } } },
+      {
+        match: "/tracks/production",
+        method: "GET",
+        response: {
+          json: {
+            releases: [
+              { versionCodes: [40], status: "completed" },
+              { versionCodes: [39], status: "inProgress", userFraction: 0.1 },
+            ],
+          },
+        },
+      },
+      { match: "/tracks/production", method: "PUT", response: { json: {} } },
+      { match: ":commit", response: { json: {} } },
+    ]);
+    const { ctx } = makeCtx({ updateDescription: "修复若干问题" });
+    await new GooglePlayChannel().submit(ctx);
+    // 先读后写：GET 走 edit 内轨道端点且在 PUT 之前
+    const trackGet = mock.find("/tracks/production", "GET")!;
+    expect(trackGet.url).toBe(`${API_BASE}/${PKG}/edits/${EDIT_ID}/tracks/production`);
+    const track = mock.find("/tracks/production", "PUT")!;
+    expect(mock.calls.indexOf(trackGet)).toBeLessThan(mock.calls.indexOf(track));
+    // 存量 completed release 追加新 versionCode（携带新文案），分阶段 inProgress release 原样保留
+    expect(JSON.parse(track.body as string)).toEqual({
+      releases: [
+        {
+          versionCodes: [40, VERSION_CODE],
+          status: "completed",
+          releaseNotes: [{ language: "zh-CN", text: "修复若干问题" }],
+        },
+        { versionCodes: [39], status: "inProgress", userFraction: 0.1 },
+      ],
+    });
+  });
+
+  it("存量无 completed release 时追加新 release，不覆盖存量（draft 原样）", async () => {
+    const mock = mockFetch([
+      { match: "oauth2.googleapis.com/token", response: { json: { access_token: TOKEN } } },
+      { match: /\/edits$/, response: { json: { id: EDIT_ID } } },
+      { match: "uploadType=media", response: { json: { versionCode: VERSION_CODE } } },
+      {
+        match: "/tracks/production",
+        method: "GET",
+        response: { json: { releases: [{ versionCodes: [38], status: "draft" }] } },
+      },
+      { match: "/tracks/production", method: "PUT", response: { json: {} } },
+      { match: ":commit", response: { json: {} } },
+    ]);
+    const { ctx } = makeCtx();
+    await new GooglePlayChannel().submit(ctx);
+    const track = mock.find("/tracks/production", "PUT")!;
+    expect(JSON.parse(track.body as string)).toEqual({
+      releases: [
+        { versionCodes: [38], status: "draft" },
+        { versionCodes: [VERSION_CODE], status: "completed" },
       ],
     });
   });
@@ -356,12 +461,14 @@ describe("GooglePlayChannel.status", () => {
     });
   });
 
-  it("GET 请求路径含 edits/- 占位", async () => {
+  it("GET 官方只读端点（无 editId，不走 /edits/- 占位）", async () => {
     const mock = mockFetch(statusRoutes([{ status: "completed" }]));
     const { ctx } = makeCtx();
     await new GooglePlayChannel().status(ctx);
-    expect(mock.find("/tracks/production")!.method).toBe("GET");
-    expect(mock.find("/tracks/production")!.url).toContain(`/edits/-/tracks/production`);
+    const call = mock.find("/tracks/production")!;
+    expect(call.method).toBe("GET");
+    expect(call.url).toBe(`${API_BASE}/${PKG}/tracks/production`);
+    expect(call.url).not.toContain("/edits/");
   });
 });
 

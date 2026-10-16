@@ -13,6 +13,12 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { OppoChannel } from "./oppo.js";
 import { mockFetch, makeTestCtx } from "../test-utils.js";
 
+// submit 后的 task-state 轮询会真实 sleep，打桩为立即返回（间隔契约在 oppo.test.ts 已覆盖）
+vi.mock("../util.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  sleep: vi.fn(async () => {}),
+}));
+
 let artifactPath: string;
 
 beforeAll(() => {
@@ -53,7 +59,7 @@ function installMock() {
       match: "/resource/v1/app/info",
       response: () => {
         infoCalls += 1;
-        // 第 1 次发布字段查询（无审核位），此后（status 查询）带 audit_status=3
+        // 第 1 次发布字段查询（无审核位），此后（status 查询）audit_status=111（现行对照表：111=上线）
         return infoCalls === 1
           ? {
               json: {
@@ -65,10 +71,14 @@ function installMock() {
                 },
               },
             }
-          : { json: { errno: 0, data: { pkg_name: "com.demo.oppo", audit_status: 3 } } };
+          : { json: { errno: 0, data: { pkg_name: "com.demo.oppo", audit_status: 111 } } };
       },
     },
     { match: "/resource/v1/app/upd", response: { json: { errno: 0, data: { task_id: "t-1" } } } },
+    {
+      match: "/resource/v1/app/task-state",
+      response: { json: { errno: 0, data: { task_state: 2 } } },
+    },
   ]);
 }
 
@@ -79,6 +89,7 @@ function seqOf(calls: Array<{ url: string }>): string[] {
     if (c.url.includes("file.upload.example.com")) return "upload";
     if (c.url.includes("/resource/v1/app/info")) return "app/info";
     if (c.url.includes("/resource/v1/app/upd")) return "app/upd";
+    if (c.url.includes("/resource/v1/app/task-state")) return "task-state";
     throw new Error(`未预期的请求: ${c.url}`);
   });
 }
@@ -108,6 +119,7 @@ describe("OPPO 渠道 业务流程", () => {
       "token",
       "app/info",
       "app/upd", // submit（复用 staged，不再 get-upload-url/upload）
+      "task-state", // app/upd 异步任务结果确认
       "token",
       "app/info", // status
     ]);
@@ -129,7 +141,7 @@ describe("OPPO 渠道 业务流程", () => {
       "done",
     ]);
 
-    // 不变量 4：audit_status=3 → approved 已上架
+    // 不变量 4：audit_status=111（上线）→ approved 已上架
     expect(st).toEqual({ state: "approved", live: true });
   });
 
@@ -147,7 +159,14 @@ describe("OPPO 渠道 业务流程", () => {
     expect(submitted.ok).toBe(true);
 
     // 不变量 2：回退链顺序 = token → app/info → get-upload-url → upload → app/upd
-    expect(seqOf(calls)).toEqual(["token", "app/info", "get-upload-url", "upload", "app/upd"]);
+    expect(seqOf(calls)).toEqual([
+      "token",
+      "app/info",
+      "get-upload-url",
+      "upload",
+      "app/upd",
+      "task-state",
+    ]);
     expect(
       events.some((e) => e.type === "progress" && String(e.detail).includes("无 stage 产物")),
     ).toBe(true);

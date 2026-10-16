@@ -33,11 +33,16 @@ interface HonorRet {
   msg?: string;
 }
 
-/** get-audit-result 数据项（编号体系与 get-app-current-release 一致，参照 apkgo） */
+/** get-app-current-release 数据项: 0=审核中 1=通过 2=不通过 3=未提交 4=编辑中 */
 interface HonorAuditItem {
-  releaseId?: string;
   auditResult?: number;
   auditMessage?: string;
+}
+
+/** get-app-detail 返回的现有多语言文案（取 zh-CN 透传用） */
+interface HonorAppDetail {
+  appName?: string;
+  intro?: string;
 }
 
 /** 荣耀 iam token（client_credentials）；非 JSON 响应按 HTTP 状态报错 */
@@ -114,6 +119,34 @@ async function honorPostQ<T extends HonorRet>(
   return honorPost<T>(`${apiPath}?${qs}`, token, bodyObj, context);
 }
 
+/** 带 appId query 的 GET（查询类接口，仅 Bearer 鉴权无 body） */
+async function honorGetQ<T extends HonorRet>(
+  apiPath: string,
+  appId: string,
+  token: string,
+  context: string,
+): Promise<T> {
+  const qs = new URLSearchParams({ appId }).toString();
+  const res = await fetch(`${PUBLISH_BASE}${apiPath}?${qs}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(60_000),
+  });
+  const text = await res.text();
+  let json: T;
+  try {
+    json = JSON.parse(text) as T;
+  } catch {
+    throw new Error(`荣耀 ${context}返回非 JSON（HTTP ${res.status}）: ${text.slice(0, 300)}`);
+  }
+  if (json.code !== 0) {
+    throw new Error(
+      `荣耀 ${context}失败 code=${json.code} ${json.msg ?? ""}: ${text.slice(0, 200)}`,
+    );
+  }
+  return json;
+}
+
 /** RFC3339 → 荣耀定时发布格式：偏移不带冒号（+08:00→+0800）、Z→+0000，如 2026-06-20T10:00:00+0800（形状参照 apkgo submitAudit） */
 function honorReleaseTime(rfc3339: string): string {
   const converted = rfc3339.replace(/([+-]\d{2}):(\d{2})$/, "$1$2").replace(/Z$/, "+0000");
@@ -133,6 +166,12 @@ export class HonorChannel implements Channel {
     status: true,
   };
   readonly errorHints = {
+    // 现行文档高频错误码
+    "10003": "token 过期（CLI 每次现取，若出现请重试）",
+    "20022": "已有审核中的版本，需等待审核完成后再提交",
+    "30006": "版本号必须大于等于已上架版本",
+    "30011": "提交过于频繁，请稍后再试",
+    // 以下两码未见于现行文档，保留历史经验值
     "100030001": "认证失败：Client ID/Secret 无效或未开通 API 权限",
     "100030002": "token 过期（CLI 每次现取，若出现请重试）",
   };
@@ -222,14 +261,37 @@ export class HonorChannel implements Channel {
     const appId = required(ctx, "appId");
     const token = await this.fetchToken(ctx);
 
-    // step 4: 更新文案（best-effort；荣耀要求控制台已有应用简介，空则报错但不阻断提审主链路）
+    // step 4: 更新文案（best-effort；现行文档要求 languageInfoList 携带现有 appName/intro 透传，
+    // 故先查 get-app-detail 取回现有文案，查不到则 warn 跳过，不阻断提审主链路）
     if (ctx.updateDescription) {
       try {
+        if (ctx.updateDescription.length > 500) {
+          throw new Error(`更新文案超过 500 字（当前 ${ctx.updateDescription.length} 字）`);
+        }
+        const detail = await honorPostQ<HonorRet & { data?: HonorAppDetail }>(
+          "/openapi/v1/publish/get-app-detail",
+          appId,
+          token,
+          {},
+          "查询应用详情",
+        );
+        const { appName, intro } = detail.data ?? {};
+        if (!appName || !intro) {
+          throw new Error(
+            `应用详情缺 appName/intro: ${JSON.stringify(detail.data ?? {}).slice(0, 200)}`,
+          );
+        }
+        // setAll=0 仅更新 zh-CN，防止误清空其他语种文案
         await honorPostQ<HonorRet>(
           "/openapi/v1/publish/update-language-info",
           appId,
           token,
-          { newFeature: ctx.updateDescription },
+          {
+            languageInfoList: [
+              { languageId: "zh-CN", appName, intro, newFeature: ctx.updateDescription },
+            ],
+            setAll: 0,
+          },
           "更新文案",
         );
       } catch (e) {
@@ -261,27 +323,23 @@ export class HonorChannel implements Channel {
 
   async status(ctx: Pick<ChannelContext, "credentials" | "target">): Promise<ReviewStatus> {
     const appId = required(ctx, "appId", "审核状态查询必需");
-    const appIdNum = Number(appId);
-    if (!Number.isFinite(appIdNum)) {
-      throw new Error(`荣耀 appId 非数字: ${appId}（get-audit-result 要求 body 内为数字）`);
-    }
     const token = await this.fetchToken(ctx);
 
-    // get-audit-result 的 appId 走 body（数字数组），与其他发布接口的 query 传法不同
-    const json = await honorPost<HonorRet & { data?: HonorAuditItem[] }>(
-      "/openapi/v1/publish/get-audit-result",
+    // 查当前版本审核状态（query appId，无需 releaseId；appId 直接透传字符串）
+    const json = await honorGetQ<HonorRet & { data?: HonorAuditItem }>(
+      "/openapi/v1/publish/get-app-current-release",
+      appId,
       token,
-      { appId: [{ appId: appIdNum }] },
-      "查询审核结果",
+      "查询审核状态",
     );
-    const item = json.data?.[0];
+    const item = json.data;
     if (!item || item.auditResult === undefined) {
       return {
         state: "unknown",
-        raw: `get-audit-result 无数据: ${JSON.stringify(json).slice(0, 200)}`,
+        raw: `get-app-current-release 无数据: ${JSON.stringify(json).slice(0, 200)}`,
       };
     }
-    // 编号体系（参照 apkgo）: 0=审核中 1=审核通过 2=审核不通过 3=非审核状态 4=编辑中未提交
+    // 编号体系: 0=审核中 1=审核通过 2=审核不通过 3=未提交 4=编辑中
     switch (item.auditResult) {
       case 0:
         return { state: "reviewing" };
@@ -291,7 +349,7 @@ export class HonorChannel implements Channel {
       case 2:
         return { state: "rejected", reason: item.auditMessage };
       case 3:
-        return { state: "unknown", raw: "非审核状态（auditResult=3）" };
+        return { state: "unknown", raw: "未提交审核（auditResult=3）" };
       case 4:
         return { state: "unknown", raw: "编辑中未提交（auditResult=4）" };
       default:

@@ -246,7 +246,15 @@ describe("submit（ASC REST 提审）", () => {
       },
       { match: /relationships\/builds/, response: { status: 200, json: { data: [] } } },
       {
-        match: /appStoreVersionSubmissions$/,
+        match: /\/v1\/reviewSubmissions\/[^/]+\/items$/,
+        response: { status: 201, json: { data: { id: "RSI1" } } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions\/[^/]+$/,
+        response: { status: 200, json: { data: { id: "RS1", attributes: { action: "SUBMIT" } } } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions$/,
         response: { status: 201, json: { data: { id: "SUB1" } } },
       },
     ];
@@ -268,7 +276,7 @@ describe("submit（ASC REST 提审）", () => {
       expect(m.find("/v1/builds?")!.url).toContain("sort=-uploadedDate");
       // 3) 可编辑版本查询
       expect(m.find("appStoreVersions?filter[platform]")!.url).toContain(
-        "filter[appStoreState]=PREPARE_FOR_SUBMISSION,READY_FOR_SUBMISSION",
+        "filter[appVersionState]=PREPARE_FOR_SUBMISSION",
       );
       // 4) 创建版本 POST：MANUAL + 构建版本号 + app 关系
       const post = m.calls.find(
@@ -285,15 +293,36 @@ describe("submit（ASC REST 提审）", () => {
       const bind = m.find("relationships/builds")!;
       expect(bind.method).toBe("PATCH");
       expect(JSON.parse(bind.body as string)).toEqual({ data: [{ type: "builds", id: "B2" }] });
-      // 6) 提审 POST
-      const sub = m.calls.find(
-        (c) => c.method === "POST" && c.url.includes("/v1/appStoreVersionSubmissions"),
+      // 6) 提审三步流：POST reviewSubmissions（关联 App）
+      const rs = m.calls.find(
+        (c) => c.method === "POST" && c.url.endsWith("/v1/reviewSubmissions"),
       )!;
-      expect(JSON.parse(sub.body as string)).toEqual({
+      expect(JSON.parse(rs.body as string)).toEqual({
         data: {
-          type: "appStoreVersionSubmissions",
-          relationships: { appStoreVersion: { data: { type: "appStoreVersions", id: "VNEW" } } },
+          type: "reviewSubmissions",
+          attributes: {},
+          relationships: { app: { data: { type: "apps", id: "APP1" } } },
         },
+      });
+      // 7) POST reviewSubmissionItems（关联 appStoreVersion）
+      const item = m.calls.find(
+        (c) => c.method === "POST" && c.url.includes("/v1/reviewSubmissions/SUB1/items"),
+      )!;
+      expect(JSON.parse(item.body as string)).toEqual({
+        data: {
+          type: "reviewSubmissionItems",
+          attributes: {},
+          relationships: {
+            appStoreVersion: { data: { type: "appStoreVersions", id: "VNEW" } },
+          },
+        },
+      });
+      // 8) PATCH reviewSubmissions action=SUBMIT
+      const confirm = m.calls.find(
+        (c) => c.method === "PATCH" && c.url.endsWith("/v1/reviewSubmissions/SUB1"),
+      )!;
+      expect(JSON.parse(confirm.body as string)).toEqual({
+        data: { type: "reviewSubmissions", attributes: { action: "SUBMIT" } },
       });
       // 所有请求带 Bearer JWT
       for (const c of m.calls) expect(c.headers.Authorization).toMatch(/^Bearer ey/);
@@ -339,7 +368,7 @@ describe("submit（ASC REST 提审）", () => {
         platform: "IOS",
         versionString: "1.2.3",
         releaseType: "SCHEDULED",
-        earlyReleaseDate: "2026-11-01T10:00:00Z",
+        earliestReleaseDate: "2026-11-01T10:00:00Z",
       });
     } finally {
       m.restore();

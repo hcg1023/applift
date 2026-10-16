@@ -5,9 +5,12 @@
  *   sig = RSA_encrypt(证书公钥, JSON({sig: [{name, hash: MD5}...], password}))
  *   分段: 1024bit key → 每段 117 字节（128 - PKCS1 padding 11）
  * 链路: /dev/query 校验账号对包名权限 + 提审前版本回归预检 → /dev/push 上传即提审（synchroType=1 更新包，
- *       未传字段如 icon/privacyUrl 不覆盖线上值；无法只传包不提审）。
+ *       无法只传包不提审）。现行文档（2026-09 更新）文件参数表 icon 标「必选」、appInfo.privacyUrl 标「必选」，
+ *       旧版「未传字段如 icon/privacyUrl 不覆盖线上值」表述已不被现行文档支持；synchroType=1 不带素材是否仍被
+ *       受理待真机验证，若被拒需补传 icon 文件（其 MD5 追加进 SIG 的 sig 数组）。
+ *       另 2026-02-04 起 testAccount 须用新结构化格式（如 {"zh_CN":{"accounts":[...]}}），当前未传暂不受影响。
  * 移植自（MIT）: AngChow/android-publish scripts/_mi_common.py + mi_submit.py
- * 官方文档: https://dev.mi.com/distribute/doc/details?pId=1134
+ * 官方文档: https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1134
  */
 import { publicEncrypt, constants, X509Certificate } from "node:crypto";
 import fs from "node:fs";
@@ -75,7 +78,7 @@ interface MiRet {
 interface MiQueryRet extends MiRet {
   packageInfo?: {
     versionCode?: number | string;
-    onlineVersionCode?: number | string;
+    onlineVersionCode?: number | string; // 未见于现行文档（packageInfo 仅四字段），实测兼容字段，权威以 versionCode 为准
     versionName?: string;
   };
   /** 允许更新版本开关（mi_query.py「允许更新版本」；布尔，非版本号） */
@@ -141,8 +144,9 @@ export class XiaomiChannel implements Channel {
 
     // 提审前版本回归预检（对拍 python mi_query.py / apkgo xiaomi.go audit 的版本比较）：
     //   updateVersion 为「允许更新版本」布尔开关，显式 false=线上锁定（如审核中），直接拒；
-    //   待提审 versionCode（项目配置 android.stores.xiaomi.versionCode，可选）低于线上
-    //   packageInfo.onlineVersionCode/versionCode → 版本回退，拒绝并提示。
+    //   待提审 versionCode（项目配置 android.stores.xiaomi.versionCode，可选）低于线上版本 → 版本回退，拒绝并
+    //   提示。线上版本取 packageInfo.versionCode（现行文档字段）；onlineVersionCode 未见于现行文档，仅为
+    //   实测兼容回退字段（历史接口曾返回）。
     if (query.updateVersion === false) {
       throw new Error(
         "小米提审中止：线上不允许更新版本（updateVersion=false，可能审核中），请稍后再试或到小米开放平台确认",
@@ -156,7 +160,7 @@ export class XiaomiChannel implements Channel {
       );
     }
 
-    // push（上传即提审）
+    // push（上传即提审）；仅附 apk 不带素材 —— icon/privacyUrl 现行文档标必选，是否强制待真机验证（见文件头注释）
     const appInfo = {
       appName,
       packageName: pkgName,
@@ -231,7 +235,11 @@ export class XiaomiChannel implements Channel {
   }
 }
 
-/** MI_PASSWORD 为主键名（applift 沿用）；兼容 python 权威键名 MI_PRIVATE_KEY（_mi_common.get_mi_credentials） */
+/**
+ * MI_PASSWORD 为主键名（applift 沿用）；兼容 python 权威键名 MI_PRIVATE_KEY（_mi_common.get_mi_credentials）。
+ * 值为小米开放平台的「API 私钥」（SIG 加密的 password 材料），非开发者账号登录密码 ——
+ * 文档明确：访问密码即私钥，重置私钥后私钥变、小米分配的公钥不变。
+ */
 function miPassword(ctx: Pick<ChannelContext, "credentials" | "target">): string {
   const v = ctx.credentials.MI_PASSWORD ?? ctx.credentials.MI_PRIVATE_KEY;
   if (!v) throw new Error("小米渠道缺少 MI_PASSWORD（兼容别名 MI_PRIVATE_KEY）");

@@ -94,6 +94,14 @@ describe("HonorChannel 元数据", () => {
     expect(plan.afterApproval).toBe("scheduled");
     expect(plan.notes).toContain("releaseType=2");
   });
+
+  it("errorHints 覆盖现行高频错误码", () => {
+    const hints = new HonorChannel().errorHints;
+    expect(Object.keys(hints)).toContain("10003");
+    expect(hints["20022"]).toContain("已有审核中的版本");
+    expect(hints["30006"]).toContain("版本号");
+    expect(hints["30011"]).toContain("频繁");
+  });
 });
 
 describe("HonorChannel.stage", () => {
@@ -361,27 +369,86 @@ describe("HonorChannel.submit", () => {
     });
   });
 
-  it("updateDescription：先写 update-language-info(newFeature) 再提审", async () => {
+  it("updateDescription：先 get-app-detail 取现有文案，再 update-language-info(languageInfoList zh-CN 透传 appName/intro)", async () => {
     const mf = mockFetch([
       TOKEN_ROUTE,
+      {
+        match: "get-app-detail",
+        response: { json: { code: 0, data: { appName: "千云加速", intro: "一站式出海加速" } } },
+      },
       { match: "update-language-info", response: { json: { code: 0 } } },
       { match: "submit-audit", response: { json: { code: 0, data: RELEASE_ID } } },
     ]);
     await new HonorChannel().submit(makeCtx({ updateDescription: "修复若干已知问题" }));
 
+    // 查详情：appId 走 query，空 body
+    const detail = mf.find("get-app-detail")!;
+    expect(detail.url).toBe(`${PUBLISH_BASE}/openapi/v1/publish/get-app-detail?appId=${APP_ID}`);
+    expect(detail.method).toBe("POST");
+    expect(detail.headers.Authorization).toBe(`Bearer ${TOKEN}`);
+    expect(JSON.parse(detail.body as string)).toEqual({});
+
     const lang = mf.find("update-language-info")!;
     expect(lang.url).toBe(
       `${PUBLISH_BASE}/openapi/v1/publish/update-language-info?appId=${APP_ID}`,
     );
-    expect(JSON.parse(lang.body as string)).toEqual({ newFeature: "修复若干已知问题" });
-    // 顺序：token → 文案 → 提审
-    expect(mf.calls[1]!.url).toContain("update-language-info");
-    expect(mf.calls[2]!.url).toContain("submit-audit");
+    expect(JSON.parse(lang.body as string)).toEqual({
+      languageInfoList: [
+        {
+          languageId: "zh-CN",
+          appName: "千云加速",
+          intro: "一站式出海加速",
+          newFeature: "修复若干已知问题",
+        },
+      ],
+      setAll: 0,
+    });
+    // 顺序：token → 详情 → 文案 → 提审
+    expect(mf.calls[1]!.url).toContain("get-app-detail");
+    expect(mf.calls[2]!.url).toContain("update-language-info");
+    expect(mf.calls[3]!.url).toContain("submit-audit");
+  });
+
+  it("get-app-detail 失败 best-effort：warn 跳过文案更新，不调 update-language-info，仍提审成功", async () => {
+    const mf = mockFetch([
+      TOKEN_ROUTE,
+      { match: "get-app-detail", response: { json: { code: 10003, msg: "token 过期" } } },
+      { match: "submit-audit", response: { json: { code: 0, data: RELEASE_ID } } },
+    ]);
+    const events: Array<{ type: string; [k: string]: unknown }> = [];
+    const res = await new HonorChannel().submit(
+      makeCtx({ updateDescription: "新功能上线", emit: (e) => events.push(e) }),
+    );
+
+    expect(res).toEqual({ ok: true, ref: RELEASE_ID });
+    expect(mf.find("update-language-info")).toBeUndefined();
+    const warn = events.find((e) => e.type === "warn");
+    expect(warn?.message).toContain("更新文案未写入（不阻断）");
+    expect(warn?.message).toContain("荣耀 查询应用详情失败 code=10003 token 过期");
+    expect(mf.find("submit-audit")).toBeTruthy();
+  });
+
+  it("get-app-detail 缺 appName/intro 同样 warn 跳过", async () => {
+    const mf = mockFetch([
+      TOKEN_ROUTE,
+      { match: "get-app-detail", response: { json: { code: 0, data: {} } } },
+      { match: "submit-audit", response: { json: { code: 0, data: RELEASE_ID } } },
+    ]);
+    const events: Array<{ type: string; [k: string]: unknown }> = [];
+    await new HonorChannel().submit(
+      makeCtx({ updateDescription: "新功能上线", emit: (e) => events.push(e) }),
+    );
+    expect(mf.find("update-language-info")).toBeUndefined();
+    expect(events.find((e) => e.type === "warn")?.message).toContain("应用详情缺 appName/intro");
   });
 
   it("update-language-info 失败 best-effort：warn 不阻断，仍提审成功", async () => {
     const mf = mockFetch([
       TOKEN_ROUTE,
+      {
+        match: "get-app-detail",
+        response: { json: { code: 0, data: { appName: "千云加速", intro: "简介" } } },
+      },
       { match: "update-language-info", response: { json: { code: 40001, msg: "应用简介未填写" } } },
       { match: "submit-audit", response: { json: { code: 0, data: RELEASE_ID } } },
     ]);
@@ -395,6 +462,23 @@ describe("HonorChannel.submit", () => {
     expect(warn?.message).toContain("更新文案未写入（不阻断）");
     expect(warn?.message).toContain("荣耀 更新文案失败 code=40001 应用简介未填写");
     expect(mf.find("submit-audit")).toBeTruthy();
+  });
+
+  it("updateDescription 超 500 字 warn 跳过文案更新（不调 get-app-detail）", async () => {
+    const mf = mockFetch([
+      TOKEN_ROUTE,
+      { match: "submit-audit", response: { json: { code: 0, data: RELEASE_ID } } },
+    ]);
+    const events: Array<{ type: string; [k: string]: unknown }> = [];
+    const res = await new HonorChannel().submit(
+      makeCtx({ updateDescription: "长".repeat(501), emit: (e) => events.push(e) }),
+    );
+    expect(res).toEqual({ ok: true, ref: RELEASE_ID });
+    expect(mf.find("get-app-detail")).toBeUndefined();
+    expect(mf.find("update-language-info")).toBeUndefined();
+    expect(events.find((e) => e.type === "warn")?.message).toContain(
+      "更新文案超过 500 字（当前 501 字）",
+    );
   });
 
   it("定时上架：releaseTime 偏移去冒号（+08:00→+0800，支持毫秒），releaseType=2", async () => {
@@ -460,22 +544,24 @@ describe("HonorChannel.status", () => {
     return [
       TOKEN_ROUTE,
       {
-        match: "get-audit-result",
-        response: { json: { code: 0, data: [{ releaseId: "rel-1", auditResult, ...extra }] } },
+        match: "get-app-current-release",
+        response: { json: { code: 0, data: { auditResult, ...extra } } },
       },
     ];
   }
 
-  it("请求形状：appId 走 body 数字数组（不带 query），auditResult=0 → reviewing", async () => {
+  it("请求形状：GET get-app-current-release，appId 走 query（无需 releaseId），auditResult=0 → reviewing", async () => {
     const mf = mockFetch(statusRoutes(0));
     const st = await new HonorChannel().status(makeCtx());
 
     expect(st).toEqual({ state: "reviewing" });
-    const call = mf.find("get-audit-result")!;
-    expect(call.url).toBe(`${PUBLISH_BASE}/openapi/v1/publish/get-audit-result`); // 例外：不走 query
-    expect(call.method).toBe("POST");
+    const call = mf.find("get-app-current-release")!;
+    expect(call.url).toBe(
+      `${PUBLISH_BASE}/openapi/v1/publish/get-app-current-release?appId=${APP_ID}`,
+    );
+    expect(call.method).toBe("GET");
     expect(call.headers.Authorization).toBe(`Bearer ${TOKEN}`);
-    expect(JSON.parse(call.body as string)).toEqual({ appId: [{ appId: Number(APP_ID) }] });
+    expect(call.body).toBeUndefined();
   });
 
   it("auditResult=1 → approved（审核通过即自动上架 live=true）", async () => {
@@ -486,7 +572,7 @@ describe("HonorChannel.status", () => {
     });
   });
 
-  it("auditResult=2 → rejected（带 auditMessage）", async () => {
+  it("auditResult=2 → rejected（带 auditMessage 作拒绝原因）", async () => {
     mockFetch(statusRoutes(2, { auditMessage: "应用简介含敏感信息" }));
     await expect(new HonorChannel().status(makeCtx())).resolves.toEqual({
       state: "rejected",
@@ -494,11 +580,11 @@ describe("HonorChannel.status", () => {
     });
   });
 
-  it("auditResult=3 → unknown（非审核状态）", async () => {
+  it("auditResult=3 → unknown（未提交审核）", async () => {
     mockFetch(statusRoutes(3));
     await expect(new HonorChannel().status(makeCtx())).resolves.toEqual({
       state: "unknown",
-      raw: "非审核状态（auditResult=3）",
+      raw: "未提交审核（auditResult=3）",
     });
   });
 
@@ -526,15 +612,25 @@ describe("HonorChannel.status", () => {
     });
   });
 
-  it("data 无条目 → unknown raw 含提示", async () => {
-    mockFetch([
-      TOKEN_ROUTE,
-      { match: "get-audit-result", response: { json: { code: 0, data: [] } } },
-    ]);
+  it("data 缺失/无 auditResult → unknown raw 含提示", async () => {
+    mockFetch([TOKEN_ROUTE, { match: "get-app-current-release", response: { json: { code: 0 } } }]);
     await expect(new HonorChannel().status(makeCtx())).resolves.toEqual({
       state: "unknown",
-      raw: expect.stringContaining("get-audit-result 无数据"),
+      raw: expect.stringContaining("get-app-current-release 无数据"),
     });
+  });
+
+  it("接口 code!=0 抛错（含错误码）", async () => {
+    mockFetch([
+      TOKEN_ROUTE,
+      {
+        match: "get-app-current-release",
+        response: { json: { code: 10003, msg: "token 过期" } },
+      },
+    ]);
+    await expect(new HonorChannel().status(makeCtx())).rejects.toThrow(
+      "荣耀 查询审核状态失败 code=10003 token 过期",
+    );
   });
 
   it("缺 appId 抛错（含用途提示）", async () => {
@@ -542,12 +638,5 @@ describe("HonorChannel.status", () => {
     await expect(new HonorChannel().status(makeCtx({ target: {} }))).rejects.toThrow(
       "荣耀渠道缺少 appId（审核状态查询必需）",
     );
-  });
-
-  it("appId 非数字抛错（get-audit-result 要求数字）", async () => {
-    mockFetch([]);
-    await expect(
-      new HonorChannel().status(makeCtx({ target: { appId: "com.foo.bar" } })),
-    ).rejects.toThrow("荣耀 appId 非数字: com.foo.bar（get-audit-result 要求 body 内为数字）");
   });
 });

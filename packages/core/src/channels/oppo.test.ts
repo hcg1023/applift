@@ -1,6 +1,7 @@
 /**
- * OppoChannel 契约测试：GET token → app/info（复用线上字段）→ get-upload-url → multipart 上传 → app/upd。
- * 断言各请求形状（URL/method/关键参数/api_sign）与错误分支（缺凭据、errno 非 0、响应缺字段）。
+ * OppoChannel 契约测试：GET token → app/info（复用线上字段）→ get-upload-url → multipart 上传 → app/upd
+ * → task-state 轮询确认异步任务结果。
+ * 断言各请求形状（URL/method/关键参数/api_sign）与错误分支（缺凭据、errno 非 0、响应缺字段、异步任务失败/超时）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
@@ -10,6 +11,17 @@ import { OppoChannel } from "./oppo.js";
 import { hmacSign } from "./shared/sign.js";
 import { mockFetch, makeTestCtx } from "../test-utils.js";
 import type { MockResponseSpec } from "../test-utils.js";
+import type * as Util from "../util.js";
+
+/**
+ * sleep 打桩：task-state 轮询间隔 10s，测试内即时放行；间隔契约用 sleepMock 的入参/调用次数断言。
+ * oppo.ts 自 ../util.js 引入 sleep，vi.mock 需保留其余导出真实现。
+ */
+const { sleepMock } = vi.hoisted(() => ({ sleepMock: vi.fn(() => Promise.resolve()) }));
+vi.mock("../util.js", async (importOriginal) => {
+  const orig = await importOriginal<typeof Util>();
+  return { ...orig, sleep: sleepMock };
+});
 
 const API_BASE = "https://oop-openapi-cn.heytapmobi.com";
 const CLIENT_ID = "oppo-client-id";
@@ -49,14 +61,19 @@ const APP_INFO = {
   version_code: "208", // 线上旧版本，不用于提交
 };
 
-/** 路由条目：match 片段 → 固定响应 */
+/** 路由条目：match 片段 → 固定响应或按请求动态求值（task-state 顺序状态用） */
 interface RouteEntry {
   match: string;
-  response: MockResponseSpec;
+  response: MockResponseSpec | ((req: { method: string; url: string }) => MockResponseSpec);
 }
 
-/** 标准路由表，按 match 片段覆写响应 */
-function oppoRoutes(overrides: Record<string, MockResponseSpec> = {}): RouteEntry[] {
+/** 标准路由表，按 match 片段覆写响应（覆写值支持函数形式，task-state 顺序状态用） */
+function oppoRoutes(
+  overrides: Record<
+    string,
+    MockResponseSpec | ((req: { method: string; url: string }) => MockResponseSpec)
+  > = {},
+): RouteEntry[] {
   const base: RouteEntry[] = [
     {
       match: "developer/v1/token",
@@ -74,6 +91,10 @@ function oppoRoutes(overrides: Record<string, MockResponseSpec> = {}): RouteEntr
     {
       match: "/resource/v1/app/upd",
       response: { json: { errno: 0, data: { packageId: "pkg-123" } } },
+    },
+    {
+      match: "/resource/v1/app/task-state",
+      response: { json: { errno: 0, data: { task_state: 2 } } },
     },
   ];
   return base.map((r) => {
@@ -111,6 +132,7 @@ function expectSigned(params: Record<string, string>) {
 
 beforeEach(() => {
   fs.writeFileSync(ARTIFACT, FILE_CONTENT);
+  sleepMock.mockClear();
 });
 
 afterEach(() => {
@@ -137,6 +159,17 @@ describe("OppoChannel 元数据与 plan", () => {
       notes: "发布字段从线上 app/info 复用，只替换包与更新说明",
     });
   });
+
+  it("errorHints 覆盖现行高频错误码（910003/911045/300002 为本轮按现行文档补齐）", () => {
+    expect(new OppoChannel().errorHints).toEqual({
+      "911215": "应用已有版本在审核中（等待审核完成或到控制台撤回后再提）",
+      "911216": "版本更新任务处理中（稍后用 status 查询结果）",
+      "800002": "参数校验失败：常见于简介/截图等商店资料不符合规格",
+      "910003": "上传 sign 失效（sign 单次有效），重新发起上传即可重试",
+      "911045": "client_id 与包名不匹配（检查 API 客户端与应用的归属关系）",
+      "300002": "api_sign 签名错误（检查 client_secret 与系统时间偏移）",
+    });
+  });
 });
 
 describe("OppoChannel.status", () => {
@@ -151,39 +184,84 @@ describe("OppoChannel.status", () => {
     ];
   }
 
-  it("请求形状：GET app/info，query 带 pkgName + api_sign 签名", async () => {
-    const mf = mockFetch(statusRoutes({ audit_status: 2 }));
+  it("请求形状：GET app/info，query 带 pkg_name（现行文档 id=11004 snake_case）+ api_sign 签名", async () => {
+    const mf = mockFetch(statusRoutes({ audit_status: 1 }));
     await expect(new OppoChannel().status(makeCtx().ctx)).resolves.toEqual({ state: "reviewing" });
 
     const call = mf.find("/resource/v1/app/info")!;
     expect(call.method).toBe("GET");
     const params = queryParams(call.url);
-    expect(params.pkgName).toBe(PKG_NAME);
+    expect(params.pkg_name).toBe(PKG_NAME);
+    expect(params.pkgName).toBeUndefined(); // 旧 camelCase 参数名不再发送
     expect(params.access_token).toBe(TOKEN);
     expectSigned(params);
   });
 
-  it("audit_status=3 → approved live", async () => {
-    mockFetch(statusRoutes({ audit_status: 3 }));
+  it("audit_status=1 审核中 → reviewing（现行对照表重写，旧映射 1=待提审 已废弃）", async () => {
+    mockFetch(statusRoutes({ audit_status: 1 }));
+    await expect(new OppoChannel().status(makeCtx().ctx)).resolves.toEqual({ state: "reviewing" });
+  });
+
+  it("audit_status=4 运营审核中 → reviewing", async () => {
+    mockFetch(statusRoutes({ audit_status: 4 }));
+    await expect(new OppoChannel().status(makeCtx().ctx)).resolves.toEqual({ state: "reviewing" });
+  });
+
+  it("audit_status=2 审核通过 → approved（未上线 live=false）", async () => {
+    mockFetch(statusRoutes({ audit_status: 2 }));
+    await expect(new OppoChannel().status(makeCtx().ctx)).resolves.toEqual({
+      state: "approved",
+      live: false,
+    });
+  });
+
+  it("audit_status=6 运营通过 → approved（未上线 live=false）", async () => {
+    mockFetch(statusRoutes({ audit_status: 6 }));
+    await expect(new OppoChannel().status(makeCtx().ctx)).resolves.toEqual({
+      state: "approved",
+      live: false,
+    });
+  });
+
+  it("audit_status=111 上线 → approved live", async () => {
+    mockFetch(statusRoutes({ audit_status: 111 }));
     await expect(new OppoChannel().status(makeCtx().ctx)).resolves.toEqual({
       state: "approved",
       live: true,
     });
   });
 
-  it("audit_status=4 → rejected（refuse_reason 作 reason，对拍 apkgo appData 字段名）", async () => {
-    mockFetch(statusRoutes({ audit_status: 4, refuse_reason: "启动崩溃" }));
+  it.each([3, 5, 444])(
+    "audit_status=%s（测试不通过/运营打回/审核不通过）→ rejected，refuse_reason 原样透出不解析",
+    async (code) => {
+      // 线上 refuse_reason 常为 PHP 序列化串 —— 契约为原样透出，不做解析
+      mockFetch(statusRoutes({ audit_status: code, refuse_reason: 'a:1:{i:0;s:6:"启动崩溃";}' }));
+      await expect(new OppoChannel().status(makeCtx().ctx)).resolves.toEqual({
+        state: "rejected",
+        reason: 'a:1:{i:0;s:6:"启动崩溃";}',
+      });
+    },
+  );
+
+  it("旧字段名 audit_reject_reason/rejectReason 不再读取（v1 推测字段已删）", async () => {
+    mockFetch(
+      statusRoutes({
+        audit_status: 444,
+        audit_reject_reason: "旧字段值",
+        rejectReason: "旧字段值",
+      }),
+    );
     await expect(new OppoChannel().status(makeCtx().ctx)).resolves.toEqual({
       state: "rejected",
-      reason: "启动崩溃",
+      reason: undefined,
     });
   });
 
-  it("audit_status=1 → unknown（待提审）", async () => {
-    mockFetch(statusRoutes({ audit_status: 1 }));
+  it("驳回原因为空串 → reason undefined", async () => {
+    mockFetch(statusRoutes({ audit_status: 5, refuse_reason: "" }));
     await expect(new OppoChannel().status(makeCtx().ctx)).resolves.toEqual({
-      state: "unknown",
-      raw: "待提审（audit_status=1）",
+      state: "rejected",
+      reason: undefined,
     });
   });
 
@@ -203,21 +281,15 @@ describe("OppoChannel.status", () => {
     });
   });
 
-  it("旧字段名 audit_reject_reason/rejectReason 不再读取（v1 推测字段已删）", async () => {
-    mockFetch(
-      statusRoutes({ audit_status: 4, audit_reject_reason: "旧字段值", rejectReason: "旧字段值" }),
-    );
+  it.each([
+    { code: 0, label: "未发布" },
+    { code: 7, label: "定时发布" },
+    { code: 22, label: "已冻结" },
+  ])("audit_status=$code（$label）→ unknown + raw 标签", async ({ code, label }) => {
+    mockFetch(statusRoutes({ audit_status: code }));
     await expect(new OppoChannel().status(makeCtx().ctx)).resolves.toEqual({
-      state: "rejected",
-      reason: undefined,
-    });
-  });
-
-  it("驳回原因为空串 → reason undefined", async () => {
-    mockFetch(statusRoutes({ audit_status: 4, refuse_reason: "" }));
-    await expect(new OppoChannel().status(makeCtx().ctx)).resolves.toEqual({
-      state: "rejected",
-      reason: undefined,
+      state: "unknown",
+      raw: `${label}（audit_status=${code}）`,
     });
   });
 
@@ -458,7 +530,7 @@ describe("OppoChannel.submit", () => {
     // update_desc 回退链第 1 级：ctx 值优先于线上
     expect(params.update_desc).toBe("ctx 提供的更新说明");
 
-    // 复用线上字段（对拍 python build_publish_params 全集；summary 截 13 字符）
+    // 复用线上字段（对拍 python build_publish_params 全集；summary 截 13 字符后滤标点/空格，fixture 无标点故等值）
     expect(APP_INFO.summary.length).toBeGreaterThan(13);
     expect(params.app_name).toBe(APP_INFO.app_name);
     expect(params.second_category_id).toBe("109"); // 线上数值 → String 化
@@ -533,19 +605,42 @@ describe("OppoChannel.submit", () => {
     expect(params).not.toHaveProperty("landscape_pic_url");
   });
 
+  it("summary 截断后过滤标点与空格（文档要求不含任何标点符号和空格）", async () => {
+    const { params } = await stageThenSubmit({
+      routes: oppoRoutes({
+        "/resource/v1/app/info": {
+          json: {
+            errno: 0,
+            data: { ...APP_INFO, summary: "千云司机端全新版本上线，修复多项问题" },
+          },
+        },
+      }),
+    });
+    // 13 字截断落在「，修」上，滤掉标点/空格后透出（不再残留尾部逗号）
+    expect(params.summary).toBe("千云司机端全新版本上线修");
+  });
+
   it("无 staged 直接 submit：重走上传链路获取 apkUrl/md5 后发布成功（--skip-stage 跨进程场景）", async () => {
     const mock = mockFetch(oppoRoutes());
     const { ctx, events } = makeCtx({ updateDescription: "ctx 提供的更新说明" });
     const res = await new OppoChannel().submit(ctx);
 
-    // 调用顺序：token → app/info → get-upload-url → 上传 → app/upd
+    // 调用顺序：token → app/info → get-upload-url → 上传 → app/upd → task-state（异步任务确认）
     expect(mock.calls.map((c) => `${c.method} ${c.url.split("?")[0]}`)).toEqual([
       `GET ${API_BASE}/developer/v1/token`,
       `GET ${API_BASE}/resource/v1/app/info`,
       `GET ${API_BASE}/resource/v1/upload/get-upload-url`,
       `POST ${UPLOAD_URL}`,
       `POST ${API_BASE}/resource/v1/app/upd`,
+      `POST ${API_BASE}/resource/v1/app/task-state`,
     ]);
+
+    // app/info 查询参数为现行文档 snake_case pkg_name（id=11004），旧 pkgName 不再发送
+    const infoQuery = queryParams(
+      mock.calls.find((c) => c.url.includes("/resource/v1/app/info"))!.url,
+    );
+    expect(infoQuery.pkg_name).toBe(PKG_NAME);
+    expect(infoQuery.pkgName).toBeUndefined();
 
     // 包引用来自回退重传
     const updCall = mock.calls.find((c) => c.url.includes("/resource/v1/app/upd"))!;
@@ -649,6 +744,119 @@ describe("OppoChannel.submit", () => {
     expect(events.some((e) => e.type === "warn" && String(e.message).includes("任务处理中"))).toBe(
       true,
     );
+  });
+
+  describe("app/upd errno=0 后 task-state 异步任务轮询（现行文档「获取任务状态」）", () => {
+    /** 顺序返回 states 的 task-state 路由（越界重复末位；state=3 携带 err_msg） */
+    function taskStateSequence(states: number[], errMsg = "包名与 APK 内包名不一致") {
+      let i = 0;
+      return oppoRoutes({
+        "/resource/v1/app/task-state": () => {
+          const taskState = states[Math.min(i, states.length - 1)]!;
+          i += 1;
+          return {
+            json: {
+              errno: 0,
+              data:
+                taskState === 3 ? { task_state: 3, err_msg: errMsg } : { task_state: taskState },
+            },
+          };
+        },
+      });
+    }
+
+    it("轮询请求形状：POST task-state（pkg_name+version_code+api_sign）；task_state=2 → ok", async () => {
+      const { mock, res } = await stageThenSubmit({ routes: taskStateSequence([2]) });
+      const stCall = mock.calls.find((c) => c.url.includes("/resource/v1/app/task-state"))!;
+      expect(stCall.method).toBe("POST");
+      expect(stCall.headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
+      const stParams = Object.fromEntries(new URLSearchParams((stCall.body as string) ?? ""));
+      expect(stParams.pkg_name).toBe(PKG_NAME);
+      expect(stParams.version_code).toBe("301");
+      expect(stParams.access_token).toBe(TOKEN);
+      expectSigned(stParams);
+      // 先等间隔再查（现行文档建议 ≥10s），命中终态后不再多查
+      expect(sleepMock).toHaveBeenCalledTimes(1);
+      expect(sleepMock).toHaveBeenCalledWith(10_000);
+      expect(res).toEqual({ ok: true, ref: JSON.stringify({ packageId: "pkg-123" }) });
+    });
+
+    it("task_state=1 继续等：1→1→2 第 3 次确认成功，间隔 10s×3", async () => {
+      const { mock, res, events } = await stageThenSubmit({ routes: taskStateSequence([1, 1, 2]) });
+      expect(mock.calls.filter((c) => c.url.includes("/resource/v1/app/task-state"))).toHaveLength(
+        3,
+      );
+      expect(sleepMock).toHaveBeenCalledTimes(3);
+      expect(sleepMock).toHaveBeenNthCalledWith(2, 10_000);
+      expect(res.ok).toBe(true);
+      expect(
+        events.some((e) => e.type === "progress" && String(e.detail).includes("任务处理中")),
+      ).toBe(true);
+      expect(
+        events.some((e) => e.type === "progress" && String(e.detail).includes("任务处理成功")),
+      ).toBe(true);
+    });
+
+    it("task_state=3 → submit 失败并透出 err_msg（受理后异步失败不误报成功）", async () => {
+      const mock = mockFetch(taskStateSequence([3]));
+      const ch = new OppoChannel();
+      await ch.stage(makeCtx().ctx);
+      await expect(ch.submit(makeCtx().ctx)).rejects.toThrow(
+        "OPPO 发布任务处理失败（task_state=3）: 包名与 APK 内包名不一致",
+      );
+      expect(mock.calls.filter((c) => c.url.includes("/resource/v1/app/task-state"))).toHaveLength(
+        1,
+      );
+    });
+
+    it("task_state=3 且无 err_msg → 兜底透出 data 原文", async () => {
+      const mock = mockFetch(
+        oppoRoutes({
+          "/resource/v1/app/task-state": { json: { errno: 0, data: { task_state: 3 } } },
+        }),
+      );
+      const ch = new OppoChannel();
+      await ch.stage(makeCtx().ctx);
+      await expect(ch.submit(makeCtx().ctx)).rejects.toThrow(
+        'OPPO 发布任务处理失败（task_state=3）: {"task_state":3}',
+      );
+      expect(mock.calls.filter((c) => c.url.includes("/resource/v1/app/task-state"))).toHaveLength(
+        1,
+      );
+    });
+
+    it("5 次均 task_state=1 → 超时视为已受理：warn 提示结果未知 + ok 返回", async () => {
+      const { mock, res, events } = await stageThenSubmit({ routes: taskStateSequence([1]) });
+      expect(mock.calls.filter((c) => c.url.includes("/resource/v1/app/task-state"))).toHaveLength(
+        5,
+      );
+      expect(sleepMock).toHaveBeenCalledTimes(5);
+      expect(res).toEqual({ ok: true, ref: JSON.stringify({ packageId: "pkg-123" }) });
+      expect(
+        events.some((e) => e.type === "warn" && String(e.message).includes("异步处理结果未知")),
+      ).toBe(true);
+      expect(events.filter((e) => e.type === "phase").map((e) => e.phase)).toEqual([
+        "auth",
+        "submit",
+        "done",
+      ]);
+    });
+
+    it("task-state errno 非 0 → 抛错（异步查询失败不静默）", async () => {
+      const mock = mockFetch(
+        oppoRoutes({
+          "/resource/v1/app/task-state": { json: { errno: 300002, data: { message: "签名错误" } } },
+        }),
+      );
+      const ch = new OppoChannel();
+      await ch.stage(makeCtx().ctx);
+      await expect(ch.submit(makeCtx().ctx)).rejects.toThrow(
+        "OPPO 查询任务状态失败 errno=300002 签名错误",
+      );
+      expect(mock.calls.filter((c) => c.url.includes("/resource/v1/app/task-state"))).toHaveLength(
+        1,
+      );
+    });
   });
 
   it("versionCode 解析失败（无项目配置/aapt/build.gradle）→ 报错指引配置项，不发 app/upd", async () => {
