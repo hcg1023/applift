@@ -54,9 +54,9 @@ function detectFrameworkWith(cwd: string, extra: FrameworkAdapter[]) {
 
 const program = new Command("applift");
 
-const pkg = JSON.parse(
-  fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-) as { version: string };
+const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+  version: string;
+};
 
 program
   .name("applift")
