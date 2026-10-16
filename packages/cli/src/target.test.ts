@@ -2,10 +2,13 @@
  * resolveChannelTarget 取值链：stores 渠道配置 > 平台段配置（android/harmony/ios）> 包名自动推导。
  * 「配置可全空」：项目一个标识都没配时，渠道 target 仍能从工程文件推导兜底。
  */
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { BundleIds, ProjectConfig } from "@applift/core";
 import { ProjectConfigSchema } from "@applift/core";
-import { resolveChannelTarget } from "./target.js";
+import { discoverXiaomiIcon, resolveChannelTarget } from "./target.js";
 
 const configOf = (over: Record<string, unknown>): ProjectConfig => ProjectConfigSchema.parse(over);
 
@@ -59,5 +62,74 @@ describe("resolveChannelTarget（项目配置 > 自动推导）", () => {
     const config = configOf({ android: { pkgName: "com.config.app", stores: {} } });
     expect(resolveChannelTarget("huawei", config, {})).toEqual({ pkgName: "com.config.app" });
     expect(resolveChannelTarget("pgyer", configOf({}), {})).toEqual({});
+  });
+});
+
+describe("discoverXiaomiIcon（小米 icon 工程自动发现）", () => {
+  const makeCwd = () => mkdtempSync(path.join(tmpdir(), "applift-icon-"));
+  const put = (cwd: string, rel: string) => {
+    const file = path.join(cwd, rel);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, "x");
+    return file;
+  };
+
+  it("密度优先级：高密度优先（mipmap-xxxhdpi > xxhdpi > xhdpi > hdpi > mdpi）", () => {
+    const cwd = makeCwd();
+    try {
+      put(cwd, "android/app/src/main/res/mipmap-mdpi/ic_launcher.png");
+      put(cwd, "android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png");
+      put(cwd, "android/app/src/main/res/mipmap-xhdpi/ic_launcher.png");
+      expect(discoverXiaomiIcon(cwd)).toBe(
+        path.join(cwd, "android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png"),
+      );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("双根：android/app 与扁平 app 布局都探测", () => {
+    for (const root of ["android/app/src/main/res", "app/src/main/res"]) {
+      const cwd = makeCwd();
+      try {
+        put(cwd, `${root}/mipmap-xhdpi/ic_launcher.png`);
+        expect(discoverXiaomiIcon(cwd)).toBe(path.join(cwd, root, "mipmap-xhdpi/ic_launcher.png"));
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("mipmap 优先于 drawable；round 兜底；多扩展名命中", () => {
+    const cwd = makeCwd();
+    try {
+      put(cwd, "android/app/src/main/res/drawable-xxxhdpi/ic_launcher.png");
+      put(cwd, "android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png");
+      expect(discoverXiaomiIcon(cwd)).toBe(
+        path.join(cwd, "android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png"),
+      );
+
+      const cwd2 = makeCwd();
+      try {
+        put(cwd2, "android/app/src/main/res/drawable-hdpi/ic_launcher.webp");
+        expect(discoverXiaomiIcon(cwd2)).toBe(
+          path.join(cwd2, "android/app/src/main/res/drawable-hdpi/ic_launcher.webp"),
+        );
+      } finally {
+        rmSync(cwd2, { recursive: true, force: true });
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("工程里没有 launcher 图标 → undefined", () => {
+    const cwd = makeCwd();
+    try {
+      put(cwd, "android/app/src/main/res/mipmap-xxhdpi/other.png");
+      expect(discoverXiaomiIcon(cwd)).toBeUndefined();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });

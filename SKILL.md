@@ -30,13 +30,13 @@ applift doctor --cwd <项目目录>   # 框架/包名推导/凭据核对/产物�
 applift beta android --note "说明"        # 蒲公英，扫码即装
 applift beta harmony                # AGC 邀请测试（Testing API，需 .app 整包；--via pgyer 改蒲公英）
 applift beta ios                      # 蒲公英（ipa 扫码即装）；TestFlight 走 release ios 的 asc 渠道
-applift beta                             # 无参数：读 applift.config.ts 的 test 段，多渠道并行内测
+applift beta                             # 无参数：读 applift.config.ts 的 beta 段，多渠道并行内测
 ```
 
-`test` 段配置（全可选，写进 applift.config.ts）：
+`beta` 段配置（全可选，写进 applift.config.ts）：
 
 ```ts
-test: {
+beta: {
   pgyer: { platforms: ["android", "ios"], installPassword: "1234" },  // 缺省 platforms=["android"]
   "agc-harmony": { submit: true, group: "内测组", testType: 3 },       // submit=true 上传绑定后自动提审（默认 false）
   testflight: { note: "TestFlight 备注" },                              // asc 渠道上传 ipa 进 TestFlight
@@ -54,6 +54,8 @@ applift release android --submit --yes    # agent/CI：一条龙免交互
 ```
 
 **安全红线**：`--submit` = 审核通过自动上架（除 iOS 默认手动）——agent 必须先把 dry-run 计划表展示给用户并获得明确同意。
+
+小米渠道提审 icon 默认从工程 mipmap 自动发现（密度高→低），可用 `android.stores.xiaomi.icon` 覆盖。
 
 ### 5. 跟踪
 

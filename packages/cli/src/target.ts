@@ -2,6 +2,8 @@
  * 渠道 target 取值链：stores 渠道配置 > 平台段配置（android/harmony/ios）> 包名自动推导（detectBundleIds）。
  * 让「配置可全空」——渠道要的 pkgName/bundleName/bundleId 在项目没写时从工程文件兜底。
  */
+import { existsSync } from "node:fs";
+import path from "node:path";
 import type { BundleIds, ProjectConfig } from "@applift/core";
 
 export function resolveChannelTarget(
@@ -31,4 +33,35 @@ export function resolveChannelTarget(
     ...(config.android?.pkgName ? { pkgName: config.android.pkgName } : {}),
     ...store,
   };
+}
+
+/** launcher 图标密度优先级（高 → 低） */
+const ICON_DENSITIES = ["xxxhdpi", "xxhdpi", "xhdpi", "hdpi", "mdpi"] as const;
+/** res 根：原生工程 android/app/... 与扁平 RN/Capacitor app/... 两种布局 */
+const RES_ROOTS = ["android/app/src/main/res", "app/src/main/res"] as const;
+/** 单目录内候选文件：ic_launcher 四扩展优先，ic_launcher_round.png 兜底 */
+const ICON_FILES = [
+  "ic_launcher.png",
+  "ic_launcher.jpg",
+  "ic_launcher.jpeg",
+  "ic_launcher.webp",
+  "ic_launcher_round.png",
+] as const;
+
+/**
+ * 小米提审 icon 工程自动发现：按 mipmap（高→低密度）→ drawable-<dpi>（同序）扫两个 res 根，
+ * 找到返回绝对路径，找不到返回 undefined（渠道层报错指引配置 android.stores.xiaomi.icon）。
+ */
+export function discoverXiaomiIcon(cwd: string): string | undefined {
+  for (const kind of ["mipmap", "drawable"] as const) {
+    for (const density of ICON_DENSITIES) {
+      for (const file of ICON_FILES) {
+        for (const root of RES_ROOTS) {
+          const candidate = path.join(cwd, root, `${kind}-${density}`, file);
+          if (existsSync(candidate)) return candidate;
+        }
+      }
+    }
+  }
+  return undefined;
 }

@@ -82,7 +82,7 @@ function expectSigned(params: URLSearchParams | FormData, business: Record<strin
   expect(get("timestamp")).toBe(String(NOW)); // 毫秒级
   expect(get("format")).toBe("json");
   expect(get("v")).toBe("1.0");
-  expect(get("sign_method")).toBe("HMAC-SHA256"); // 与官方文档及 apkgo 一致
+  expect(get("sign_method")).toBe("hmac-sha256"); // 官方文档字面值（developer.vivo.com/doc/detail?id=95）
   expect(get("target_app_key")).toBe("developer");
   for (const [k, v] of Object.entries(business)) expect(get(k)).toBe(v);
   const unsigned: Record<string, string> = {};
@@ -140,7 +140,7 @@ describe("VivoChannel.status", () => {
     return [{ match: API_BASE, response: { json: { code: 0, subCode: 0, data } } }];
   }
 
-  it("请求形状：复用 app.query.details、body packageName、公共参数+签名（sign_method=HMAC-SHA256）", async () => {
+  it("请求形状：复用 app.query.details、body packageName、公共参数+签名（sign_method=hmac-sha256）", async () => {
     const mf = mockFetch(statusRoutes({ status: 2 }));
     await expect(
       new VivoChannel().status(makeTestCtx({ credentials: CREDS, target: TARGET }).ctx),
@@ -151,7 +151,7 @@ describe("VivoChannel.status", () => {
     expect(call.method).toBe("POST");
     expect(call.headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
     const params = new URLSearchParams(call.body as string);
-    expect(params.get("sign_method")).toBe("HMAC-SHA256");
+    expect(params.get("sign_method")).toBe("hmac-sha256");
     expectSigned(params, { method: "app.query.details", packageName: TARGET.pkgName });
   });
 

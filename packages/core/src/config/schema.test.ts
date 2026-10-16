@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ProjectConfigSchema, StoresSchema, TestConfigSchema } from "./schema.js";
+import { BetaConfigSchema, ProjectConfigSchema, StoresSchema } from "./schema.js";
 
 describe("StoresSchema 规范化", () => {
   it("① 对象写法原样保留（向后兼容）", () => {
@@ -83,35 +83,35 @@ describe("ProjectConfigSchema android.stores 集成", () => {
   });
 });
 
-describe("TestConfigSchema（beta 多渠道）", () => {
-  it("全空 → test 可整体缺省，各渠道缺省值正确（pgyer.platforms=['android']、agc submit=false、testType=3）", () => {
+describe("BetaConfigSchema（beta 多渠道）", () => {
+  it("全空 → beta 可整体缺省，各渠道缺省值正确（pgyer.platforms=['android']、agc submit=false、testType=3）", () => {
     const config = ProjectConfigSchema.parse({});
-    expect(config.test).toBeUndefined();
+    expect(config.beta).toBeUndefined();
 
-    const test = TestConfigSchema.parse({ pgyer: {}, "agc-harmony": {} });
-    expect(test.pgyer?.platforms).toEqual(["android"]);
-    expect(test["agc-harmony"]?.submit).toBe(false);
-    expect(test["agc-harmony"]?.testType).toBe(3);
-    expect(test.testflight).toBeUndefined();
+    const beta = BetaConfigSchema.parse({ pgyer: {}, "agc-harmony": {} });
+    expect(beta.pgyer?.platforms).toEqual(["android"]);
+    expect(beta["agc-harmony"]?.submit).toBe(false);
+    expect(beta["agc-harmony"]?.testType).toBe(3);
+    expect(beta.testflight).toBeUndefined();
   });
 
   it("完整配置解析", () => {
     const config = ProjectConfigSchema.parse({
-      test: {
+      beta: {
         pgyer: { platforms: ["android", "ios"], installPassword: "1234" },
         "agc-harmony": { submit: true, group: "内测组", testType: 4 },
         testflight: { note: "TF 备注" },
       },
     });
-    expect(config.test?.pgyer?.platforms).toEqual(["android", "ios"]);
-    expect(config.test?.pgyer?.installPassword).toBe("1234");
-    expect(config.test?.["agc-harmony"]).toEqual({ submit: true, group: "内测组", testType: 4 });
-    expect(config.test?.testflight?.note).toBe("TF 备注");
+    expect(config.beta?.pgyer?.platforms).toEqual(["android", "ios"]);
+    expect(config.beta?.pgyer?.installPassword).toBe("1234");
+    expect(config.beta?.["agc-harmony"]).toEqual({ submit: true, group: "内测组", testType: 4 });
+    expect(config.beta?.testflight?.note).toBe("TF 备注");
   });
 
   it("非法值报错（platforms 枚举 / testType 枚举 / submit 非布尔）", () => {
-    expect(TestConfigSchema.safeParse({ pgyer: { platforms: ["windows"] } }).success).toBe(false);
-    expect(TestConfigSchema.safeParse({ "agc-harmony": { testType: 5 } }).success).toBe(false);
-    expect(TestConfigSchema.safeParse({ "agc-harmony": { submit: "yes" } }).success).toBe(false);
+    expect(BetaConfigSchema.safeParse({ pgyer: { platforms: ["windows"] } }).success).toBe(false);
+    expect(BetaConfigSchema.safeParse({ "agc-harmony": { testType: 5 } }).success).toBe(false);
+    expect(BetaConfigSchema.safeParse({ "agc-harmony": { submit: "yes" } }).success).toBe(false);
   });
 });

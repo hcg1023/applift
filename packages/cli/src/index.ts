@@ -45,7 +45,7 @@ import {
   readArtifactVersion,
   type FrameworkAdapter,
 } from "@applift/core";
-import { resolveChannelTarget } from "./target.js";
+import { discoverXiaomiIcon, resolveChannelTarget } from "./target.js";
 
 /** 框架探测（含插件注册的自定义适配器） */
 function detectFrameworkWith(cwd: string, extra: FrameworkAdapter[]) {
@@ -179,9 +179,9 @@ async function loadPluginHost(
 program
   .command("beta")
   .description(
-    "内测分发：无参数读 applift.config.ts 的 test 段并行发布多渠道；beta <platform> 快捷路径（android/ios → 蒲公英；harmony 默认 AGC 测试发布，--via pgyer 改走蒲公英）",
+    "内测分发：无参数读 applift.config.ts 的 beta 段并行发布多渠道；beta <platform> 快捷路径（android/ios → 蒲公英；harmony 默认 AGC 测试发布，--via pgyer 改走蒲公英）",
   )
-  .argument("[platform]", "android | harmony | ios（缺省读配置 test 段多渠道并行）")
+  .argument("[platform]", "android | harmony | ios（缺省读配置 beta 段多渠道并行）")
   .option("--artifact <path>", "产物路径（缺省自动探测最新构建产物）")
   .option("--note <text>", "更新说明")
   .option("--via <target>", "harmony 分发通道：agc（默认，AGC 指定设备测试发布）| pgyer", "agc")
@@ -222,12 +222,12 @@ program
         );
       };
 
-      // ---------- 无 platform：读 config.test 多渠道并行发布 ----------
+      // ---------- 无 platform：读 config.beta 多渠道并行发布 ----------
       if (!platform) {
-        const test = projCfg.test;
-        if (!test || (!test.pgyer && !test["agc-harmony"] && !test.testflight)) {
+        const beta = projCfg.beta;
+        if (!beta || (!beta.pgyer && !beta["agc-harmony"] && !beta.testflight)) {
           throw new Error(
-            'beta 无参数需要在 applift.config.ts 配置 test 段（pgyer / "agc-harmony" / testflight 至少一个），或用 beta <platform> 快捷路径',
+            'beta 无参数需要在 applift.config.ts 配置 beta 段（pgyer / "agc-harmony" / testflight 至少一个），或用 beta <platform> 快捷路径',
           );
         }
         const PGYER_EXTS: Record<string, string[]> = {
@@ -237,10 +237,10 @@ program
         };
         const tasks: Array<{ label: string; run: () => Promise<string> }> = [];
 
-        if (test.pgyer) {
+        if (beta.pgyer) {
           const pgyer = registry.get("pgyer");
           if (!pgyer) throw new Error("pgyer 渠道未注册");
-          for (const plat of test.pgyer.platforms) {
+          for (const plat of beta.pgyer.platforms) {
             tasks.push({
               label: `pgyer(${plat})`,
               run: async () => {
@@ -256,7 +256,7 @@ program
                   resolveChannelTarget("pgyer", projCfg, detected),
                   artifactPath,
                   cmdOpts.note,
-                  { installPassword: cmdOpts.installPassword ?? test.pgyer?.installPassword },
+                  { installPassword: cmdOpts.installPassword ?? beta.pgyer?.installPassword },
                 );
                 const r = await pgyer.stage(ctx);
                 if (!r.ok) throw new Error(r.error ?? "上传失败");
@@ -266,10 +266,10 @@ program
           }
         }
 
-        if (test["agc-harmony"]) {
+        if (beta["agc-harmony"]) {
           const agc = registry.get("agc-harmony");
           if (!agc) throw new Error("agc-harmony 渠道未注册");
-          const agcCfg = test["agc-harmony"];
+          const agcCfg = beta["agc-harmony"];
           tasks.push({
             label: "agc-harmony",
             run: async () => {
@@ -300,10 +300,10 @@ program
           });
         }
 
-        if (test.testflight) {
+        if (beta.testflight) {
           const asc = registry.get("asc");
           if (!asc) throw new Error("asc 渠道未注册");
-          const tfNote = test.testflight.note;
+          const tfNote = beta.testflight.note;
           tasks.push({
             label: "testflight",
             run: async () => {
@@ -536,19 +536,24 @@ program
       );
 
     // 渠道 target 取值链：stores 渠道配置 > 平台段配置 > 包名自动推导（项目配置 > 自动推导）
+    // 小米特例：icon 未配置时从工程 mipmap 自动发现（配置覆盖优先）
     const detected = detectBundleIds(opts.cwd);
     const contexts = new Map<string, ChannelContext>();
     for (const c of channels) {
+      let target = resolveChannelTarget(c.id, config, detected);
+      if (c.id === "xiaomi" && !target.icon) {
+        const icon = discoverXiaomiIcon(opts.cwd);
+        if (icon) {
+          target = { ...target, icon };
+          process.stderr.write(`小米 icon 自动发现: ${path.relative(opts.cwd, icon)}\n`);
+        }
+      }
       contexts.set(
         c.id,
-        makeContext(
-          c,
-          creds,
-          resolveChannelTarget(c.id, config, detected),
-          artifactPath ?? "",
-          opts.note,
-          { releaseTime: opts.releaseTime, remark: opts.remark },
-        ),
+        makeContext(c, creds, target, artifactPath ?? "", opts.note, {
+          releaseTime: opts.releaseTime,
+          remark: opts.remark,
+        }),
       );
     }
 

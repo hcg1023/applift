@@ -41,9 +41,9 @@ function commonParams(accessKey: string, method: string): Record<string, string>
     timestamp: tsMillis(),
     format: "json",
     v: "1.0",
-    // sign_method 与现行官方文档及 apkgo（vivo.go:661）一致取 HMAC-SHA256；
-    // 旧 'hmac' 系 v1 网关兼容值，已按 2026-10 apkgo 源码仲裁更正
-    sign_method: "HMAC-SHA256",
+    // sign_method 官方字面值为小写 hmac-sha256（developer.vivo.com/doc/detail?id=95；
+    // apkgo 发大写 HMAC-SHA256 亦可用，服务端宽松——按文档字面最稳）
+    sign_method: "hmac-sha256",
     target_app_key: "developer",
   };
 }

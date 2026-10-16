@@ -5,9 +5,9 @@
  *   sig = RSA_encrypt(证书公钥, JSON({sig: [{name, hash: MD5}...], password}))
  *   分段: 1024bit key → 每段 117 字节（128 - PKCS1 padding 11）
  * 链路: /dev/query 校验账号对包名权限 + 提审前版本回归预检 → /dev/push 上传即提审（synchroType=1 更新包，
- *       icon 现行文档标必选；apkgo xiaomi.go（2026-10 源码仲裁）确认每次 push 必带 icon
- *       （取 listing 图标或从 APK 提取）——applift 从项目配置 android.stores.xiaomi.icon 读取，
- *       未配置即中止；privacyUrl 是否强制仍待真机验证（apkgo 未传该字段）。
+ *       icon 现行文档（pId=1134，2026-02）标必选，apkgo 同（每次 push 必带）；旧官方 PDF（pId=33）标可选，
+ *       分歧按现行文档从严处理——applift 默认从工程 mipmap 自动发现（android.stores.xiaomi.icon 可覆盖），
+ *       未找到才中止；privacyUrl 是否强制仍待真机验证（apkgo 未传该字段）。
  *       另 2026-02-04 起 testAccount 须用新结构化格式（如 {"zh_CN":{"accounts":[...]}}），当前未传暂不受影响。
  * 移植自（MIT）: AngChow/android-publish scripts/_mi_common.py + mi_submit.py
  * 官方文档: https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1134

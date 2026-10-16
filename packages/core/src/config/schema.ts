@@ -38,14 +38,14 @@ export const StoresSchema = z
   .default({});
 export type Stores = z.infer<typeof StoresSchema>;
 
-/** 项目级配置（applift.config.ts 的形状）；test 段见上方 TestConfigSchema */
+/** 项目级配置（applift.config.ts 的形状）；beta 段见上方 BetaConfigSchema */
 /**
  * 内测分发配置（applift beta 无平台参数时并行发布的渠道开关）：
  * - pgyer: 蒲公英多平台上传（缺省只发 android）
  * - agc-harmony: AGC 邀请测试（Testing API，submit=true 上传绑定后自动提审）
  * - testflight: App Store Connect 上传（ipa 进 TestFlight）
  */
-export const TestConfigSchema = z.object({
+export const BetaConfigSchema = z.object({
   pgyer: z
     .object({
       platforms: z.array(z.enum(["android", "harmony", "ios"])).default(["android"]),
@@ -116,10 +116,10 @@ export const ProjectConfigSchema = z.object({
     .catchall(z.array(z.string()).optional())
     .optional(),
   /** 内测分发（beta 无平台参数时的多渠道并行配置） */
-  test: TestConfigSchema.optional(),
+  beta: BetaConfigSchema.optional(),
 });
 
-export type TestConfig = z.infer<typeof TestConfigSchema>;
+export type BetaConfig = z.infer<typeof BetaConfigSchema>;
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
 /** 全局行为配置（~/.applift/config.toml） */
