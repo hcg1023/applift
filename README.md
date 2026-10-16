@@ -17,7 +17,7 @@ pnpm add -D @applift/cli
 ```bash
 applift init            # 向导：识别框架 → 生成 applift.config.ts → 引导配凭据
 applift doctor          # 体检：框架/包名推导/凭据核对/产物版本
-applift beta android --note "修复xx"    # 内测：安卓→蒲公英扫码即装
+applift beta android --note "修复xx"    # 内测：三端均走蒲公英扫码即装（ios 的 ipa / harmony 的 hap --via pgyer）
 ```
 
 正式发版（两段式，交互向导引导）：
