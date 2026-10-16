@@ -1,5 +1,18 @@
 # @applift/cli
 
+## 0.2.0
+
+### Minor Changes
+
+- a8bebb6: 小米 icon 自动发现扩展：新增 Tauri 2 移动端支持（src-tauri/icons 探测序），配合此前的 Android res 双根（RN/Flutter/Expo/原生安卓全覆盖）
+- 504bc27: beta 命令支持配置驱动的多渠道并行内测：`applift beta`（无平台参数）读取 applift.config.ts 新增的 test 段（pgyer/agc-harmony/testflight），三端产物各走各的渠道并行发布，逐渠道报告结果；`beta <platform>` 快捷方式不变
+
+### Patch Changes
+
+- Updated dependencies [a8bebb6]
+- Updated dependencies [504bc27]
+  - @applift/core@0.3.0
+
 ## 0.1.6
 
 ### Patch Changes
