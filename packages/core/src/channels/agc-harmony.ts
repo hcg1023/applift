@@ -181,6 +181,8 @@ export class AgcHarmonyChannel implements Channel {
     "1003": "client_id/client_secret 无效（AGC → 项目设置 → 常规 → API Client 重新获取）",
     "204144702": "签名/证书不匹配：检查签名证书指纹（SHA256）与 AGC 后台登记是否一致",
     "204144677": "bundleName 与应用不匹配：确认 appId 对应的应用包名",
+    "204144692":
+      "应用未登记隐私政策协议：AGC 控制台「更多服务 → 协议服务」新建隐私政策并提交（一次性前置，API 无法代办）",
   };
 
   private async authHeaders(ctx: ChannelContext) {

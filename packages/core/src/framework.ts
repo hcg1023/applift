@@ -190,6 +190,10 @@ export const nativeHarmonyAdapter: FrameworkAdapter = {
       "entry/build/default/outputs/**/entry-*-signed.hap",
       "entry/build/default/outputs/**/entry-*.app",
       "harmony/entry/build/default/outputs/**/*-signed.hap",
+      // assembleApp 整包（AGC 测试发布/正式上架用）在工程级 build/outputs
+      "build/outputs/**/*.app",
+      "harmony/build/outputs/**/*.app",
+      "ohos/build/outputs/**/*.app",
     ];
   },
   buildCommand() {
