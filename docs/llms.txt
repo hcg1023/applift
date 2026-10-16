@@ -1,0 +1,54 @@
+# applift — AI Agent 使用指南
+
+> applift 是框架无关的三端 App 发版 CLI（React Native / Flutter / 原生安卓 / 原生 iOS / 原生鸿蒙 × 10 渠道）。
+> 本文件供 AI Agent（Claude Code / Cursor / 任意 MCP 客户端）直接消费。人类文档见 README.md。
+
+## 命令速查
+
+| 命令 | 用途 | 需要凭据 |
+|---|---|---|
+| `applift channels --json` | 自发现：全部渠道 + capabilities + 所需凭据键 + 获取指引 | 否 |
+| `applift doctor --cwd <dir>` | 体检：框架识别/凭据/渠道配置 | 否 |
+| `applift init --cwd <dir>` | 向导：生成 applift.config.ts + 凭据引导（交互） | 否 |
+| `applift beta <platform> [--artifact <path>]` | 内测：android/ios→蒲公英，harmony 默认 AGC 指定设备（--via pgyer 改蒲公英）；产物自动探测 | 是 |
+| `applift release <platform> [--stores a,b]` | stage：只传包到各家草稿（安全，不提审） | 是 |
+| `applift release <platform> --submit [--yes]` | submit：提审（审核通过自动上架，需确认） | 是 |
+| `applift release <platform> --dry-run` | 计划预览（无需凭据，安全） | 否 |
+| `applift status --stores a,b [--json]` | 查询各渠道审核状态 | 是 |
+| `applift history [--json]` | 本地上传历史 | 否 |
+| `applift listing --stores huawei ...` | 商店资料（简介/描述/图标） | 是 |
+
+## Agent 工作流（推荐顺序）
+
+1. **了解环境**：`applift channels --json` → 知道有哪些渠道、每个渠道要什么凭据
+2. **体检**：`applift doctor --cwd /path/to/app` → 框架识别 + 凭据缺失清单（错误信息自带获取指引）
+3. **预览**：`applift release android --dry-run` → 无副作用的计划表（渠道/动作/审核通过后行为）
+4. **凭据**：读 `~/.applift/credentials.toml`（profiles 组织，0600）；缺失时把 doctor 的指引转告用户
+5. **内测**（L1 安全）：`applift beta android --note "..."`
+6. **正式**（L3 不可逆）：先 `release`（stage 草稿）确认无报错，再 `release --submit --yes`（agent 场景用 --yes 免交互）
+
+## 语义约定（机器消费）
+
+- **退出码**：0=全部成功，1=有失败（逐渠道错误在 stderr/JSON）
+- **--json**：stdout 输出结构化 JSON（stage 模式返回 `{stage:[...]}`；submit 模式返回 `{submit:[...]}`；status 返回 `{status:[...]}`；dry-run 返回 `{dryRun,plans,errors}`）；渠道进度与人类渲染走 stderr
+- **--yes**：跳过 clack 交互确认（CI/agent 专用）；--dry-run 永远无副作用
+- **错误格式**：`<渠道> 缺少 <KEY>（<获取指引>）`——可直接把指引转述给用户
+- **两段式安全**：stage 只传草稿；submit = 提审 = 审核通过自动上架（iOS 除外，默认 manual）
+
+## 配置模型
+
+- 凭据查找链：项目 `.applift/credentials.toml`（逐层向上、逐键优先）→ `~/.applift/credentials.toml`（profiles 组织）→ `APPLIFT_*` env；profile 切换 `applift use` / `--profile`（最高）
+- 项目：`applift.config.ts`（逐层向上查找；stores 支持 ['oppo'] 数组 / {huawei:'appId'} 字符串 / 对象三种写法；包名/框架自动推导，配置可全空；artifacts 仅非标工程需要；plugins 插件）
+- 插件：vite 风格钩子（plan:before/stage:before/submit:before 可拦截可修改；channel:register 注册自定义渠道）
+
+## 扩展点
+
+- 新商店：实现 `Channel` 接口（见 @applift/core channel.ts）+ 插件注册
+- 新框架：`FrameworkAdapter`（detect/artifactPatterns/buildCommand）注入 detectFramework
+- 通知：`dingtalkNotify` 插件（@applift/core/plugins）
+
+## 上游文档
+
+- README.md（人类向完整文档）
+- packages/core/src/channel.ts（Channel 契约源码，最权威）
+- packages/cli/src/channel-meta.ts（渠道凭据元数据源）

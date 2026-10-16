@@ -1,0 +1,30 @@
+{
+  "name": "@applift/core",
+  "version": "0.1.0",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "types": "./dist/index.d.mts"
+    },
+    "./plugins": {
+      "import": "./dist/plugins/index.mjs",
+      "types": "./dist/plugins/index.d.mts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts src/plugins/index.ts --dts --format esm --clean && node -e \"const fs=require('fs');const fix=(d,n)=>{const f=fs.readdirSync(d).filter(x=>x.startsWith(n)&&x.endsWith('.d.mts')&&!x.includes('/'))[0];if(f)fs.copyFileSync(d+'/'+f,d+'/'+n+'.d.mts')};fix('dist','index');fix('dist/plugins','index')\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "c12": "^3.3.4",
+    "jiti": "^2.7.0",
+    "smol-toml": "^1.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "tsdown": "^0.23.1"
+  }
+}
