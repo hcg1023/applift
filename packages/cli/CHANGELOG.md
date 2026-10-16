@@ -1,5 +1,15 @@
 # @applift/cli
 
+## 0.1.5
+
+### Patch Changes
+
+- 630a65b: beta 命令透传渠道 warn 事件（此前绑定失败等警告被静默导致假成功）；AGC 测试发布成功文案对齐 Testing API 新语义
+- Updated dependencies [8f63ef5]
+- Updated dependencies [b03bbaf]
+- Updated dependencies [bee7885]
+  - @applift/core@0.1.3
+
 ## 0.1.4
 
 ### Patch Changes
