@@ -11,6 +11,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  id-token: write # npm trusted publishing (OIDC)
 
 jobs:
   release:
@@ -31,7 +32,8 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
+          # OIDC 发布必须显式指定 registry；发布构建不启用依赖缓存（npm 官方建议）
+          registry-url: https://registry.npmjs.org
 
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
@@ -44,5 +46,3 @@ jobs:
           version-script: pnpm run pack-version
           commit-message: "chore(changesets): release"
           pr-title: "Release From Changesets"
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

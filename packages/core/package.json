@@ -1,6 +1,11 @@
 {
   "name": "@applift/core",
   "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hcg1023/applift.git",
+    "directory": "packages/core"
+  },
   "files": [
     "dist"
   ],
@@ -13,6 +18,9 @@
       "import": "./dist/plugins/index.mjs",
       "types": "./dist/plugins/index.d.mts"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsdown src/index.ts src/plugins/index.ts --dts --format esm --clean && node -e \"const fs=require('fs');const fix=(d,n)=>{const f=fs.readdirSync(d).filter(x=>x.startsWith(n)&&x.endsWith('.d.mts')&&!x.includes('/'))[0];if(f)fs.copyFileSync(d+'/'+f,d+'/'+n+'.d.mts')};fix('dist','index');fix('dist/plugins','index')\"",
