@@ -13,16 +13,30 @@
     "smoke": "pnpm -r build && node packages/cli/dist/bin.mjs --help >/dev/null && node packages/cli/dist/bin.mjs channels --json >/dev/null && node packages/cli/dist/bin.mjs doctor --cwd /tmp >/dev/null 2>&1; echo smoke-ok",
     "changeset": "changeset",
     "pack-version": "changeset version",
-    "release": "pnpm -r build && changeset publish && changeset tag"
+    "release": "pnpm -r build && changeset publish && changeset tag",
+    "prepare": "simple-git-hooks"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3",
     "@types/node": "^26.6.5",
     "@vitest/coverage-v8": "^5.0.4",
+    "lint-staged": "^17.6.0",
     "oxfmt": "^0.73.0",
     "oxlint": "^1.88.0",
+    "simple-git-hooks": "^2.14.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.4"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "pnpm exec lint-staged"
+  },
+  "lint-staged": {
+    "*.{js,mjs,cjs,ts,mts,cts,json,jsonc}": [
+      "oxfmt --write"
+    ],
+    "*.{js,mjs,cjs,ts,mts,cts}": [
+      "oxlint"
+    ]
   },
   "packageManager": "pnpm@12.11.2+sha512.25a51652a196785af5f28bda6dfe8dc582ebefa4ac1d180221ce1390231c5fb76637822ea4b6e4633ce74acdcb0a77f725af11bad38177fdeddaee818a955cb9"
 }
