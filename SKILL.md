@@ -38,12 +38,12 @@ applift beta                             # 无参数：读 applift.config.ts 的
 ```ts
 beta: {
   pgyer: { platforms: ["android", "ios"], installPassword: "1234" },  // 缺省 platforms=["android"]
-  "agc-harmony": { submit: true, group: "内测组", testType: 3 },       // submit=true 上传绑定后自动提审（默认 false）
+  agc: { submit: true, group: "内测组", testType: 3 },                  // submit=true 上传绑定后自动提审（默认 false）
   testflight: { note: "TestFlight 备注" },                              // asc 渠道上传 ipa 进 TestFlight
 },
 ```
 
-逐渠道并行发布，任一失败退出码 1；`agc-harmony.group` 按群组名匹配（匹配不到报错，需先到 AGC 控制台建组）。
+逐渠道并行发布，任一失败退出码 1；`agc.group` 按群组名匹配（匹配不到报错，需先到 AGC 控制台建组）。
 
 ### 4. 正式发版（两段式，L3 不可逆）
 
@@ -55,7 +55,7 @@ applift release android --submit --yes    # agent/CI：一条龙免交互
 
 **安全红线**：`--submit` = 审核通过自动上架（除 iOS 默认手动）——agent 必须先把 dry-run 计划表展示给用户并获得明确同意。
 
-小米渠道提审 icon 默认从工程 mipmap 自动发现（密度高→低），可用 `android.stores.xiaomi.icon` 覆盖。
+小米渠道提审 icon 默认从工程自动发现：android res（mipmap 密度高→低）→ Tauri `src-tauri/icons/`（icon.png → 512x512.png → 128x128@2x.png → 128x128.png → Square107x107Logo.png），可用 `android.stores.xiaomi.icon` 覆盖。
 
 ### 5. 跟踪
 

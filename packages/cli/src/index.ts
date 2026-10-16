@@ -225,9 +225,9 @@ program
       // ---------- 无 platform：读 config.beta 多渠道并行发布 ----------
       if (!platform) {
         const beta = projCfg.beta;
-        if (!beta || (!beta.pgyer && !beta["agc-harmony"] && !beta.testflight)) {
+        if (!beta || (!beta.pgyer && !beta.agc && !beta.testflight)) {
           throw new Error(
-            'beta 无参数需要在 applift.config.ts 配置 beta 段（pgyer / "agc-harmony" / testflight 至少一个），或用 beta <platform> 快捷路径',
+            'beta 无参数需要在 applift.config.ts 配置 beta 段（pgyer / "agc" / testflight 至少一个），或用 beta <platform> 快捷路径',
           );
         }
         const PGYER_EXTS: Record<string, string[]> = {
@@ -266,12 +266,12 @@ program
           }
         }
 
-        if (beta["agc-harmony"]) {
-          const agc = registry.get("agc-harmony");
-          if (!agc) throw new Error("agc-harmony 渠道未注册");
-          const agcCfg = beta["agc-harmony"];
+        if (beta.agc) {
+          const agc = registry.get("agc");
+          if (!agc) throw new Error("agc 渠道未注册");
+          const agcCfg = beta.agc;
           tasks.push({
-            label: "agc-harmony",
+            label: "agc",
             run: async () => {
               const artifactPath = findArtifactFor("harmony", [".app"]);
               if (!artifactPath)
@@ -282,7 +282,7 @@ program
                 agc,
                 creds,
                 {
-                  ...resolveChannelTarget("agc-harmony", projCfg, detected),
+                  ...resolveChannelTarget("agc", projCfg, detected),
                   releaseType: "6",
                   ...(agcCfg.submit ? { submitTest: "true" } : {}),
                   ...(agcCfg.group ? { testGroup: agcCfg.group } : {}),
@@ -356,9 +356,9 @@ program
 
       // harmony 分流：默认 AGC 测试发布（releaseType=6，指定设备内测），--via pgyer 走蒲公英
       if (platform === "harmony" && cmdOpts.via !== "pgyer") {
-        const agc = registry.get("agc-harmony");
-        if (!agc) throw new Error("agc-harmony 渠道未注册");
-        const target = resolveChannelTarget("agc-harmony", projCfg, detected);
+        const agc = registry.get("agc");
+        if (!agc) throw new Error("agc 渠道未注册");
+        const target = resolveChannelTarget("agc", projCfg, detected);
         s.start(`AGC 测试发布 ${path.basename(artifactPath)}`);
         const ctx = makeContext(
           agc,

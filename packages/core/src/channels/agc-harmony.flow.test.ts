@@ -65,7 +65,7 @@ function makeCtx(
   };
 }
 
-describe("agc-harmony flow: 同一渠道实例 beta stage → formal submit → status", () => {
+describe("agc flow: 同一渠道实例 beta stage → formal submit → status", () => {
   it("releaseType=6 stage 全链 + .app submit 编译轮询提审，objectId/packageId 贯穿", async () => {
     vi.useFakeTimers();
     let compilePolls = 0;

@@ -13,7 +13,7 @@ export function resolveChannelTarget(
 ): Record<string, string> {
   const store = config.android?.stores?.[id] ?? {};
   // detected 是最底层兜底，逐键放行让上层配置覆盖（项目配置 > 自动推导）
-  if (id === "agc-harmony") {
+  if (id === "agc") {
     return {
       ...(detected.harmonyBundleName ? { bundleName: detected.harmonyBundleName } : {}),
       ...config.harmony,
@@ -47,9 +47,18 @@ const ICON_FILES = [
   "ic_launcher.webp",
   "ic_launcher_round.png",
 ] as const;
+/** Tauri 2 工程图标目录候选（src-tauri/icons/，仅 png，按序探测） */
+const TAURI_ICON_FILES = [
+  "icon.png",
+  "512x512.png",
+  "128x128@2x.png",
+  "128x128.png",
+  "Square107x107Logo.png",
+] as const;
 
 /**
  * 小米提审 icon 工程自动发现：按 mipmap（高→低密度）→ drawable-<dpi>（同序）扫两个 res 根，
+ * 都没命中再兜底 Tauri 2 工程图标目录 src-tauri/icons/（按文件名序探测，仅 png），
  * 找到返回绝对路径，找不到返回 undefined（渠道层报错指引配置 android.stores.xiaomi.icon）。
  */
 export function discoverXiaomiIcon(cwd: string): string | undefined {
@@ -62,6 +71,10 @@ export function discoverXiaomiIcon(cwd: string): string | undefined {
         }
       }
     }
+  }
+  for (const file of TAURI_ICON_FILES) {
+    const candidate = path.join(cwd, "src-tauri", "icons", file);
+    if (existsSync(candidate)) return candidate;
   }
   return undefined;
 }

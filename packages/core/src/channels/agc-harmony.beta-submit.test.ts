@@ -84,7 +84,7 @@ function baseRoutes() {
   ];
 }
 
-describe("agc-harmony beta 自动提审（submitTest）", () => {
+describe("agc beta 自动提审（submitTest）", () => {
   it("submitTest + testGroup：查群组→绑 groupInfos→POST submit（versionId 贯穿）", async () => {
     const fetchMock = mockFetch([
       ...baseRoutes(),

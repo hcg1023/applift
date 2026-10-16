@@ -5,7 +5,7 @@
 export const REQUIRED_KEYS_BY_CHANNEL: Record<string, string[]> = {
   pgyer: ["PGYER_API_KEY"],
   huawei: ["HW_CLIENT_ID", "HW_CLIENT_SECRET", "HW_ANDROID_APP_ID"],
-  "agc-harmony": ["AGC_CLIENT_ID", "AGC_CLIENT_SECRET"],
+  agc: ["AGC_CLIENT_ID", "AGC_CLIENT_SECRET"],
   xiaomi: ["MI_USER_NAME", "MI_PASSWORD", "MI_CERT_PATH"],
   oppo: ["OPPO_CLIENT_ID", "OPPO_CLIENT_SECRET"],
   vivo: ["VIVO_ACCESS_KEY", "VIVO_ACCESS_SECRET"],
@@ -18,8 +18,7 @@ export const REQUIRED_KEYS_BY_CHANNEL: Record<string, string[]> = {
 export const CHANNEL_HINTS: Record<string, string> = {
   pgyer: "pgyer.com → 账号设置 → API（免费，内测分发三端）",
   huawei: "AGC → 项目设置 → API Client（安卓应用 App ID 独立）",
-  "agc-harmony":
-    "AGC → 项目设置 → API Client（与华为安卓同源凭据，appId 可按 bundleName 自动查询）",
+  agc: "AGC → 项目设置 → API Client（与华为安卓同源凭据，appId 可按 bundleName 自动查询）",
   xiaomi: "dev.mi.com → 管理中心 → API（需 dev.api.public.cer 证书路径）",
   oppo: "open.oppomobile.com → 管理中心 → API 传包",
   vivo: "dev.vivo.com.cn → 应用分发 → API 传包（有沙箱环境可免费真测）",

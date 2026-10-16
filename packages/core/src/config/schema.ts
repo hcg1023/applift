@@ -42,7 +42,7 @@ export type Stores = z.infer<typeof StoresSchema>;
 /**
  * 内测分发配置（applift beta 无平台参数时并行发布的渠道开关）：
  * - pgyer: 蒲公英多平台上传（缺省只发 android）
- * - agc-harmony: AGC 邀请测试（Testing API，submit=true 上传绑定后自动提审）
+ * - agc: AGC 邀请测试（Testing API，submit=true 上传绑定后自动提审）
  * - testflight: App Store Connect 上传（ipa 进 TestFlight）
  */
 export const BetaConfigSchema = z.object({
@@ -52,7 +52,7 @@ export const BetaConfigSchema = z.object({
       installPassword: z.string().optional(),
     })
     .optional(),
-  "agc-harmony": z
+  agc: z
     .object({
       /** 上传绑定后自动提交测试审核（默认 false：只到「已就绪」，群组/提审到控制台人工完成） */
       submit: z.boolean().default(false),

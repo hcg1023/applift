@@ -88,10 +88,10 @@ describe("BetaConfigSchema（beta 多渠道）", () => {
     const config = ProjectConfigSchema.parse({});
     expect(config.beta).toBeUndefined();
 
-    const beta = BetaConfigSchema.parse({ pgyer: {}, "agc-harmony": {} });
+    const beta = BetaConfigSchema.parse({ pgyer: {}, agc: {} });
     expect(beta.pgyer?.platforms).toEqual(["android"]);
-    expect(beta["agc-harmony"]?.submit).toBe(false);
-    expect(beta["agc-harmony"]?.testType).toBe(3);
+    expect(beta.agc?.submit).toBe(false);
+    expect(beta.agc?.testType).toBe(3);
     expect(beta.testflight).toBeUndefined();
   });
 
@@ -99,19 +99,19 @@ describe("BetaConfigSchema（beta 多渠道）", () => {
     const config = ProjectConfigSchema.parse({
       beta: {
         pgyer: { platforms: ["android", "ios"], installPassword: "1234" },
-        "agc-harmony": { submit: true, group: "内测组", testType: 4 },
+        agc: { submit: true, group: "内测组", testType: 4 },
         testflight: { note: "TF 备注" },
       },
     });
     expect(config.beta?.pgyer?.platforms).toEqual(["android", "ios"]);
     expect(config.beta?.pgyer?.installPassword).toBe("1234");
-    expect(config.beta?.["agc-harmony"]).toEqual({ submit: true, group: "内测组", testType: 4 });
+    expect(config.beta?.agc).toEqual({ submit: true, group: "内测组", testType: 4 });
     expect(config.beta?.testflight?.note).toBe("TF 备注");
   });
 
   it("非法值报错（platforms 枚举 / testType 枚举 / submit 非布尔）", () => {
     expect(BetaConfigSchema.safeParse({ pgyer: { platforms: ["windows"] } }).success).toBe(false);
-    expect(BetaConfigSchema.safeParse({ "agc-harmony": { testType: 5 } }).success).toBe(false);
-    expect(BetaConfigSchema.safeParse({ "agc-harmony": { submit: "yes" } }).success).toBe(false);
+    expect(BetaConfigSchema.safeParse({ agc: { testType: 5 } }).success).toBe(false);
+    expect(BetaConfigSchema.safeParse({ agc: { submit: "yes" } }).success).toBe(false);
   });
 });

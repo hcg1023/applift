@@ -25,7 +25,7 @@ describe("resolveChannelTarget（项目配置 > 自动推导）", () => {
     expect(resolveChannelTarget("vivo", config, detected)).toEqual({
       pkgName: "com.autodetect.app",
     });
-    expect(resolveChannelTarget("agc-harmony", config, detected)).toEqual({
+    expect(resolveChannelTarget("agc", config, detected)).toEqual({
       bundleName: "com.autodetect.app.hm",
     });
     expect(resolveChannelTarget("asc", config, detected)).toEqual({
@@ -48,7 +48,7 @@ describe("resolveChannelTarget（项目配置 > 自动推导）", () => {
       harmony: { bundleName: "com.config.hm", appId: "agc-123" },
       ios: { scheme: "ConfigApp", bundleId: "com.config.ios" },
     });
-    expect(resolveChannelTarget("agc-harmony", config, detected)).toEqual({
+    expect(resolveChannelTarget("agc", config, detected)).toEqual({
       bundleName: "com.config.hm",
       appId: "agc-123",
     });
@@ -118,6 +118,40 @@ describe("discoverXiaomiIcon（小米 icon 工程自动发现）", () => {
       } finally {
         rmSync(cwd2, { recursive: true, force: true });
       }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("Tauri 兜底：src-tauri/icons/icon.png 命中", () => {
+    const cwd = makeCwd();
+    try {
+      put(cwd, "src-tauri/icons/icon.png");
+      expect(discoverXiaomiIcon(cwd)).toBe(path.join(cwd, "src-tauri/icons/icon.png"));
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("Tauri 兜底：按序探测 512x512.png（icon.png 缺失时）", () => {
+    const cwd = makeCwd();
+    try {
+      put(cwd, "src-tauri/icons/128x128.png");
+      put(cwd, "src-tauri/icons/512x512.png");
+      expect(discoverXiaomiIcon(cwd)).toBe(path.join(cwd, "src-tauri/icons/512x512.png"));
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("android res 优先于 Tauri icons", () => {
+    const cwd = makeCwd();
+    try {
+      put(cwd, "src-tauri/icons/icon.png");
+      put(cwd, "app/src/main/res/mipmap-mdpi/ic_launcher.png");
+      expect(discoverXiaomiIcon(cwd)).toBe(
+        path.join(cwd, "app/src/main/res/mipmap-mdpi/ic_launcher.png"),
+      );
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

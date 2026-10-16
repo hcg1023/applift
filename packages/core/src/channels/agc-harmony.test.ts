@@ -52,11 +52,11 @@ function baseCtx(over: Parameters<typeof makeTestCtx>[0] = {}) {
 describe("AgcHarmonyChannel 元数据", () => {
   it("id/label/capabilities", async () => {
     const ch = new AgcHarmonyChannel();
-    expect(ch.id).toBe("agc-harmony");
+    expect(ch.id).toBe("agc");
     expect(ch.label).toBe("华为 AGC(鸿蒙)");
     expect(ch.capabilities).toEqual({ stage: true, submit: true, scheduled: true, status: false });
     await expect(ch.plan(baseCtx().ctx)).resolves.toMatchObject({
-      channel: "agc-harmony",
+      channel: "agc",
       platform: "harmony",
     });
   });
@@ -325,12 +325,12 @@ describe("AgcHarmonyChannel.submit 全链路", () => {
       fs.unlinkSync(hap);
     }
   });
-  it("releaseType=6 submit() 不直接提审（自动提审走 test['agc-harmony'].submit 配置）", async () => {
+  it("releaseType=6 submit() 不直接提审（自动提审走 test['agc'].submit 配置）", async () => {
     const { ctx } = baseCtx({ target: { appId: "app-1", releaseType: "6" } });
     const r = await new AgcHarmonyChannel().submit(ctx);
     expect(r).toEqual({
       ok: false,
-      error: expect.stringContaining("test['agc-harmony'].submit"),
+      error: expect.stringContaining("test['agc'].submit"),
     });
   });
 

@@ -11,7 +11,7 @@
 | `applift doctor --cwd <dir>` | 体检：框架识别/凭据/渠道配置 | 否 |
 | `applift init --cwd <dir>` | 向导：生成 applift.config.ts + 凭据引导（交互） | 否 |
 | `applift beta <platform> [--artifact <path>]` | 内测：android/ios→蒲公英，harmony 默认 AGC 指定设备（--via pgyer 改蒲公英）；产物自动探测 | 是 |
-| `applift beta` | 多渠道内测：读 applift.config.ts 的 `test` 段（pgyer.platforms / "agc-harmony"{submit,group,testType} / testflight{note}）并行发布，任一失败退出码 1 | 是 |
+| `applift beta` | 多渠道内测：读 applift.config.ts 的 `test` 段（pgyer.platforms / agc{submit,group,testType} / testflight{note}）并行发布，任一失败退出码 1 | 是 |
 | `applift release <platform> [--stores a,b]` | stage：只传包到各家草稿（安全，不提审） | 是 |
 | `applift release <platform> --submit [--yes]` | submit：提审（审核通过自动上架，需确认） | 是 |
 | `applift release <platform> --dry-run` | 计划预览（无需凭据，安全） | 否 |
@@ -25,7 +25,7 @@
 2. **体检**：`applift doctor --cwd /path/to/app` → 框架识别 + 凭据缺失清单（错误信息自带获取指引）
 3. **预览**：`applift release android --dry-run` → 无副作用的计划表（渠道/动作/审核通过后行为）
 4. **凭据**：读 `~/.applift/credentials.json`（profiles 组织，0600）；缺失时把 doctor 的指引转告用户
-5. **内测**（L1 安全）：`applift beta android --note "..."`（ios 的 ipa 同命令；harmony 默认 AGC 邀请测试，`--via pgyer` 改蒲公英）；多渠道并行用 `applift beta`（beta 段：`pgyer:{platforms,installPassword}`、`"agc-harmony":{submit:true,group,testType:3|4}` 自动提审、`testflight:{note}`）
+5. **内测**（L1 安全）：`applift beta android --note "..."`（ios 的 ipa 同命令；harmony 默认 AGC 邀请测试，`--via pgyer` 改蒲公英）；多渠道并行用 `applift beta`（beta 段：`pgyer:{platforms,installPassword}`、`agc:{submit:true,group,testType:3|4}` 自动提审、`testflight:{note}`）
 6. **正式**（L3 不可逆）：先 `release`（stage 草稿）确认无报错，再 `release --submit --yes`（agent 场景用 --yes 免交互）
 
 ## 语义约定（机器消费）

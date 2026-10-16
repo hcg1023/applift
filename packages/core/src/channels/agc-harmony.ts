@@ -166,7 +166,7 @@ async function getDefaultLang(headers: Record<string, string>, appId: string): P
 }
 
 export class AgcHarmonyChannel implements Channel {
-  readonly id = "agc-harmony";
+  readonly id = "agc";
   readonly label = "华为 AGC(鸿蒙)";
   readonly capabilities: ChannelCapabilities = {
     stage: true,
@@ -248,7 +248,7 @@ export class AgcHarmonyChannel implements Channel {
       return {
         ok: false,
         error:
-          "AGC 测试发布（releaseType=6）的自动提审走 beta 配置 test['agc-harmony'].submit=true（上传绑定后自动提交测试版本审核）",
+          "AGC 测试发布（releaseType=6）的自动提审走 beta 配置 test['agc'].submit=true（上传绑定后自动提交测试版本审核）",
       };
     }
     const { clientId, token, headers } = await this.authHeaders(ctx);
@@ -586,8 +586,7 @@ export class AgcHarmonyChannel implements Channel {
     ctx.emit({
       type: "phase",
       phase: "done",
-      message:
-        "测试版本已就绪（未提交审核）；到控制台提交或配置 test['agc-harmony'].submit 自动提审",
+      message: "测试版本已就绪（未提交审核）；到控制台提交或配置 test['agc'].submit 自动提审",
     });
     return { ok: true, ref: versionId };
   }
