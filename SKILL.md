@@ -22,7 +22,7 @@ applift doctor --cwd <项目目录>   # 框架/包名推导/凭据核对/产物�
 
 ### 2. 凭据检查
 
-查找链：项目 `.applift/credentials.toml`（逐层向上）→ `~/.applift/credentials.toml` → `APPLIFT_*` 环境变量。doctor 报缺什么键，把 channels --json 里对应 hint 转告用户。不要编造凭据。
+查找链：项目 `.applift/credentials.json`（逐层向上）→ `~/.applift/credentials.json` → `APPLIFT_*` 环境变量。doctor 报缺什么键，把 channels --json 里对应 hint 转告用户。不要编造凭据。
 
 ### 3. 内测（beta，安全，免确认）
 

@@ -33,13 +33,17 @@ applift history                   # 谁在何时发了什么
 
 ## 配置
 
-**凭据**（`~/.applift/credentials.toml`，0600；项目 `.applift/` 同名文件逐键优先，私有仓可提交进仓库）：
+**凭据**（`~/.applift/credentials.json`，0600；项目 `.applift/` 同名文件逐键优先，私有仓可提交进仓库）：
 
-```toml
-[profiles.default]
-PGYER_API_KEY = "..." # 蒲公英（免费，内测）
-AGC_CLIENT_ID = "..." # 华为 AGC
-# 完整键清单：applift channels --json（含每项获取指引）
+```json
+{
+  "profiles": {
+    "default": {
+      "PGYER_API_KEY": "...", // 蒲公英（免费，内测）
+      "AGC_CLIENT_ID": "..." // 华为 AGC；完整键清单：applift channels --json（含每项获取指引）
+    }
+  }
+}
 ```
 
 **项目**（`applift.config.ts`，可全空——包名/框架自动推导）：

@@ -622,7 +622,7 @@ program
     const profileNames = Object.keys(creds.profiles);
     if (profileNames.length > 0)
       p.log.success(`凭据 profiles: ${pc.bold(profileNames.join(", "))}`);
-    else p.log.error("无凭据（~/.applift/credentials.toml）");
+    else p.log.error("无凭据（~/.applift/credentials.json）");
     if (profileNames.length === 0) healthy = false;
     const { config } = await loadProjectConfig(cmdOpts.cwd);
     // 与 release 同链解析：projects.json 个人选择（applift use）> 项目配置团队默认

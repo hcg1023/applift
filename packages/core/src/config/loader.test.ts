@@ -12,10 +12,10 @@ import {
 } from "./loader.js";
 
 function tmpFile(name: string): string {
-  return path.join(os.tmpdir(), `applift-test-${name}.toml`);
+  return path.join(os.tmpdir(), `applift-test-${name}.json`);
 }
 
-describe("credentials.toml", () => {
+describe("credentials.json", () => {
   it("save → load 往返一致，且权限 0600", () => {
     const p = tmpFile("creds");
     saveCredentials(
@@ -45,7 +45,7 @@ describe("credentials.toml", () => {
 
   it("过宽权限被自动修复为 0600", () => {
     const p = tmpFile("perms");
-    fs.writeFileSync(p, '[profiles.default]\nK = "v"\n', { mode: 0o644 });
+    fs.writeFileSync(p, '{"profiles":{"default":{"K":"v"}}}', { mode: 0o644 });
     try {
       loadCredentials(p);
       expect(fs.statSync(p).mode & 0o777).toBe(0o600);
@@ -54,25 +54,11 @@ describe("credentials.toml", () => {
     }
   });
 
-  it("profile 名含裸键非法字符（如 = / 空格）→ 抛错且不写文件", () => {
-    const p = tmpFile("bad-profile");
-    expect(() => saveCredentials({ profiles: { "bad=name": { K: "v" } } }, p)).toThrow(
-      /bad=name.*非法字符/,
-    );
-    expect(fs.existsSync(p)).toBe(false);
-  });
-
-  it("键名含 # 等非法字符 → 抛错点名键名", () => {
-    expect(() =>
-      saveCredentials({ profiles: { ok: { "bad#key": "v" } } }, tmpFile("bad-key")),
-    ).toThrow(/bad#key.*非法字符/);
-  });
-
-  it("合法字符集边界（- 与 _）正常往返", () => {
-    const p = tmpFile("legal-keys");
-    saveCredentials({ profiles: { "my-profile_1": { "CLIENT_KEY-X": "v" } } }, p);
+  it("profile 名与键名不再受限（JSON 允许任意字符串）", () => {
+    const p = tmpFile("any-keys");
+    saveCredentials({ profiles: { "bad=name": { "bad#key": "v" } } }, p);
     try {
-      expect(loadCredentials(p)).toEqual({ profiles: { "my-profile_1": { "CLIENT_KEY-X": "v" } } });
+      expect(loadCredentials(p)).toEqual({ profiles: { "bad=name": { "bad#key": "v" } } });
     } finally {
       fs.unlinkSync(p);
     }
@@ -105,7 +91,7 @@ describe("loadGlobalConfig", () => {
 
 describe("CREDENTIALS_PATH 落在 ~/.applift", () => {
   it("路径约定", () => {
-    expect(CREDENTIALS_PATH).toBe(path.join(os.homedir(), ".applift", "credentials.toml"));
+    expect(CREDENTIALS_PATH).toBe(path.join(os.homedir(), ".applift", "credentials.json"));
   });
 });
 
@@ -148,7 +134,7 @@ describe("loadCredentialsLayered 逐级凭据", () => {
     const localDir = path.join(projDir, ".applift");
     fs.mkdirSync(localDir);
     const globalFile = tmpFile("layered-global");
-    const projFile = path.join(localDir, "credentials.toml");
+    const projFile = path.join(localDir, "credentials.json");
     saveCredentials(
       { profiles: { default: { PGYER_API_KEY: "g-key", AGC_CLIENT_ID: "g-agc" } } },
       globalFile,

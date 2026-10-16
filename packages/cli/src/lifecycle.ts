@@ -133,9 +133,9 @@ export default defineConfig({
       fs.writeFileSync(configPath, content);
       p.log.success(`已生成 ${pc.bold("applift.config.ts")}`);
 
-      // 5) 凭据引导（可选，也可直接编辑 ~/.applift/credentials.toml）
+      // 5) 凭据引导（可选，也可直接编辑 ~/.applift/credentials.json）
       const doCreds = await p.confirm({
-        message: "现在配置凭据？（写入 ~/.applift/credentials.toml，0600）",
+        message: "现在配置凭据？（写入 ~/.applift/credentials.json，0600）",
         initialValue: false,
       });
       if (p.isCancel(doCreds)) return;
@@ -182,7 +182,7 @@ export default defineConfig({
           }
           saveCredentials(creds);
           p.log.success(
-            `凭据已写入 ~/.applift/credentials.toml（profile: ${pc.bold(profile)}，0600）`,
+            `凭据已写入 ~/.applift/credentials.json（profile: ${pc.bold(profile)}，0600）`,
           );
         }
       }
@@ -216,7 +216,7 @@ export default defineConfig({
         p.log.message(
           available.length > 0
             ? `可用 profiles: ${available.join(", ")}`
-            : "可用 profiles: (无 — 先在 ~/.applift/credentials.toml 配置)",
+            : "可用 profiles: (无 — 先在 ~/.applift/credentials.json 配置)",
         );
         p.outro(
           `个人切换: ${pc.cyan("applift use <profile>")}（改团队默认 → applift.config.ts 的 profile 字段）`,
@@ -229,7 +229,7 @@ export default defineConfig({
       );
       if (!available.includes(target)) {
         p.log.warn(
-          `~/.applift/credentials.toml 还没有 profile "${target}"（可用: ${available.join(", ") || "无"}），发版前记得补凭据`,
+          `~/.applift/credentials.json 还没有 profile "${target}"（可用: ${available.join(", ") || "无"}），发版前记得补凭据`,
         );
       }
     });

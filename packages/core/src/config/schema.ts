@@ -1,7 +1,7 @@
 /**
  * 配置三层：项目 applift.config.ts > 内置默认（全局行为配置独立于 ~/.applift/config.toml）。
- * 凭据独立存放 ~/.applift/credentials.toml（0600，按 profile 组织，永不进项目目录/git）。
- * 加载用社区主流 c12（TS 配置执行 + 多层 merge），TOML 用 smol-toml，非自研。
+ * 凭据独立存放 ~/.applift/credentials.json（0600，按 profile 组织，永不进项目目录/git）。
+ * 加载用社区主流 c12（TS 配置执行 + 多层 merge），config.toml 用 smol-toml 解析，非自研。
  */
 import { z } from "zod";
 
