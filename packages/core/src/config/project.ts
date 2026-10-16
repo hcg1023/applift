@@ -3,11 +3,27 @@
  * c12 负责：TS 配置文件执行、缺省值、多源合并 —— 非自研。
  */
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadConfig as c12Load } from "c12";
 import { findUp } from "./loader.js";
 import { createJiti } from "jiti";
 import { ProjectConfigSchema, type ProjectConfig } from "./schema.js";
 import type { QypubUserConfig } from "../plugin.js";
+
+/**
+ * 裸工程兼容：applift.config.ts 里的 `@applift/core` / `@applift/cli` 导入按目标工程解析会
+ * 找不到包（工程未安装依赖）——jiti 别名统一指到 CLI 进程自带的那份 core 入口，
+ * 使 `import { defineConfig } from "@applift/cli"`（或 @applift/core）在任何工程可用。
+ */
+function appliftAlias(): Record<string, string> {
+  try {
+    // import.meta.resolve 走 ESM import 条件（core 的 exports 仅含 import），拿真实入口文件路径
+    const coreEntry = fileURLToPath(import.meta.resolve("@applift/core"));
+    return { "@applift/core": coreEntry, "@applift/cli": coreEntry };
+  } catch {
+    return {}; // 解析失败（非预期布局）时退回目标工程自然解析
+  }
+}
 
 export interface LoadedProjectConfig {
   config: ProjectConfig;
@@ -31,13 +47,17 @@ export async function loadProjectConfig(cwd: string): Promise<LoadedProjectConfi
     Transpiler: new (o: { loader: string }) => { transformSync: (code: string) => string };
   };
   const bunRuntime = (globalThis as { Bun?: BunGlobal }).Bun;
+  const alias = appliftAlias();
   const jitiInstance = bunRuntime
     ? createJiti(import.meta.url, {
+        alias,
         transform: (opts: { source: string; ts?: boolean }) => ({
           code: new bunRuntime.Transpiler({ loader: "ts" }).transformSync(opts.source),
         }),
-      } as never)
-    : undefined;
+      })
+    : Object.keys(alias).length
+      ? createJiti(import.meta.url, { alias })
+      : undefined;
   const result = await c12Load<ProjectConfig>({
     name: "applift",
     cwd: cfgDir,

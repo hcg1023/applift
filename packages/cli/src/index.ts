@@ -2,6 +2,8 @@
  * CLI：commander 参数解析 + @clack/prompts 交互 + picocolors 美化。
  * 薄壳——渲染 core 事件流与插件钩子结果，业务全在 core。
  */
+// 供 applift.config.ts 导入（裸工程经加载器别名也可用）：CLI 自带，无需目标工程安装依赖
+export { defineConfig } from "@applift/core";
 import { Command } from "commander";
 import * as p from "@clack/prompts";
 import pc from "picocolors";

@@ -49,6 +49,37 @@ describe("loadProjectConfig", () => {
     expect(config.android?.stores).toEqual({});
   });
 
+  it("裸工程导入 @applift/cli 的 defineConfig 可用（jiti 别名指到自带 core）", async () => {
+    const dir = tmpProject((d) => {
+      fs.writeFileSync(
+        path.join(d, "applift.config.ts"),
+        [
+          'import { defineConfig } from "@applift/cli";',
+          "export default defineConfig({",
+          "  beta: { pgyer: { platforms: ['android'] } },",
+          "});",
+        ].join("\n"),
+      );
+    });
+    const { config, cwd } = await loadProjectConfig(dir);
+    expect(config.beta?.pgyer?.platforms).toEqual(["android"]);
+    expect(cwd).toBe(dir);
+  });
+
+  it("裸工程导入 @applift/core 的 defineConfig 同样可用", async () => {
+    const dir = tmpProject((d) => {
+      fs.writeFileSync(
+        path.join(d, "applift.config.ts"),
+        [
+          'import { defineConfig } from "@applift/core";',
+          "export default defineConfig({ name: 'alias-core' });",
+        ].join("\n"),
+      );
+    });
+    const { config } = await loadProjectConfig(dir);
+    expect(config.name).toBe("alias-core");
+  });
+
   it("无配置文件 → 回退内置默认值，cwd 回退入参", async () => {
     const dir = tmpProject();
     const { config, cwd } = await loadProjectConfig(dir);

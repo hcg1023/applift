@@ -13,6 +13,9 @@
     "dist"
   ],
   "type": "module",
+  "exports": {
+    ".": "./dist/index.mjs"
+  },
   "publishConfig": {
     "access": "public"
   },
