@@ -1,6 +1,6 @@
 /**
  * AGC 鸿蒙 业务流程级测试：同一渠道实例贯穿
- *   stage（releaseType=6 测试发布 .hap：上传→绑定→文案，不提审）
+ *   stage（releaseType=6 测试发布 .hap：Testing API 上传→建版本→绑包，不提审）
  *   → submit（.app 整包 v3 全链：上传→绑定→云端编译轮询→提审）
  *   → status（未接入，返回 unknown）。
  *
@@ -21,19 +21,17 @@ import { mockFetch } from "../test-utils.js";
 const BETA_OBJECT_ID = "agc-beta-obj-1";
 const FORMAL_OBJECT_ID = "agc-formal-obj-9";
 const FORMAL_PACKAGE_ID = "agc-pkg-777";
+const BETA_VERSION_ID = "agc-beta-ver-1";
+const BETA_PKG_ID = "agc-beta-pkg-1";
 const APP_ID = "3001234";
 
-const hapBytes = Buffer.from("fake-hap-beta-bytes-0123456789");
 const appBytes = Buffer.from("fake-harmony-app-package-0123456789abcdef");
 
 let dir = "";
-let hapPath = "";
 let appPath = "";
 
 beforeAll(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "agc-flow-"));
-  hapPath = path.join(dir, "entry-release-test.hap");
-  fs.writeFileSync(hapPath, hapBytes);
   appPath = path.join(dir, "entry-release-signed.app");
   fs.writeFileSync(appPath, appBytes);
 });
@@ -88,6 +86,17 @@ describe("agc-harmony flow: 同一渠道实例 beta stage → formal submit → 
           },
         },
       },
+      // Testing API（beta 链路）：新建测试版本 / 添加测试软件包 / 绑定
+      {
+        match: "test/app/version",
+        method: "POST",
+        response: { json: { ret: { code: 0 }, versionId: BETA_VERSION_ID } },
+      },
+      { match: "test/app/version", method: "PUT", response: { json: { ret: { code: 0 } } } },
+      {
+        match: "test/version/pkg",
+        response: { json: { ret: { code: 0 }, pkgVersion: [BETA_PKG_ID] } },
+      },
       // formal 上传地址（无 releaseType 参数）
       {
         match: "upload-url/for-obs",
@@ -109,11 +118,18 @@ describe("agc-harmony flow: 同一渠道实例 beta stage → formal submit → 
         response: { json: { ret: { code: 0 }, packageId: FORMAL_PACKAGE_ID } },
       },
       { match: "app-language-info", response: { json: { ret: { code: 0 } } } },
-      // 编译轮询：第一次编译中（1），第二次成功（0）
+      // 编译轮询：beta 包即时成功；formal 第一次编译中（1），第二次成功（0）
       {
         match: "package/compile/status",
-        response: () => {
-          compilePolls++;
+        response: (req) => {
+          if (req.url.includes(BETA_PKG_ID))
+            return {
+              json: {
+                ret: { code: 0 },
+                pkgStateList: [{ pkgId: BETA_PKG_ID, successStatus: 0 }],
+              },
+            };
+          compilePolls += 1;
           return {
             json: {
               ret: { code: 0 },
@@ -128,19 +144,21 @@ describe("agc-harmony flow: 同一渠道实例 beta stage → formal submit → 
     ]);
 
     const channel = new AgcHarmonyChannel();
-    // ---------- stage：releaseType=6 测试发布（.hap） ----------
-    const beta = makeCtx({ appId: APP_ID, releaseType: "6" }, hapPath);
+    // ---------- stage：releaseType=6 测试发布（.app 整包） ----------
+    const beta = makeCtx({ appId: APP_ID, releaseType: "6" }, appPath);
     const betaPlan = await channel.plan(beta.ctx);
     // 不变量：测试发布是 stage-only（无提审动作，afterApproval=none(beta)）
     expect(betaPlan.action).toBe("stage-only");
     expect(betaPlan.afterApproval).toBe("none(beta)");
     const stageResult = await channel.stage(beta.ctx);
-    expect(stageResult).toEqual({ ok: true, ref: BETA_OBJECT_ID });
-    // 不变量：beta 链路绝不调用 app-submit（测试发布无提审概念）
-    expect(fetchMock.calls.some((c) => c.url.includes("app-submit"))).toBe(false);
-    // PUT 上传的是真实 .hap 字节（非空产物）
+    expect(stageResult).toEqual({ ok: true, ref: BETA_VERSION_ID });
+    // 不变量：beta 走 Testing API（PUT test/app/version 绑定），绝不调用 app-submit
+    expect(
+      fetchMock.calls.some((c) => c.url.includes("test/app/version") && c.method === "PUT"),
+    ).toBe(true);
+    // PUT 上传的是真实 .app 字节（非空产物）
     expect(fetchMock.calls.find((c) => c.url === "https://obs-agc.example.com/beta")!.body).toEqual(
-      hapBytes,
+      appBytes,
     );
 
     // ---------- submit：.app 整包 v3 全链（同渠道实例） ----------
@@ -164,7 +182,7 @@ describe("agc-harmony flow: 同一渠道实例 beta stage → formal submit → 
       objectId: FORMAL_OBJECT_ID,
     });
     // 不变量：绑定返回的 packageId 进编译轮询 query（同一 packageId 查询两次：1 → 0）
-    const pollCalls = fetchMock.calls.filter((c) => c.url.includes("pkgIds="));
+    const pollCalls = fetchMock.calls.filter((c) => c.url.includes(`pkgIds=${FORMAL_PACKAGE_ID}`));
     expect(pollCalls).toHaveLength(2);
     for (const p of pollCalls) expect(p.url).toContain(`pkgIds=${FORMAL_PACKAGE_ID}`);
     // 不变量：successStatus=0 后才 POST app-submit（提审在编译完成之后）

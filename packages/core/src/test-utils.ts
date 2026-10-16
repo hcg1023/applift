@@ -36,7 +36,12 @@ function makeResponse(spec: MockResponseSpec): Response {
  * @returns calls 收集器（含断言辅助）
  */
 export function mockFetch(
-  routes: Array<{ match: string | RegExp; response: MockResponseSpec | (() => MockResponseSpec) }>,
+  routes: Array<{
+    match: string | RegExp;
+    /** 可选：限定 HTTP 方法（同 URL 不同 method 的接口区分用） */
+    method?: string;
+    response: MockResponseSpec | ((req: { method: string; url: string }) => MockResponseSpec);
+  }>,
 ) {
   const calls: MockCall[] = [];
   const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -52,11 +57,14 @@ export function mockFetch(
       body: init?.body as string | undefined,
       signal: init?.signal,
     });
-    const route = routes.find((r) =>
-      typeof r.match === "string" ? url.includes(r.match) : r.match.test(url),
+    const route = routes.find(
+      (r) =>
+        (typeof r.match === "string" ? url.includes(r.match) : r.match.test(url)) &&
+        (!r.method || r.method.toUpperCase() === method),
     );
     if (!route) throw new Error(`测试未预期的请求: ${method} ${url}`);
-    const spec = typeof route.response === "function" ? route.response() : route.response;
+    const spec =
+      typeof route.response === "function" ? route.response({ method, url }) : route.response;
     return makeResponse(spec);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -65,9 +73,11 @@ export function mockFetch(
     restore() {
       vi.unstubAllGlobals();
     },
-    /** 找到命中 url 片段的调用 */
-    find(urlPart: string): MockCall | undefined {
-      return calls.find((c) => c.url.includes(urlPart));
+    /** 找到命中 url 片段（可选限定 method）的调用 */
+    find(urlPart: string, method?: string): MockCall | undefined {
+      return calls.find(
+        (c) => c.url.includes(urlPart) && (!method || c.method === method.toUpperCase()),
+      );
     },
   };
 }

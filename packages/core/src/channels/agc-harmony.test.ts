@@ -262,7 +262,7 @@ describe("AgcHarmonyChannel.submit 全链路", () => {
     const { ctx } = baseCtx();
     const p = new AgcHarmonyChannel().submit(ctx);
     const assertion = expect(p).rejects.toThrow(
-      "AGC 编译拒绝（packageId pkg-1）：签名/证书/bundleName 不匹配",
+      "AGC 编译拒绝（pkgId pkg-1）：签名/证书/bundleName 不匹配",
     );
     await vi.advanceTimersByTimeAsync(1000);
     await assertion;
@@ -312,6 +312,19 @@ describe("AgcHarmonyChannel.submit 全链路", () => {
     }
   });
 
+  it("releaseType=6 非 .app 后缀抛错（Testing API 不收 .hap）", async () => {
+    const hap = path.join(os.tmpdir(), "applift-test-agc-harmony.hap");
+    fs.writeFileSync(hap, FILE_CONTENT);
+    mockFetch([TOKEN_ROUTE]);
+    const { ctx } = baseCtx({ artifactPath: hap, target: { appId: "app-1", releaseType: "6" } });
+    try {
+      await expect(new AgcHarmonyChannel().stage(ctx)).rejects.toThrow(
+        "AGC 测试发布需要 .app 整包",
+      );
+    } finally {
+      fs.unlinkSync(hap);
+    }
+  });
   it("releaseType=6 不自动提审", async () => {
     const { ctx } = baseCtx({ target: { appId: "app-1", releaseType: "6" } });
     const r = await new AgcHarmonyChannel().submit(ctx);
@@ -364,45 +377,53 @@ describe("AgcHarmonyChannel.submit 全链路", () => {
 });
 
 describe("AgcHarmonyChannel.stage（releaseType=6 测试发布）", () => {
-  it("走测试发布路径：releaseType=6 上传/绑定/文案，不提审，绑定失败不阻断", async () => {
-    let bindCalls = 0;
+  it("走 Testing API 链路：上传→新建测试版本→添加软件包→等编译→绑定，不提审", async () => {
     const { find } = mockFetch([
       TOKEN_ROUTE,
-      {
-        match: "app-package-info",
-        response: () => {
-          bindCalls += 1;
-          return { json: { ret: { code: 800, msg: "bind fail" } } };
-        },
-      },
       { match: "upload-url", response: { json: { ret: { code: 0 }, urlInfo: obsRoutes() } } },
       { match: "obs.example.com", response: { status: 200, text: "" } },
-      { match: "app-info", response: { json: { ret: { code: 0 }, appInfo: {} } } },
-      { match: "app-language-info", response: { json: { ret: { code: 0 } } } },
+      {
+        match: "test/app/version",
+        method: "POST",
+        response: { json: { ret: { code: 0 }, versionId: "ver-9" } },
+      },
+      { match: "test/app/version", method: "PUT", response: { json: { ret: { code: 0 } } } },
+      {
+        match: "test/version/pkg",
+        response: { json: { ret: { code: 0 }, pkgVersion: ["pkg-9"] } },
+      },
+      {
+        match: "compile/status",
+        response: {
+          json: { ret: { code: 0 }, pkgStateList: [{ pkgId: "pkg-9", successStatus: 0 }] },
+        },
+      },
     ]);
 
     const { ctx, events } = baseCtx({
       target: { appId: "app-1", releaseType: "6" },
-      updateDescription: "beta 文案",
+      updateDescription: "beta 说明",
     });
     const r = await new AgcHarmonyChannel().stage(ctx);
-
-    expect(r).toEqual({ ok: true, ref: "obj-1" });
-    // 测试发布：upload-url 与绑定/文案都带 releaseType=6
-    expect(find("upload-url")!.url).toContain("releaseType=6");
-    expect(bindCalls).toBe(1);
-    expect(find("app-package-info")!.url).toContain("releaseType=6");
-    // defaultLang 缺省回退 zh-CN
-    expect(JSON.parse(String(find("app-language-info")?.body ?? ""))).toEqual({
-      lang: "zh-CN",
-      newFeatures: "beta 文案",
+    expect(r.ok).toBe(true);
+    // 新建测试版本：POST test/app/version，testType=3 邀请测试，描述取 updateDescription
+    const createCall = find("test/app/version", "POST")!;
+    expect(JSON.parse(String(createCall.body))).toEqual({
+      releaseType: 6,
+      testType: 3,
+      testDesc: "beta 说明",
     });
+    // 添加测试软件包：distributeMode=1 测试专区，携带 objectId
+    const addPkg = find("test/version/pkg", "POST")!;
+    expect(JSON.parse(String(addPkg.body))).toEqual({
+      distributeMode: 1,
+      file: { fileName: "applift-test-agc-harmony.app", objectId: "obj-1" },
+    });
+    // 绑定：PUT test/app/version {versionId, pkgId}
+    const bindCall = find("test/app/version", "PUT")!;
+    expect(JSON.parse(String(bindCall.body))).toEqual({ versionId: "ver-9", pkgId: "pkg-9" });
     // 无提审请求
     expect(find("app-submit")).toBeUndefined();
-    // 绑定失败仅 warn 不阻断
-    expect(
-      events.some((e) => e.type === "warn" && String(e.message).includes("软件包绑定未成功")),
-    ).toBe(true);
     expect(events.at(-1)).toMatchObject({ type: "phase", phase: "done" });
   });
 
@@ -459,7 +480,7 @@ describe("AgcHarmonyChannel 异常与分支补齐", () => {
     ]);
     const { ctx } = baseCtx();
     const p = new AgcHarmonyChannel().submit(ctx);
-    const assertion = expect(p).rejects.toThrow("AGC 编译超时（15 分钟，packageId pkg-1）");
+    const assertion = expect(p).rejects.toThrow("AGC 编译超时（15 分钟，pkgId pkg-1）");
     await vi.advanceTimersByTimeAsync(16 * 60 * 1000);
     await assertion;
   });
@@ -642,7 +663,7 @@ describe("AgcHarmonyChannel 异常与分支补齐", () => {
     await expect(new AgcHarmonyChannel().stage(ctx)).rejects.toThrow("AGC 返回的上传地址为空");
   });
 
-  it("测试链路绑定成功 + 默认语言查询失败回退 zh-CN + 文案写入失败仅告警", async () => {
+  it("正式链路默认语言查询失败回退 zh-CN + 文案写入失败仅告警", async () => {
     const { find } = mockFetch([
       TOKEN_ROUTE,
       { match: "upload-url", response: { json: { ret: { code: 0 }, urlInfo: obsRoutes() } } },
@@ -655,19 +676,11 @@ describe("AgcHarmonyChannel 异常与分支补齐", () => {
       { match: "app-language-info", response: { json: { ret: { code: 900, msg: "write fail" } } } },
     ]);
     const { ctx, events } = baseCtx({
-      target: { appId: "app-1", releaseType: "6" },
+      target: { appId: "app-1" },
       updateDescription: "beta 描述",
     });
     const r = await new AgcHarmonyChannel().stage(ctx);
-    expect(r).toEqual({ ok: true, ref: "obj-1" });
-    expect(
-      events.some(
-        (e) =>
-          e.type === "phase" &&
-          e.phase === "bind" &&
-          String(e.message).includes("软件包已绑定到应用"),
-      ),
-    ).toBe(true);
+    expect(r).toEqual({ ok: true, ref: "pkg-beta" });
     // 默认语言查询失败 → lang 回退 zh-CN 再写入
     expect(JSON.parse(String(find("app-language-info")!.body ?? ""))).toEqual({
       lang: "zh-CN",
@@ -743,8 +756,8 @@ describe("AgcHarmonyChannel 异常与分支补齐", () => {
     expect(put.headers["Content-Type"]).toBe("application/octet-stream");
   });
 
-  it("stage 测试：urlInfo 顶层形态且缺 objectId → 跳过绑定，ref 为空串", async () => {
-    const { find, calls } = mockFetch([
+  it("stage 测试：urlInfo 顶层形态且缺 objectId → 抛错（Testing API 添加软件包必需 objectId）", async () => {
+    const { find } = mockFetch([
       TOKEN_ROUTE,
       {
         match: "upload-url",
@@ -752,14 +765,11 @@ describe("AgcHarmonyChannel 异常与分支补齐", () => {
       },
       { match: "top.example.com", response: { status: 201, text: "" } },
     ]);
-    const { ctx, events } = baseCtx({ target: { appId: "app-1", releaseType: "6" } });
-    const r = await new AgcHarmonyChannel().stage(ctx);
-    expect(r).toEqual({ ok: true, ref: "" });
-    expect(find("app-package-info")).toBeUndefined();
-    const put = calls.find((c) => c.url.includes("top.example.com"))!;
-    expect(put.method).toBe("PUT");
-    expect(put.headers["Content-Type"]).toBe("application/octet-stream");
-    expect(events.some((e) => e.type === "phase" && e.phase === "done")).toBe(true);
+    const { ctx } = baseCtx({ target: { appId: "app-1", releaseType: "6" } });
+    await expect(new AgcHarmonyChannel().stage(ctx)).rejects.toThrow(
+      "AGC 上传响应缺 objectId（Testing API 添加软件包必需）",
+    );
+    expect(find("test/app/version")).toBeUndefined();
   });
 
   it("响应无任何列表字段 → 空列表 → 未找到抛错", async () => {

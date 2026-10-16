@@ -28,8 +28,8 @@ applift doctor --cwd <项目目录>   # 框架/包名推导/凭据核对/产物�
 
 ```bash
 applift beta android --note "说明"        # 蒲公英，扫码即装
-applift beta harmony                      # 默认 AGC 指定设备测试（--via pgyer 改蒲公英）
-applift beta ios                          # ipa → TestFlight
+applift beta harmony                # AGC 邀请测试（Testing API，需 .app 整包；--via pgyer 改蒲公英）
+applift beta ios                    # ipa → TestFlight
 ```
 
 ### 4. 正式发版（两段式，L3 不可逆）

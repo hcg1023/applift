@@ -11,9 +11,13 @@
  *   5. GET  /api/publish/v3/package/compile/status  轮询编译（0=成功 2=拒绝终态 其他=编译中）
  *   6. POST /api/publish/v3/app-submit           提审（ret 204144719/204144727 = 编译中可重试）
  *
- * 内测测试发布（ctx.target.releaseType === '6'，Upload Management API）:
- *   upload-url/for-obs 带 releaseType=6，传 .hap 即可，后续在 AGC 控制台「测试」中指定测试设备（不做自动提审）。
- * 官方文档: https://developer.huawei.com/consumer/cn/doc/app/agc-help-upload-api-guide-0000002271160549
+ * 测试发布（ctx.target.releaseType === '6'，2026-10 起走 Testing API；旧 releaseType=6 直绑 app-package-info 链路已下线，枚举仅剩 1/7）:
+ *   0. GET  /api/publish/v2/upload-url/for-obs?releaseType=6   .hap 上传地址 → PUT OBS
+ *   1. POST /api/publish/v2/test/app/version                   新建测试版本（testType 3=邀请测试）→ versionId
+ *   2. POST /api/publish/v2/test/version/pkg                   添加测试软件包（distributeMode=1）→ pkgId
+ *   3. GET  /api/publish/v3/package/compile/status             轮询云端编译
+ *   4. PUT  /api/publish/v2/test/app/version                   {versionId, pkgId} 绑定；提交审核/测试群组由控制台人工完成。
+ * 官方文档: https://developer.huawei.com/consumer/cn/doc/doccenter-connect-api/agc-help-test-api-guide-0000002236015562
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -75,6 +79,16 @@ interface BindPkgResp extends AgcRet {
 
 interface CompileStatusResp extends AgcRet {
   pkgStateList?: Array<{ pkgId?: string; successStatus?: number }>;
+}
+
+/** Testing API：新建测试版本响应 */
+interface TestVersionResp extends AgcRet {
+  versionId?: string;
+}
+
+/** Testing API：添加测试软件包响应 */
+interface TestPkgResp extends AgcRet {
+  pkgVersion?: string[];
 }
 
 /** AGC JSON API 封装：判 ret.code !== 0 抛错 —— v1 agc.mjs agcJson 原样 */
@@ -189,7 +203,8 @@ export class AgcHarmonyChannel implements Channel {
         artifactVersion: "",
         action: "stage-only",
         afterApproval: "none(beta)",
-        notes: "releaseType=6 测试发布：仅上传+绑定，到 AGC 控制台「测试」指定测试设备，不提审",
+        notes:
+          "Testing API 邀请测试：上传→新建测试版本→绑定软件包；提交审核与测试群组到控制台完成，不自动提审",
       };
     }
     return {
@@ -219,7 +234,8 @@ export class AgcHarmonyChannel implements Channel {
     if (ctx.target.releaseType === "6") {
       return {
         ok: false,
-        error: "AGC 测试发布（releaseType=6）不做自动提审，请到 AGC 控制台「测试」中指定测试设备",
+        error:
+          "AGC 测试发布（releaseType=6）不做自动提审，请到 AGC 控制台「测试」提交测试版本并指定测试群组",
       };
     }
     const { clientId, token, headers } = await this.authHeaders(ctx);
@@ -227,43 +243,8 @@ export class AgcHarmonyChannel implements Channel {
     ctx.emit({ type: "phase", phase: "auth", message: "token 获取成功" });
     const { packageId } = await this.uploadFormal(ctx, appId, headers);
 
-    // step 5: 轮询编译状态（0=成功 2=拒绝（终态，多为签名/证书/bundleName 不匹配）其他=编译中）
-    if (packageId) {
-      ctx.emit({
-        type: "phase",
-        phase: "wait",
-        message: `等待 AGC 云端编译（packageId: ${packageId}）`,
-      });
-      const deadline = Date.now() + COMPILE_TIMEOUT_MS;
-      for (;;) {
-        const stQs = new URLSearchParams({ appId, pkgIds: packageId });
-        const st = await agcJson<CompileStatusResp>(
-          `${BASE}/publish/v3/package/compile/status?${stQs}`,
-          { headers },
-          "查询编译状态",
-        );
-        const state = st.pkgStateList?.find((p) => p.pkgId === packageId) ?? st.pkgStateList?.[0];
-        const s = state?.successStatus;
-        if (s === 0) {
-          ctx.emit({ type: "progress", detail: "软件包编译完成" });
-          break;
-        }
-        if (s === 2) {
-          throw new Error(
-            `AGC 编译拒绝（packageId ${packageId}）：签名/证书/bundleName 不匹配，到 AGC 控制台核对`,
-          );
-        }
-        if (Date.now() > deadline)
-          throw new Error(
-            `AGC 编译超时（${COMPILE_TIMEOUT_MS / 60000} 分钟，packageId ${packageId}）`,
-          );
-        ctx.emit({
-          type: "progress",
-          detail: `编译中（successStatus=${s}），${COMPILE_POLL_MS / 1000}s 后重查…`,
-        });
-        await sleep(COMPILE_POLL_MS);
-      }
-    }
+    // step 5: 轮询编译状态
+    if (packageId) await this.awaitCompile(ctx, appId, packageId, headers);
 
     // step 6: 提审（204144719/204144727 = 仍在编译，可重试）
     ctx.emit({ type: "phase", phase: "submit" });
@@ -309,6 +290,43 @@ export class AgcHarmonyChannel implements Channel {
         message: "鸿蒙已提交审核！请在 AGC 控制台跟踪审核进度",
       });
       return { ok: true };
+    }
+  }
+
+  /** 轮询软件包云端编译：successStatus 0=成功 2=拒绝（终态，多为签名/证书/bundleName 不匹配）其他=编译中 */
+  private async awaitCompile(
+    ctx: ChannelContext,
+    appId: string,
+    pkgId: string,
+    headers: Record<string, string>,
+  ): Promise<void> {
+    ctx.emit({ type: "phase", phase: "wait", message: `等待 AGC 云端编译（pkgId: ${pkgId}）` });
+    const deadline = Date.now() + COMPILE_TIMEOUT_MS;
+    for (;;) {
+      const stQs = new URLSearchParams({ appId, pkgIds: pkgId });
+      const st = await agcJson<CompileStatusResp>(
+        `${BASE}/publish/v3/package/compile/status?${stQs}`,
+        { headers },
+        "查询编译状态",
+      );
+      const state = st.pkgStateList?.find((p) => p.pkgId === pkgId) ?? st.pkgStateList?.[0];
+      const s = state?.successStatus;
+      if (s === 0) {
+        ctx.emit({ type: "progress", detail: "软件包编译完成" });
+        return;
+      }
+      if (s === 2) {
+        throw new Error(
+          `AGC 编译拒绝（pkgId ${pkgId}）：签名/证书/bundleName 不匹配，到 AGC 控制台核对`,
+        );
+      }
+      if (Date.now() > deadline)
+        throw new Error(`AGC 编译超时（${COMPILE_TIMEOUT_MS / 60000} 分钟，pkgId ${pkgId}）`);
+      ctx.emit({
+        type: "progress",
+        detail: `编译中（successStatus=${s}），${COMPILE_POLL_MS / 1000}s 后重查…`,
+      });
+      await sleep(COMPILE_POLL_MS);
     }
   }
 
@@ -391,7 +409,12 @@ export class AgcHarmonyChannel implements Channel {
     return { objectId, packageId };
   }
 
-  /** v1 uploadToAgc（releaseType=6 测试发布）：上传 → 绑定（不阻断）→ 文案（不阻断），不提审 */
+  /**
+   * 测试发布（releaseType=6，2026-10 起走 Testing API——旧 app-package-info 直绑链路已被华为下线，
+   * 其 releaseType 枚举仅剩 1=全网 / 7=企业非公开）：
+   * 上传 .hap → 新建测试版本（testType=3 邀请测试）→ 添加测试软件包 → 等云端编译 → 更新测试版本绑定；
+   * 不自动提交审核，测试群组/邀请码由控制台人工完成。
+   */
   private async uploadBeta(
     ctx: ChannelContext,
     appId: string,
@@ -400,10 +423,15 @@ export class AgcHarmonyChannel implements Channel {
     const fileName = path.basename(ctx.artifactPath);
     const contentLength = fs.statSync(ctx.artifactPath).size;
     const sha256 = sha256File(ctx.artifactPath);
+    if (path.extname(ctx.artifactPath).toLowerCase() !== ".app") {
+      throw new Error(
+        "AGC 测试发布需要 .app 整包（DevEco「构建 App」产物，发布签名）；Testing API 不再接受 .hap（实测 204144641）",
+      );
+    }
     ctx.emit({
       type: "phase",
       phase: "upload",
-      message: `AGC 上传 ${fileName}（${formatSize(contentLength)}，releaseType=6 测试发布）`,
+      message: `AGC 上传 ${fileName}（${formatSize(contentLength)}，测试发布）`,
     });
 
     const qs = new URLSearchParams({
@@ -422,6 +450,7 @@ export class AgcHarmonyChannel implements Channel {
     const objectId = urlInfo.objectId ?? "";
     if (!urlInfo.url)
       throw new Error(`AGC 返回的上传地址为空: ${JSON.stringify(urlJson).slice(0, 300)}`);
+    if (!objectId) throw new Error("AGC 上传响应缺 objectId（Testing API 添加软件包必需）");
     ctx.emit({ type: "progress", detail: "上传地址获取成功（5 分钟内有效）" });
 
     const method = (urlInfo.method ?? "PUT").toUpperCase();
@@ -441,37 +470,61 @@ export class AgcHarmonyChannel implements Channel {
     }
     ctx.emit({ type: "progress", detail: "文件上传完成" });
 
-    // releaseType=6 测试发布：v3 绑定（测试包同样要挂上应用，失败不阻断）
-    if (objectId) {
-      try {
-        const bindQs = new URLSearchParams({ appId, releaseType: "6" });
-        await agcJson(
-          `${BASE}/publish/v3/app-package-info?${bindQs}`,
-          {
-            method: "PUT",
-            headers: { ...headers, "Content-Type": "application/json" },
-            body: JSON.stringify({ fileName, objectId }),
-          },
-          "绑定软件包",
-        );
-        ctx.emit({ type: "phase", phase: "bind", message: "软件包已绑定到应用" });
-      } catch (e) {
-        ctx.emit({
-          type: "warn",
-          message: `软件包绑定未成功（不阻断，必要时到控制台手动关联）: ${(e as Error).message}`,
-        });
-      }
-    }
+    // step 1：新建测试版本（releaseType=6 HarmonyOS 测试发布；testType 3=邀请测试 4=公开测试）
+    const verJson = await agcJson<TestVersionResp>(
+      `${BASE}/publish/v2/test/app/version?appId=${encodeURIComponent(appId)}`,
+      {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          releaseType: 6,
+          testType: 3,
+          testDesc: (ctx.updateDescription ?? "applift 测试发布").slice(0, 50),
+        }),
+      },
+      "新建测试版本",
+    );
+    const versionId = verJson.versionId ?? "";
+    if (!versionId) throw new Error("AGC 新建测试版本未返回 versionId");
+    ctx.emit({
+      type: "phase",
+      phase: "bind",
+      message: `测试版本已创建（versionId: ${versionId}）`,
+    });
 
-    const langQs = new URLSearchParams({ appId, releaseType: "6" });
-    await this.updateReleaseNotes(ctx, appId, headers, langQs);
+    // step 2：添加测试软件包（distributeMode 1=测试专区）
+    const pkgJson = await agcJson<TestPkgResp>(
+      `${BASE}/publish/v2/test/version/pkg?appId=${encodeURIComponent(appId)}`,
+      {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ distributeMode: 1, file: { fileName, objectId } }),
+      },
+      "添加测试软件包",
+    );
+    const pkgId = pkgJson.pkgVersion?.[0] ?? "";
+    if (!pkgId) throw new Error("AGC 添加测试软件包未返回 pkgVersion");
+
+    // step 3：等云端编译完成（官方建议：解析完成后再绑定）
+    await this.awaitCompile(ctx, appId, pkgId, headers);
+
+    // step 4：更新测试版本，绑定软件包
+    await agcJson(
+      `${BASE}/publish/v2/test/app/version?appId=${encodeURIComponent(appId)}`,
+      {
+        method: "PUT",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ versionId, pkgId }),
+      },
+      "绑定测试软件包",
+    );
 
     ctx.emit({
       type: "phase",
       phase: "done",
-      message: "测试包已上传；后续在 AGC 控制台「我的应用 → 测试」中查看并指定测试设备/人员",
+      message: "测试版本已就绪（未提交审核）；到 AGC 控制台「测试」提交并指定测试群组",
     });
-    return { ok: true, ref: objectId };
+    return { ok: true, ref: versionId };
   }
 
   /** v1 更新文案段（releaseHarmonyApp step 4 / uploadToAgc 尾段）：查默认语言 → 写 newFeatures，失败仅警告不阻断 */

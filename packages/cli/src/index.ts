@@ -232,9 +232,16 @@ program
           artifactPath,
           cmdOpts.note,
         );
-        const r = await agc.stage({ ...ctx, emit: () => {} });
+        const r = await agc.stage({
+          ...ctx,
+          emit: (e) => {
+            if (e.type === "warn") s.message(pc.yellow(`⚠ ${e.message}`));
+          },
+        });
         if (r.ok) {
-          s.stop(`AGC 测试包已上传 ${pc.green("✓")} 到控制台「我的应用 → 测试」指定测试设备`);
+          s.stop(
+            `AGC 测试版本已就绪 ${pc.green("✓")}（未提交审核），到控制台「测试」提交并指定测试群组`,
+          );
         } else {
           s.stop(`AGC 测试发布失败: ${r.error}`);
           process.exitCode = 1;
@@ -253,7 +260,12 @@ program
         cmdOpts.note,
         { installPassword: cmdOpts.installPassword },
       );
-      const r = await pgyer.stage({ ...ctx, emit: () => {} });
+      const r = await pgyer.stage({
+        ...ctx,
+        emit: (e) => {
+          if (e.type === "warn") s.message(pc.yellow(`⚠ ${e.message}`));
+        },
+      });
       if (r.ok) {
         s.stop(`蒲公英发布成功 ${pc.green("✓")} 扫码即装`);
       } else {
