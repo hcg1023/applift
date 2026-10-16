@@ -1,5 +1,11 @@
 # @applift/cli
 
+## 0.1.4
+
+### Patch Changes
+
+- e804d4f: 修复 `applift --version` 硬编码 0.2.0 的问题，改为从 package.json 动态读取
+
 ## 0.1.3
 
 ### Patch Changes
