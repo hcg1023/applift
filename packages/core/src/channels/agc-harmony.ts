@@ -61,6 +61,8 @@ interface AppIdEntry {
 interface AppIdListResp extends AgcRet {
   appIds?: AppIdEntry[];
   appIdList?: AppIdEntry[];
+  /** 2026-10 实测新形态：packageName 由服务端过滤，返回 {key: 应用名, value: appId} */
+  appids?: Array<{ key?: string; value?: string }>;
 }
 
 interface AppInfoResp extends AgcRet {
@@ -105,7 +107,7 @@ export async function getHarmonyAppId(opts: {
   token: string;
   bundleName: string;
 }): Promise<string> {
-  const qs = new URLSearchParams({ packageTypes: "7" });
+  const qs = new URLSearchParams({ packageTypes: "7", packageName: opts.bundleName });
   const json = await agcJson<AppIdListResp>(
     `${BASE}/publish/v2/appid-list?${qs}`,
     {
@@ -113,7 +115,10 @@ export async function getHarmonyAppId(opts: {
     },
     "查询应用列表",
   );
-  // 响应 appIds / appIdList（历史字段名不统一，大小写不敏感匹配 bundleName）
+  // 2026-10 实测新形态：appids=[{key:应用名, value:appId}]，packageName 已由服务端过滤，首条即目标
+  const fresh = json.appids?.[0]?.value;
+  if (fresh) return fresh;
+  // 旧形态兜底（appIds / appIdList 历史字段名不统一，大小写不敏感匹配 bundleName）
   const list = json.appIds ?? json.appIdList ?? [];
   const hit = (Array.isArray(list) ? list : []).find(
     (e) =>

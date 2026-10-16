@@ -105,6 +105,7 @@ describe("getHarmonyAppId", () => {
     expect(appId).toBe("APP-9");
     const call = calls.find((c) => c.url.includes("appid-list"))!;
     expect(call.url).toContain("packageTypes=7");
+    expect(call.url).toContain("packageName=com.example.foo");
     expect(call.headers).toEqual({ client_id: "cid", Authorization: "Bearer tk" });
   });
 
