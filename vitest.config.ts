@@ -13,7 +13,8 @@ export default defineConfig({
     ],
   },
   test: {
-    globalSetup: ["./packages/cli/src/vitest.global-setup.ts"],
+    // dist 由 test 脚本前置构建(package.json "test": "pnpm -r build && vitest run")——
+    // 不用 vitest globalSetup:其在 CI 上 spawn pnpm 即败(dist 缺失 → spawn 测试崩,Test step 7s 失败根因)
     testTimeout: 30_000, // spawn/git 重型用例在全仓并发 CPU 争抢下的余量
     // globalSetup 的 pnpm -r build 受 hookTimeout 约束(默认 10s):CI 冷构建必超时崩
     // (Test step 12s 失败、本地增量 build 秒过的根因),拉到与构建预算同量级
