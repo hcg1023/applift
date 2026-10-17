@@ -28,7 +28,7 @@
     "vitest": "^5.0.4"
   },
   "simple-git-hooks": {
-    "pre-commit": "pnpm exec lint-staged"
+    "pre-commit": "pnpm exec lint-staged && pnpm run test"
   },
   "lint-staged": {
     "*.{js,mjs,cjs,ts,mts,cts,json,jsonc}": [

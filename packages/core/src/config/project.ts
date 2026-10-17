@@ -2,6 +2,7 @@
  * 项目配置装载：c12（社区主流）加载 applift.config.ts。
  * c12 负责：TS 配置文件执行、缺省值、多源合并 —— 非自研。
  */
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig as c12Load } from "c12";
@@ -17,8 +18,13 @@ import type { QypubUserConfig } from "../plugin.js";
  */
 function appliftAlias(): Record<string, string> {
   try {
-    // import.meta.resolve 走 ESM import 条件（core 的 exports 仅含 import），拿真实入口文件路径
-    const coreEntry = fileURLToPath(import.meta.resolve("@applift/core"));
+    // import.meta.resolve 走 ESM import 条件（core 的 exports 仅含 import），按 exports 拿 dist 入口
+    const distEntry = fileURLToPath(import.meta.resolve("@applift/core"));
+    // 仓库内跑测试时 dist 可能尚未构建（CI 先 test 后 build）——回退 src 入口，jiti 原生加载 TS
+    const coreEntry = fs.existsSync(distEntry)
+      ? distEntry
+      : path.join(path.dirname(path.dirname(distEntry)), "src", "index.ts");
+    if (!fs.existsSync(coreEntry)) return {};
     return { "@applift/core": coreEntry, "@applift/cli": coreEntry };
   } catch {
     return {}; // 解析失败（非预期布局）时退回目标工程自然解析
