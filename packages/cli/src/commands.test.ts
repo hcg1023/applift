@@ -31,7 +31,12 @@ function cli(args: string[], cwd = proj) {
     cwd, // 进程工作目录：各命令 --cwd 缺省取 process.cwd()，且不是所有命令都有 --cwd 旗标
     encoding: "utf8",
     timeout: 60_000,
-    env: { ...process.env, HOME: dir, XDG_CONFIG_HOME: dir },
+    env: {
+      ...process.env,
+      HOME: dir,
+      XDG_CONFIG_HOME: dir,
+      APPLIFT_HOME: path.join(dir, ".applift"),
+    },
   });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }

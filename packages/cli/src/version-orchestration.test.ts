@@ -22,7 +22,12 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 function cli(args: string[]) {
-  const r = spawnSync("node", [BIN, ...args, "--cwd", dir], { encoding: "utf8", timeout: 60_000 });
+  // HOME/APPLIFT_HOME 隔离:不隔离时读开发者真实 ~/.applift(本地凭据碰巧让它过,CI 无凭据即崩)
+  const r = spawnSync("node", [BIN, ...args, "--cwd", dir], {
+    encoding: "utf8",
+    timeout: 60_000,
+    env: { ...process.env, HOME: dir, APPLIFT_HOME: path.join(dir, ".applift") },
+  });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 
@@ -88,6 +93,9 @@ describe("CLI version show/bump 编排（spawn 级）", () => {
 
   it("beta --no-bump 且无 beta 段配置：引导报错（编排否定路径）", () => {
     setupRn(true);
+    // 最小凭据:无凭据时 creds 解析先于 beta 段引导报错(与 commands.test 同法)
+    fs.mkdirSync(path.join(dir, ".applift"), { recursive: true });
+    fs.writeFileSync(path.join(dir, ".applift", "credentials.json"), `{"profiles":{"default":{}}}`);
     const r = cli(["beta", "--no-bump"]);
     expect(r.code).not.toBe(0);
     expect(r.out).toContain("beta 段");
