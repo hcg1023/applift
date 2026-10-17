@@ -316,6 +316,16 @@ describe("HonorChannel.stage", () => {
       "荣耀 绑定文件失败 code=100303 objectId 无效",
     );
   });
+
+  it("返回非 JSON（网关 502 HTML）→ 人话报错带状态码", async () => {
+    mockFetch([
+      TOKEN_ROUTE,
+      { match: "get-file-upload-url", response: { status: 502, text: "<html>bad gateway</html>" } },
+    ]);
+    await expect(new HonorChannel().stage(makeCtx())).rejects.toThrow(
+      /荣耀.*返回非 JSON（HTTP 502）/,
+    );
+  });
 });
 
 describe("HonorChannel.submit", () => {

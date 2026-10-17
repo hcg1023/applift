@@ -13,6 +13,8 @@ export default defineConfig({
     ],
   },
   test: {
+    globalSetup: ["./packages/cli/src/vitest.global-setup.ts"],
+    testTimeout: 30_000, // spawn/git 重型用例在全仓并发 CPU 争抢下的余量
     include: ["packages/*/src/**/*.test.ts"],
     environment: "node",
     coverage: {

@@ -149,4 +149,40 @@ describe("pgyer flow: stage 全流程（1247 → ok）出短链，无 submit", (
     expect(submit).toEqual({ ok: false, error: "蒲公英为内测渠道，无提审概念" });
     expect(fetchMock.calls.length).toBe(callsBefore);
   });
+
+  it("轮询遇非 0/1247 明确失败码 → 直接失败不再轮询", async () => {
+    vi.useFakeTimers();
+    let buildInfoCalls = 0;
+    mockFetch([
+      {
+        match: "/apiv2/app/getCOSToken",
+        response: {
+          json: {
+            code: 0,
+            data: {
+              endpoint: "https://cos-pgyer.example.com/put",
+              buildKey: BUILD_KEY,
+              params: { signature: "s", "x-cos-security-token": "t", key: "k.apk" },
+            },
+          },
+        },
+      },
+      { match: "cos-pgyer.example.com", response: { status: 200, text: "" } },
+      {
+        match: "/apiv2/app/buildInfo",
+        response: () => {
+          buildInfoCalls++;
+          return { json: { code: 2009, message: "应用解析失败" } };
+        },
+      },
+    ]);
+    const { ctx } = makeCtx();
+    const stageP = new PgyerChannel().stage(ctx);
+    await vi.advanceTimersByTimeAsync(3_000); // 首轮轮询即遇 2009
+    const r = await stageP;
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/蒲公英处理失败 2009: 应用解析失败/);
+    expect(buildInfoCalls).toBe(1); // 明确失败不重试
+    vi.useRealTimers();
+  });
 });

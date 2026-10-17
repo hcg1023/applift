@@ -225,4 +225,53 @@ describe("asc flow: 同一渠道实例 altool stage → REST submit → status",
     const st = await channel.status();
     expect(st.state).toBe("unknown");
   });
+
+  it("创建 reviewSubmission 未返回 id → 明确报错", async () => {
+    spawnSyncMock.mockReturnValue({
+      status: 0,
+      stdout: "Uploading finished\nNo errors uploading",
+      stderr: "",
+    } as never);
+    const fetchMock = mockFetch([
+      { match: "reviewSubmissions", method: "POST", response: { json: { data: [] } } }, // 无 id
+      { match: "relationships/builds", response: { json: { data: [] } } },
+      { match: "appStoreVersions?", response: { json: { data: [] } } },
+      {
+        match: "/v1/appStoreVersions",
+        response: { json: { data: { type: "appStoreVersions", id: VERSION_ID } } },
+      },
+      {
+        match: "/v1/builds",
+        response: {
+          json: {
+            data: [
+              {
+                type: "builds",
+                id: BUILD_ID,
+                attributes: { version: "42", processingState: "VALID" },
+                relationships: {
+                  preReleaseVersion: { data: { type: "preReleaseVersions", id: "pr-24" } },
+                },
+              },
+            ],
+            included: [
+              { type: "preReleaseVersions", id: "pr-24", attributes: { version: VERSION_STRING } },
+            ],
+          },
+        },
+      },
+      { match: "/v1/apps", response: { json: { data: [{ id: "app-1" }] } } },
+    ]);
+    const ch = new AscChannel();
+    const { ctx } = makeCtx();
+    await ch.stage(ctx);
+    await expect(ch.submit(ctx)).rejects.toThrow(/reviewSubmission 未返回 id/);
+    fetchMock.restore();
+  });
+
+  it("缺 bundleId（submit 定位 App 必需）→ required 人话报错", async () => {
+    const ch = new AscChannel();
+    const { ctx } = makeCtx();
+    await expect(ch.submit({ ...ctx, target: {} })).rejects.toThrow(/ASC 渠道缺少/);
+  });
 });

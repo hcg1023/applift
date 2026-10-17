@@ -642,6 +642,16 @@ describe("HuaweiAndroidChannel.updateListing", () => {
       new HuaweiAndroidChannel().updateListing(makeCtx(), { brief: "x" }),
     ).rejects.toThrow(/1003.*参数错误/);
   });
+
+  it("返回非 JSON（HTML 网关页）→ 人话报错", async () => {
+    mockFetch([
+      { match: "oauth2/v1/token", response: { status: 200, json: TOKEN_BODY } },
+      { match: "app-language-info", response: { status: 502, text: "<html>bad gateway</html>" } },
+    ]);
+    await expect(
+      new HuaweiAndroidChannel().updateListing(makeCtx(), { brief: "x" }),
+    ).rejects.toThrow(/华为.*返回非 JSON（HTTP 502）/);
+  });
 });
 
 describe("HuaweiAndroidChannel submit 定时上架（capabilities.scheduled 兑现）", () => {

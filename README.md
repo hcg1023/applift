@@ -33,14 +33,27 @@ beta: {
 
 正式发版（两段式，交互向导引导）：
 
-```bash
+````bash
 applift release android           # ① 确认渠道清单 → 传包到各家草稿（安全）
                                   # ② 草稿就绪后交互询问"现在提审？"
 applift release android --submit  # 一条龙：传包+计划确认+提审（审核通过即上架）
 applift release android --dry-run # 只看计划，无需凭据
 applift status --stores huawei    # 审核状态跟踪
 applift history                   # 谁在何时发了什么
-```
+
+版本管理(可接管:工程文件永远是版本事实源,applift 只代读代写):
+
+```bash
+applift version                          # 各端版本实况(versionName/versionCode + 锚点 tag)
+applift version bump patch               # 写工程文件 + CHANGELOG + 代 commit + 代 tag v4.0.1
+applift version bump minor --pre beta    # 进入 prerelease:tag v4.1.0-beta.0,商店 versionName 仍 4.1.0
+applift beta --bump                      # 自动 version(git 推断)→ 重新构建 → 多渠道内测一条命令
+````
+
+- 版本决定链:显式指定 > git conventional commits 推断(BREAKING/feat/fix)> patch 兜底;结果展示确认,不静默
+- versionCode 单调策略 max(公式值, 现值+1):config `version: { versionCode: { formula: "major*1000000+minor*1000+patch", platforms: ["harmony"] } }`,默认递增 +1;beta.1→beta.2→正式全程单调,AGC 同版本不能覆盖升级的墙由此规避
+- 自动 version 常开:config `beta: { bump: true }`(或 `release: { bump: true }`),`--no-bump` 临时关
+- push 永不代做,收尾提示 `git push --follow-tags`
 
 ## 配置
 

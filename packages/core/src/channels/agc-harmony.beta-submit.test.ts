@@ -139,6 +139,8 @@ describe("agc beta 自动提审（submitTest）", () => {
       pkgId: PKG_ID,
     });
     const groupBind = JSON.parse(putCalls[1]!.body as string) as {
+      versionId: string;
+      pkgId: string;
       openTestInfo: { startTime: number; endTime: number; testTaskInfo: unknown };
     };
     expect(groupBind.versionId).toBe(VERSION_ID);
@@ -220,5 +222,23 @@ describe("agc beta 自动提审（submitTest）", () => {
     expect(result).toEqual({ ok: true, ref: VERSION_ID });
     expect(fetchMock.find("test-group/list")).toBeUndefined();
     expect(fetchMock.find("test/app/version/submit", "POST")).toBeUndefined();
+  });
+
+  it("群组列表 rtnCode 非 0 → 人话报错（含 rtnDesc）", async () => {
+    mockFetch([
+      ...baseRoutes(),
+      {
+        match: "test-group/list",
+        response: { json: { rtnCode: 204144701, rtnDesc: "无权限" } },
+      },
+    ]);
+    const channel = new AgcHarmonyChannel();
+    const ctx = makeCtx({
+      appId: APP_ID,
+      releaseType: "6",
+      submitTest: "true",
+      testGroup: GROUP_NAME,
+    });
+    await expect(channel.stage(ctx)).rejects.toThrow(/查询测试群组失败: rtnCode=204144701 无权限/);
   });
 });

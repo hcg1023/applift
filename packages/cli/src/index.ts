@@ -9,6 +9,7 @@ import * as p from "@clack/prompts";
 import pc from "picocolors";
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import {
   PgyerChannel,
   HuaweiAndroidChannel,
@@ -45,6 +46,12 @@ import {
   type ProjectConfig,
   humanizeError,
   readArtifactVersion,
+  readProjectVersions,
+  planBump,
+  applyBump,
+  type VersionWrite,
+  latestSemverTag,
+  type VersionCodeConfig,
   type FrameworkAdapter,
 } from "@applift/core";
 import { discoverXiaomiIcon, resolveChannelTarget } from "./target.js";
@@ -159,6 +166,8 @@ interface ReleaseOpts {
   yes: boolean;
   dryRun: boolean;
   autoArtifact: boolean;
+  bump?: boolean | string;
+  pre?: string;
 }
 
 /** 装载插件宿主与生效配置：c12 只 load 一次；config:resolved 钩子返回值即生效配置（P2-5） */
@@ -178,6 +187,224 @@ async function loadPluginHost(
   return { host, config: r.value, extraFrameworks };
 }
 
+/** 构建指定平台（bump 后必须重新构建——旧产物内嵌老 versionCode，复用即版本错位） */
+function runBuildFor(cwd: string, framework: FrameworkAdapter | null, platform: string): boolean {
+  const cmd = framework?.buildCommand(platform);
+  if (!cmd || cmd.length === 0) {
+    process.stderr.write(pc.yellow(`⚠ ${platform} 无自动构建命令：请手动构建新版本产物后再发\n`));
+    return false;
+  }
+  process.stderr.write(`▶ 构建 ${platform}: ${cmd.join(" ")}\n`);
+  const r = spawnSync(cmd[0]!, cmd.slice(1), { cwd, stdio: "inherit" });
+  if (r.status !== 0) throw new Error(`${platform} 构建失败（exit ${r.status}）`);
+  return true;
+}
+
+/** 护栏②：同渠道同 versionName 重复提交警告（history.jsonl 对比；警告不阻断） */
+function warnDuplicateVersion(channel: string, artifactPath: string): void {
+  const v = readArtifactVersion(artifactPath)?.versionName;
+  if (!v) return;
+  const dup = readEntries({ channel }).some((e) => e.ok && e.artifactVersion === v);
+  if (dup) {
+    process.stderr.write(
+      pc.yellow(
+        `⚠ ${channel} 已提交过版本 ${v}（发版历史）：同版本重复提交可能被渠道拒绝或无法覆盖升级\n`,
+      ),
+    );
+  }
+}
+
+/**
+ * bump 编排闭环（beta/release 的 --bump 与 config bump:true 共用）：
+ * plan → 展示确认 → apply（写文件+changelog+commit+tag）→ 构建涉及平台。
+ * 返回 storeName/writes 供产物版本校验；未启用返回 undefined。
+ */
+/** bump 编排产物：供后续产物终验（--artifact 路径的版本比对） */
+interface BumpOutcome {
+  storeName: string;
+  writes: VersionWrite[];
+}
+
+async function runBumpOrchestration(args: {
+  cwd: string;
+  framework: FrameworkAdapter | null;
+  config: ProjectConfig;
+  bump: boolean | string;
+  pre?: string;
+  yes?: boolean;
+  /** bump 后需重新构建的平台 */
+  buildPlatforms?: string[];
+  /** 限定端（version 命令的 --platform） */
+  platforms?: string[];
+}): Promise<BumpOutcome | undefined> {
+  if (args.bump === false) return undefined;
+  const level = typeof args.bump === "string" && args.bump !== "" ? args.bump : undefined;
+  const plan = planBump({
+    cwd: args.cwd,
+    framework: args.framework,
+    level,
+    pre: args.pre,
+    versionCode: args.config.version?.versionCode as VersionCodeConfig | undefined,
+    platforms: args.platforms,
+  });
+  p.intro(pc.bgCyan(pc.black(" applift version · bump ")));
+  p.log.info(`锚点 tag: ${plan.anchorTag ?? pc.dim("无（首次，推断退化为 patch 兜底）")}`);
+  p.log.info(plan.reason);
+  for (const c of plan.currentVersions) {
+    const w = plan.writes.find((x) => x.platform === c.platform);
+    p.log.step(
+      `${c.platform}: ${pc.bold(c.versionName ?? "?")}${c.versionCode ? pc.dim(`+${c.versionCode}`) : ""} → ${pc.green(w?.versionName ?? "?")}${w ? pc.dim(`+${w.versionCode}`) : ""}${c.problem ? pc.yellow(` ⚠ ${c.problem}`) : ""}`,
+    );
+  }
+  // 疑似失败重跑 + --yes（CI 自动重试高发）+ 无显式 level → 拒绝：防止反复失败连烧版本号
+  if (args.yes && plan.suspectRerun && !level)
+    throw new Error(
+      `疑似失败重跑（${plan.reason}）——用 --no-bump 复用已 bump 版本，或显式指定 level/版本号确认继续`,
+    );
+  p.log.info(`versionCode 策略: ${plan.versionCodeNote}`);
+  if (!args.yes) {
+    const go = await p.confirm({
+      message: `确认 bump 到 ${pc.bold(plan.nextVersion)} 并代 commit + tag？`,
+    });
+    if (p.isCancel(go) || !go) throw new Error("已取消（未做任何变更）");
+  }
+  const applied = applyBump(args.cwd, plan, args.framework, { commit: true, tag: true });
+  for (const f of applied.changedFiles) p.log.success(`已更新 ${path.relative(args.cwd, f)}`);
+  for (const s of applied.skipped) p.log.warn(`跳过 ${s.platform}: ${s.reason}`);
+  for (const w of applied.warnings) p.log.warn(w);
+  if (applied.committed) p.log.success(`git commit: chore(release): ${plan.nextVersion}`);
+  if (applied.tagged) p.log.success(`git tag: v${plan.nextVersion}`);
+  p.log.info(pc.dim("推送：git push --follow-tags（applift 永不代 push）"));
+  for (const plat of args.buildPlatforms ?? []) runBuildFor(args.cwd, args.framework, plat);
+  // 护栏①兜底：构建后探测产物读版本，与本次写入比对——不一致即构建未生效（发出去就是版本错位）
+  if (args.buildPlatforms && args.buildPlatforms.length > 0) {
+    const framework = args.framework;
+    for (const plat of args.buildPlatforms) {
+      const patterns = args.config.artifacts?.[plat] ?? framework?.artifactPatterns(plat) ?? [];
+      const artifact = findArtifacts(args.cwd, patterns)[0];
+      if (!artifact) continue; // 探测不到交给后续渠道流程报引导
+      assertArtifactVersion(artifact, plan, plat);
+    }
+  }
+  return { storeName: plan.storeName, writes: plan.writes };
+}
+
+/** 产物内嵌版本 vs 本次 bump 写入（versionName + versionCode 双比对；读不到的端跳过） */
+function assertArtifactVersion(
+  artifact: string,
+  plan: { storeName: string; writes: VersionWrite[] },
+  plat: string,
+): void {
+  const v = readArtifactVersion(artifact);
+  const w = plan.writes.find((x) => x.platform === plat);
+  if (!v?.versionName || !w) return;
+  if (v.versionName !== w.versionName)
+    throw new Error(
+      `产物版本错位：${plat} 产物 ${path.basename(artifact)} 内嵌 ${v.versionName}，本次 bump 写入 ${w.versionName}——构建可能未生效，禁止发布`,
+    );
+  // versionCode 双比对：prerelease 递进链 storeName 恒 4.1.0，旧产物只有 versionCode 能暴露
+  if (v.versionCode && /^\d+$/.test(v.versionCode) && Number(v.versionCode) !== w.versionCode)
+    throw new Error(
+      `产物版本号错位：${plat} 产物 ${path.basename(artifact)} 内嵌 versionCode ${v.versionCode}，本次 bump 写入 ${w.versionCode}——构建可能未生效，禁止发布`,
+    );
+}
+program
+  .command("version")
+  .description("版本管理：show 各端实况 | bump 升版本（写工程文件 + CHANGELOG + commit + tag）")
+  .argument("[action]", "show（默认）| bump")
+  .argument("[level]", "major | minor | patch | prerelease | <semver>（缺省 git 推断）")
+  .option("--pre <id>", "prerelease 标识（beta | rc）：挂到目标版本，如 4.1.0-beta.1")
+  .option("--platform <list>", "仅限端（逗号分隔：android,ios,harmony,flutter,js,tauri,expo）")
+  .option("--no-commit", "只写文件，不代 commit")
+  .option("--no-tag", "不打 tag")
+  .option("--yes", "跳过确认（CI）")
+  .option("--cwd <dir>", "项目目录", process.cwd())
+  .action(
+    async (
+      action: string | undefined,
+      level: string | undefined,
+      cmdOpts: {
+        pre?: string;
+        platform?: string;
+        commit?: boolean;
+        tag?: boolean;
+        yes?: boolean;
+        cwd: string;
+      },
+    ) => {
+      const { extraFrameworks: pluginFrameworks, config } = await loadPluginHost(cmdOpts.cwd);
+      const framework = detectFrameworkWith(cmdOpts.cwd, pluginFrameworks);
+      if (framework) {
+        p.log.info(`框架: ${pc.bold(framework.expoAwareLabel?.(cmdOpts.cwd) ?? framework.label)}`);
+      } else {
+        p.log.warn("未识别框架：按标准位置探测版本文件");
+      }
+
+      if (action !== "bump") {
+        // ---- show：各端 versionName/versionCode + 文件 + 锚点 tag ----
+        const versions = readProjectVersions(cmdOpts.cwd, framework);
+        if (versions.length === 0)
+          throw new Error(
+            "未找到任何版本文件（标准形态：build.gradle / pbxproj / app.json5 / pubspec / package.json / tauri.conf）",
+          );
+        for (const v of versions) {
+          p.log.step(
+            `${v.platform}: ${pc.bold(v.versionName ?? "?")}${v.versionCode ? pc.dim(`+${v.versionCode}`) : pc.dim("（无 versionCode）")} ${pc.dim(path.relative(cmdOpts.cwd, v.file))}`,
+          );
+          if (v.problem) p.log.warn(v.problem);
+        }
+        const anchor = latestSemverTag(cmdOpts.cwd);
+        p.log.info(`发版锚点 tag: ${anchor ?? pc.dim("无（bump 后打第一个 tag 激活 git 推断）")}`);
+        return;
+      }
+
+      // ---- bump：闭环（写文件 + changelog + commit + tag），不触发构建（构建是 beta/release 编排的事） ----
+      const platforms = cmdOpts.platform
+        ?.split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const plan = planBump({
+        cwd: cmdOpts.cwd,
+        framework,
+        level,
+        pre: cmdOpts.pre,
+        versionCode: config.version?.versionCode as VersionCodeConfig | undefined,
+        platforms,
+      });
+      p.intro(pc.bgCyan(pc.black(" applift version · bump ")));
+      p.log.info(`锚点 tag: ${plan.anchorTag ?? pc.dim("无（首次，推断退化为 patch 兜底）")}`);
+      p.log.info(plan.reason);
+      for (const c of plan.currentVersions) {
+        const w = plan.writes.find((x) => x.platform === c.platform);
+        p.log.step(
+          `${c.platform}: ${pc.bold(c.versionName ?? "?")}${c.versionCode ? pc.dim(`+${c.versionCode}`) : ""} → ${pc.green(w?.versionName ?? "?")}${w ? pc.dim(`+${w.versionCode}`) : ""}${c.problem ? pc.yellow(` ⚠ ${c.problem}`) : ""}`,
+        );
+      }
+      // 疑似失败重跑 + --yes + 无显式 level → 拒绝（与 runBumpOrchestration 同规，防 CI 反复重试烧版本号）
+      if (cmdOpts.yes && plan.suspectRerun && !level)
+        throw new Error(
+          `疑似失败重跑（${plan.reason}）——各端已是最近 bump 的版本，如需继续请显式指定 level 或版本号`,
+        );
+      p.log.info(`versionCode 策略: ${plan.versionCodeNote}`);
+      if (!cmdOpts.yes) {
+        const go = await p.confirm({ message: `确认 bump 到 ${pc.bold(plan.nextVersion)}？` });
+        if (p.isCancel(go) || !go) throw new Error("已取消（未做任何变更）");
+      }
+      const applied = applyBump(cmdOpts.cwd, plan, framework, {
+        commit: cmdOpts.commit !== false,
+        // tag 默认依赖 commit：--no-commit 时 tag 会指向不含版本变更的旧树，须显式 --tag 才打
+        tag: cmdOpts.tag !== false && (cmdOpts.commit !== false || cmdOpts.tag === true),
+      });
+      for (const f of applied.changedFiles)
+        p.log.success(`已更新 ${path.relative(cmdOpts.cwd, f)}`);
+      for (const s of applied.skipped) p.log.warn(`跳过 ${s.platform}: ${s.reason}`);
+      for (const w of applied.warnings) p.log.warn(w);
+      if (applied.committed) p.log.success(`git commit: chore(release): ${plan.nextVersion}`);
+      if (applied.tagged) p.log.success(`git tag: v${plan.nextVersion}`);
+      p.log.info(pc.dim("推送：git push --follow-tags（applift 永不代 push）"));
+    },
+  );
+
 program
   .command("beta")
   .description(
@@ -188,6 +415,13 @@ program
   .option("--note <text>", "更新说明")
   .option("--via <target>", "harmony 分发通道：agc（默认，AGC 指定设备测试发布）| pgyer", "agc")
   .option("--install-password <pwd>", "安装密码（蒲公英密码安装）")
+  .option(
+    "--bump [level]",
+    "发版前自动 version：true 走 git 推断；可给 major/minor/patch/prerelease/<semver>（config beta.bump 可配默认）",
+  )
+  .option("--no-bump", "禁用自动 version（覆盖 config beta.bump）")
+  .option("--pre <id>", "prerelease 标识（beta | rc）：挂到目标版本")
+  .option("--yes", "跳过 bump 确认（CI）")
   .option("--cwd <dir>", "项目目录", process.cwd())
   .action(
     async (
@@ -197,12 +431,38 @@ program
         note?: string;
         via?: string;
         installPassword?: string;
+        bump?: boolean | string;
+        pre?: string;
+        yes?: boolean;
         cwd: string;
       },
     ) => {
       setupChannels();
-      const { extraFrameworks: pluginFrameworks } = await loadPluginHost(cmdOpts.cwd);
-      const { config: projCfg } = await loadProjectConfig(cmdOpts.cwd);
+      const { extraFrameworks: pluginFrameworks, config: projCfg } = await loadPluginHost(
+        cmdOpts.cwd,
+      );
+
+      // ---------- 自动 version（--bump / config beta.bump）：bump 闭环 → 重新构建 → 后续产物探测 ----------
+      const bumpFlag = cmdOpts.bump !== undefined ? cmdOpts.bump : (projCfg.beta?.bump ?? false);
+      let bumpPlan: BumpOutcome | undefined;
+      if (bumpFlag !== false) {
+        const buildPlatforms = platform
+          ? [platform]
+          : [
+              ...(projCfg.beta?.pgyer?.platforms ?? []),
+              ...(projCfg.beta?.agc ? ["harmony"] : []),
+              ...(projCfg.beta?.testflight ? ["ios"] : []),
+            ];
+        bumpPlan = await runBumpOrchestration({
+          cwd: cmdOpts.cwd,
+          framework: detectFrameworkWith(cmdOpts.cwd, pluginFrameworks),
+          config: projCfg,
+          bump: bumpFlag,
+          pre: cmdOpts.pre,
+          yes: cmdOpts.yes,
+          buildPlatforms: [...new Set(buildPlatforms)],
+        });
+      }
       // profile 解析链：projects.json 个人选择（applift use）> 项目配置团队默认
       const creds = resolveProfile(
         loadCredentialsLayered(cmdOpts.cwd),
@@ -260,8 +520,20 @@ program
                   cmdOpts.note,
                   { installPassword: cmdOpts.installPassword ?? beta.pgyer?.installPassword },
                 );
+                if (bumpPlan) assertArtifactVersion(artifactPath, bumpPlan, plat);
+                warnDuplicateVersion("pgyer", artifactPath);
                 const r = await pgyer.stage(ctx);
                 if (!r.ok) throw new Error(r.error ?? "上传失败");
+                appendEntry({
+                  ts: Date.now(),
+                  cwd: cmdOpts.cwd,
+                  artifactSha256: sha256File(artifactPath),
+                  channel: "pgyer",
+                  action: "stage",
+                  ok: true,
+                  ref: r.ref,
+                  artifactVersion: readArtifactVersion(artifactPath)?.versionName,
+                });
                 return `蒲公英 ${path.basename(artifactPath)} 发布成功，扫码即装`;
               },
             });
@@ -293,8 +565,20 @@ program
                 artifactPath,
                 cmdOpts.note,
               );
+              if (bumpPlan) assertArtifactVersion(artifactPath, bumpPlan, "harmony");
+              warnDuplicateVersion("agc", artifactPath);
               const r = await agc.stage(ctx);
               if (!r.ok) throw new Error(r.error ?? "AGC 测试发布失败");
+              appendEntry({
+                ts: Date.now(),
+                cwd: cmdOpts.cwd,
+                artifactSha256: sha256File(artifactPath),
+                channel: "agc",
+                action: agcCfg.submit ? "submit" : "stage",
+                ok: true,
+                ref: r.ref,
+                artifactVersion: readArtifactVersion(artifactPath)?.versionName,
+              });
               return agcCfg.submit
                 ? `AGC 测试版本已提交审核（versionId: ${r.ref ?? "?"}）`
                 : `AGC 测试版本已就绪（versionId: ${r.ref ?? "?"}，未提审）`;
@@ -319,8 +603,20 @@ program
                 artifactPath,
                 cmdOpts.note ?? tfNote,
               );
+              if (bumpPlan) assertArtifactVersion(artifactPath, bumpPlan, "ios");
+              warnDuplicateVersion("asc", artifactPath);
               const r = await asc.stage(ctx);
               if (!r.ok) throw new Error(r.error ?? "上传失败");
+              appendEntry({
+                ts: Date.now(),
+                cwd: cmdOpts.cwd,
+                artifactSha256: sha256File(artifactPath),
+                channel: "asc",
+                action: "stage",
+                ok: true,
+                ref: r.ref,
+                artifactVersion: readArtifactVersion(artifactPath)?.versionName,
+              });
               return `TestFlight 上传成功 ${path.basename(artifactPath)}（Apple 处理完成后 TestFlight 可见）`;
             },
           });
@@ -353,6 +649,8 @@ program
         artifactPath = findArtifacts(cmdOpts.cwd, patterns)[0];
       }
       if (!artifactPath) throw new Error("未找到构建产物：先构建或用 --artifact 指定");
+      // bump 启用时对最终发布产物终验（--artifact 显式给旧包也拦得住）
+      if (bumpPlan) assertArtifactVersion(artifactPath, bumpPlan, platform);
       if (!fs.existsSync(artifactPath)) throw new Error(`产物不存在: ${artifactPath}`);
       const s = p.spinner();
 
@@ -361,6 +659,7 @@ program
         const agc = registry.get("agc");
         if (!agc) throw new Error("agc 渠道未注册");
         const target = resolveChannelTarget("agc", projCfg, detected);
+        warnDuplicateVersion("agc", artifactPath);
         s.start(`AGC 测试发布 ${path.basename(artifactPath)}`);
         const ctx = makeContext(
           agc,
@@ -388,6 +687,7 @@ program
 
       const pgyer = registry.get("pgyer");
       if (!pgyer) throw new Error("pgyer 渠道未注册");
+      warnDuplicateVersion("pgyer", artifactPath);
       s.start(`蒲公英上传 ${path.basename(artifactPath)}`);
       const ctx = makeContext(
         pgyer,
@@ -429,6 +729,12 @@ program
     "--profile <name>",
     "凭据 profile（最高优先级；缺省走 applift use 个人选择 > 项目配置团队默认）",
   )
+  .option(
+    "--bump [level]",
+    "发版前自动 version：true 走 git 推断；可给 major/minor/patch/prerelease/<semver>（config release.bump 可配默认）",
+  )
+  .option("--no-bump", "禁用自动 version（覆盖 config release.bump）")
+  .option("--pre <id>", "prerelease 标识（beta | rc）")
   .option("--cwd <dir>", "项目目录", process.cwd())
   .option("--yes", "CI 无人值守豁免确认")
   .option("--dry-run", "只打印计划")
@@ -469,6 +775,25 @@ program
       else p.log.warn("未识别框架，产物路径请用 --artifact 指定");
     }
 
+    // 自动 version（--bump / config release.bump）：bump 闭环 → 重新构建 → 再探测产物。
+    // dry-run 零副作用：只打印计划，不做任何写（bump/commit/tag/构建全部跳过）
+    const releaseBumpFlag = opts.dryRun
+      ? false
+      : opts.bump !== undefined
+        ? opts.bump
+        : (config.release?.bump ?? false);
+    let releaseBumpPlan: BumpOutcome | undefined;
+    if (releaseBumpFlag !== false) {
+      releaseBumpPlan = await runBumpOrchestration({
+        cwd: opts.cwd,
+        framework,
+        config,
+        bump: releaseBumpFlag,
+        pre: opts.pre,
+        yes: opts.yes,
+        buildPlatforms: [platform],
+      });
+    }
     // 产物解析：--artifact > 框架 pattern 自动探测（最新 mtime）
     let artifactPath: string | undefined = opts.artifact ? path.resolve(opts.artifact) : undefined;
     if (!artifactPath) {
@@ -485,6 +810,9 @@ program
         );
       }
     }
+    // bump 启用时对最终发布产物终验（--artifact 显式给旧包也拦得住；dry-run 无 bump 跳过）
+    if (releaseBumpPlan && artifactPath && !opts.dryRun)
+      assertArtifactVersion(artifactPath, releaseBumpPlan, platform);
     if (!artifactPath && !opts.dryRun) {
       throw new Error("未找到构建产物：先构建或用 --artifact 指定");
     }
@@ -594,9 +922,19 @@ program
       cachedSha ??= sha256File(artifactPath);
       return cachedSha;
     };
+    const artifactVersionOf = () =>
+      artifactPath ? readArtifactVersion(artifactPath)?.versionName : undefined;
     const historySink = (e: HistoryEvent) => {
-      appendEntry({ ts: Date.now(), cwd: opts.cwd, artifactSha256: artifactSha256(), ...e });
+      appendEntry({
+        ts: Date.now(),
+        cwd: opts.cwd,
+        artifactSha256: artifactSha256(),
+        artifactVersion: e.artifactVersion ?? artifactVersionOf(),
+        ...e,
+      });
     };
+    // 护栏②：同渠道同 versionName 重复提交警告
+    if (artifactPath) for (const c of channels) warnDuplicateVersion(c.id, artifactPath);
     const pipelineInput = {
       channels,
       contexts,

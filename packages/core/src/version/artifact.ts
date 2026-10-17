@@ -47,11 +47,20 @@ function fromPackInfo(artifactPath: string): ArtifactVersion | undefined {
   return undefined;
 }
 
+/** 真实鸿蒙 pack.info schema（qy-driver 实测样本）：summary.app.version.{name,code,build}；
+ *  顶层 versionName/versionCode 为历史兼容形态。 */
 function parsePackInfo(text: string, source: string): ArtifactVersion | undefined {
   try {
-    const info = JSON.parse(text) as { versionName?: string; versionCode?: string | number };
-    if (info.versionName || info.versionCode !== undefined) {
-      return { versionName: info.versionName, versionCode: String(info.versionCode ?? ""), source };
+    const info = JSON.parse(text) as {
+      versionName?: string;
+      versionCode?: string | number;
+      summary?: { app?: { version?: { name?: string; code?: number } } };
+    };
+    const nested = info.summary?.app?.version;
+    const versionName = nested?.name ?? info.versionName;
+    const versionCode = nested?.code ?? info.versionCode;
+    if (versionName || versionCode !== undefined) {
+      return { versionName, versionCode: String(versionCode ?? ""), source };
     }
   } catch {
     // 非 JSON 忽略

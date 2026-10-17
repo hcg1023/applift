@@ -46,6 +46,8 @@ export type Stores = z.infer<typeof StoresSchema>;
  * - testflight: App Store Connect 上传（ipa 进 TestFlight）
  */
 export const BetaConfigSchema = z.object({
+  /** 自动 version：true(走推断)| major/minor/patch/prerelease | <semver>；CLI --bump/--no-bump 覆盖 */
+  bump: z.union([z.boolean(), z.string()]).optional(),
   pgyer: z
     .object({
       platforms: z.array(z.enum(["android", "harmony", "ios"])).default(["android"]),
@@ -68,6 +70,29 @@ export const BetaConfigSchema = z.object({
     })
     .optional(),
 });
+
+/** versionCode 策略："increment"(默认 +1) | 公式（可限定平台） */
+export const VersionCodeConfigSchema = z.union([
+  z.literal("increment"),
+  z.object({
+    /** 白名单表达式：major/minor/patch 与 + - * ( )，如 "major*1000000+minor*1000+patch" */
+    formula: z.string(),
+    /** 仅限平台（缺省全部）；实际写入 = max(公式值, 现值+1) */
+    platforms: z.array(z.string()).optional(),
+  }),
+]);
+export type VersionCodeConfig = z.infer<typeof VersionCodeConfigSchema>;
+
+export const VersionConfigSchema = z.object({
+  versionCode: VersionCodeConfigSchema.default("increment"),
+});
+export type VersionConfig = z.infer<typeof VersionConfigSchema>;
+
+/** 正式发版段的自动 version 开关（语义同 beta.bump） */
+export const ReleaseConfigSchema = z.object({
+  bump: z.union([z.boolean(), z.string()]).optional(),
+});
+export type ReleaseConfig = z.infer<typeof ReleaseConfigSchema>;
 export const ProjectConfigSchema = z.object({
   /** 项目显示名 */
   name: z.string().optional(),
@@ -115,6 +140,10 @@ export const ProjectConfigSchema = z.object({
     })
     .catchall(z.array(z.string()).optional())
     .optional(),
+  /** 版本管理（versionCode 策略等） */
+  version: VersionConfigSchema.optional(),
+  /** 正式发版自动 version 开关 */
+  release: ReleaseConfigSchema.optional(),
   /** 内测分发（beta 无平台参数时的多渠道并行配置） */
   beta: BetaConfigSchema.optional(),
 });

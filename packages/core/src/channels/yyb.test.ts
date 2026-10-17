@@ -386,6 +386,15 @@ describe("YybChannel.stage", () => {
     );
     m.restore();
   });
+
+  it("upload_info 缺 pre_sign_url/serial_number → 明确报错", async () => {
+    mockFetch([
+      { match: "/query_app_detail", response: { json: { ret: 0, app_name: "x" } } },
+      { match: "/get_file_upload_info", response: { json: { ret: 0 } } }, // 两字段全缺
+    ]);
+    const { ctx } = makeTestCtx({ credentials: CREDS, target: TARGET, artifactPath: apkPath });
+    await expect(new YybChannel().stage(ctx)).rejects.toThrow(/缺少 pre_sign_url 或 serial_number/);
+  });
 });
 
 describe("YybChannel.submit", () => {

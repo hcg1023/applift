@@ -101,5 +101,5 @@ describe("applift use → release profile 解析链", () => {
       delete slot.__appliftUseCaptured;
       fs.rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });

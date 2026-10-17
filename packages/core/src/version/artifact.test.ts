@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { readArtifactVersion } from "./version.js";
+import { readArtifactVersion } from "./artifact.js";
 
 // 模块级 mock：version.ts 内 import 的 spawnSync 被替换
 vi.mock("node:child_process", () => ({ spawnSync: vi.fn() }));
@@ -45,6 +45,7 @@ describe("readArtifactVersion — 来源正确性", () => {
     fs.mkdirSync(fakeSdk, { recursive: true });
     const tool = path.join(fakeSdk, "aapt2");
     fs.writeFileSync(tool, "#!/bin/sh\n", { mode: 0o755 });
+    const savedHome = process.env.ANDROID_HOME;
     process.env.ANDROID_HOME = path.join(d, "sdk");
     spawnMock.mockReturnValue({
       status: 0,
@@ -54,7 +55,8 @@ describe("readArtifactVersion — 来源正确性", () => {
       const v = readArtifactVersion(apk);
       expect(v).toEqual({ versionName: "4.0.0", versionCode: "4235", source: "aapt2" });
     } finally {
-      delete process.env.ANDROID_HOME;
+      if (savedHome === undefined) delete process.env.ANDROID_HOME;
+      else process.env.ANDROID_HOME = savedHome;
       fs.rmSync(d, { recursive: true, force: true });
     }
   });
@@ -75,6 +77,35 @@ describe("readArtifactVersion — 来源正确性", () => {
     try {
       const v = readArtifactVersion(hap);
       expect(v).toEqual({ versionName: "2.0.0", versionCode: "200", source: "pack.info(包内)" });
+    } finally {
+      fs.rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("真实鸿蒙 schema（qy-driver 实测样本 summary.app.version.{name,code}）——顶层形态双兼容", () => {
+    const d = tmpDir();
+    const hap = path.join(d, "entry-default-signed.hap");
+    fs.writeFileSync(hap, "fake-zip");
+    // qy-driver harmony/build/outputs/default/pack.info 的真实结构（截取版本相关）
+    spawnMock.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify({
+        summary: {
+          app: {
+            bundleName: "com.thclouds.driver.hm",
+            version: { code: 4000000, name: "4.0.0", build: "1" },
+          },
+        },
+        packages: [{ name: "entry-default" }],
+      }),
+    } as never);
+    try {
+      const v = readArtifactVersion(hap);
+      expect(v).toEqual({
+        versionName: "4.0.0",
+        versionCode: "4000000",
+        source: "pack.info(包内)",
+      });
     } finally {
       fs.rmSync(d, { recursive: true, force: true });
     }
@@ -148,6 +179,7 @@ describe("版本读取容错分支", () => {
     fs.mkdirSync(fakeSdk, { recursive: true });
     fs.writeFileSync(path.join(fakeSdk, "aapt2"), "#!/bin/sh\n", { mode: 0o755 });
     fs.writeFileSync(path.join(fakeSdk, "aapt"), "#!/bin/sh\n", { mode: 0o755 });
+    const savedHome = process.env.ANDROID_HOME;
     process.env.ANDROID_HOME = path.join(d, "sdk");
     // 第一次输出无版本（走 continue），第二次带版本
     spawnMock
@@ -157,7 +189,8 @@ describe("版本读取容错分支", () => {
       const v2 = readArtifactVersion(apk);
       expect(v2).toEqual({ versionName: "0.7", versionCode: "7", source: "aapt" });
     } finally {
-      delete process.env.ANDROID_HOME;
+      if (savedHome === undefined) delete process.env.ANDROID_HOME;
+      else process.env.ANDROID_HOME = savedHome;
       fs.rmSync(d, { recursive: true, force: true });
     }
   });
