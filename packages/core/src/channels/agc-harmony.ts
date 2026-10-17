@@ -182,7 +182,7 @@ export class AgcHarmonyChannel implements Channel {
     "204144702": "签名/证书不匹配：检查签名证书指纹（SHA256）与 AGC 后台登记是否一致",
     "204144677": "bundleName 与应用不匹配：确认 appId 对应的应用包名",
     "204144692":
-      "应用未登记隐私政策协议：AGC 控制台「更多服务 → 协议服务」新建隐私政策并提交（一次性前置，API 无法代办）",
+      "提审前置校验失败（按 msg 判断）：privacyPolicy → 控制台「更多服务→协议服务」登记隐私政策；count of harmony test in audit → 在审测试版本超限，先停止/删除在审的测试版本再提",
   };
 
   private async authHeaders(ctx: ChannelContext) {
@@ -548,7 +548,9 @@ export class AgcHarmonyChannel implements Channel {
       const groupName = ctx.target.testGroup?.trim();
       if (groupName) {
         const groupId = await this.resolveTestGroupId(ctx, appId, groupName, headers);
-        // 群组绑定走「更新测试版本」openTestInfo.testTaskInfo.groupInfos（Testing API 文档结构，仅传确认过的字段）
+        // 群组绑定走「更新测试版本」openTestInfo.testTaskInfo.groupInfos；
+        // 实测 203489281：openTestInfo 一旦携带，startTime/endTime 必填（毫秒时间戳）——缺省给 30 天测试有效期
+        const now = Date.now();
         await agcJson(
           `${BASE}/publish/v2/test/app/version?appId=${encodeURIComponent(appId)}`,
           {
@@ -557,7 +559,11 @@ export class AgcHarmonyChannel implements Channel {
             body: JSON.stringify({
               versionId,
               pkgId,
-              openTestInfo: { testTaskInfo: { groupInfos: [{ groupId, groupName }] } },
+              openTestInfo: {
+                startTime: now,
+                endTime: now + 30 * 24 * 60 * 60 * 1000,
+                testTaskInfo: { groupInfos: [{ groupId, groupName }] },
+              },
             }),
           },
           "绑定测试群组",

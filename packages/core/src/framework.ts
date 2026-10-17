@@ -89,6 +89,9 @@ export const rnAdapter: FrameworkAdapter = {
     return [
       "harmony/entry/build/default/outputs/**/entry-*-signed.hap",
       "harmony/entry/build/default/outputs/**/entry-*.app",
+      // assembleApp 整包（AGC 测试发布/上架用）在工程级 build/outputs
+      "harmony/build/outputs/**/*.app",
+      "build/outputs/**/*.app",
     ];
   },
   buildCommand(platform) {

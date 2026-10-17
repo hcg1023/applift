@@ -138,12 +138,18 @@ describe("agc beta 自动提审（submitTest）", () => {
       versionId: VERSION_ID,
       pkgId: PKG_ID,
     });
-    expect(JSON.parse(putCalls[1]!.body as string)).toEqual({
-      versionId: VERSION_ID,
-      pkgId: PKG_ID,
-      openTestInfo: {
-        testTaskInfo: { groupInfos: [{ groupId: GROUP_ID, groupName: GROUP_NAME }] },
-      },
+    const groupBind = JSON.parse(putCalls[1]!.body as string) as {
+      openTestInfo: { startTime: number; endTime: number; testTaskInfo: unknown };
+    };
+    expect(groupBind.versionId).toBe(VERSION_ID);
+    expect(groupBind.pkgId).toBe(PKG_ID);
+    // 实测 203489281：openTestInfo 携带时 startTime/endTime 必填（毫秒），窗口 30 天
+    expect(groupBind.openTestInfo.startTime).toBeGreaterThan(0);
+    expect(groupBind.openTestInfo.endTime - groupBind.openTestInfo.startTime).toBe(
+      30 * 24 * 60 * 60 * 1000,
+    );
+    expect(groupBind.openTestInfo.testTaskInfo).toEqual({
+      groupInfos: [{ groupId: GROUP_ID, groupName: GROUP_NAME }],
     });
 
     // 提审：POST submit?appId=xx，body 只有 versionId，且在群组绑定之后
