@@ -15,6 +15,9 @@ export default defineConfig({
   test: {
     globalSetup: ["./packages/cli/src/vitest.global-setup.ts"],
     testTimeout: 30_000, // spawn/git 重型用例在全仓并发 CPU 争抢下的余量
+    // globalSetup 的 pnpm -r build 受 hookTimeout 约束(默认 10s):CI 冷构建必超时崩
+    // (Test step 12s 失败、本地增量 build 秒过的根因),拉到与构建预算同量级
+    hookTimeout: 240_000,
     include: ["packages/*/src/**/*.test.ts"],
     environment: "node",
     coverage: {
