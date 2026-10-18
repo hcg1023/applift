@@ -162,6 +162,14 @@ export class HuaweiAndroidChannel implements Channel, ListingCapableChannel {
       throw new Error(
         `华为更新说明（newFeatures）不能超过 500 字符，当前 ${[...ctx.updateDescription].length} 字符`,
       );
+    // 定时上架时间本地校验（参照 honor 先例）：华为要求 RFC3339 带时区偏移，缺时区会被静默当本地时间处理
+    if (
+      ctx.releaseTime &&
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(ctx.releaseTime)
+    )
+      throw new Error(
+        `华为 releaseTime 格式异常（需 RFC3339 带时区，如 2026-06-20T10:00:00+08:00）: ${ctx.releaseTime}`,
+      );
     const { headers } = await this.authHeaders(ctx);
     if (ctx.updateDescription) {
       try {

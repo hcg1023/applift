@@ -547,6 +547,14 @@ describe("HuaweiAndroidChannel.submit", () => {
     expect(mf.calls.length).toBe(0);
   });
 
+  it("releaseTime 缺时区（非法 RFC3339）→ submit 入口本地校验抛错（plan 不校验）", async () => {
+    const mf = mockFetch([]);
+    await expect(
+      new HuaweiAndroidChannel().submit(makeCtx({ releaseTime: "2026-11-01 10:00" })),
+    ).rejects.toThrow("华为 releaseTime 格式异常（需 RFC3339 带时区");
+    expect(mf.calls.length).toBe(0);
+  });
+
   it("app-submit ret.code 非 0 抛错", async () => {
     mockFetch([
       { match: "oauth2/v1/token", response: { status: 200, json: TOKEN_BODY } },

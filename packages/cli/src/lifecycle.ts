@@ -15,10 +15,13 @@ import {
   detectBundleIds,
   readEntries,
   loadCredentialsLayered,
+  resolveProfile,
+  redactText,
 } from "@applift/core";
 import { resolveChannelTarget } from "./target.js";
 import type { Command } from "commander";
 import type { ChannelRegistry } from "@applift/core";
+import { KNOWN_CREDENTIAL_KEYS } from "./channel-meta.js";
 
 /** 各渠道在 init/status 场景需要的凭据键与获取指引（导出供与 CREDENTIAL_GROUPS 一致性测试对拍） */
 export const CREDENTIAL_FIELDS: Array<{ key: string; label: string; where: string }> = [
@@ -39,6 +42,7 @@ export const CREDENTIAL_FIELDS: Array<{ key: string; label: string; where: strin
   { key: "MI_USER_NAME", label: "小米账号", where: "dev.mi.com → 管理中心" },
   { key: "MI_PASSWORD", label: "小米上传密码", where: "同上" },
   { key: "MI_CERT_PATH", label: "小米证书路径", where: "dev.api.public.cer 绝对路径" },
+  { key: "MI_APP_NAME", label: "小米应用名", where: "dev.mi.com → 管理中心 → 应用信息" },
   { key: "OPPO_CLIENT_ID", label: "OPPO Client ID", where: "open.oppomobile.com → API 传包" },
   { key: "OPPO_CLIENT_SECRET", label: "OPPO Secret", where: "同上" },
   { key: "VIVO_ACCESS_KEY", label: "vivo Access Key", where: "dev.vivo.com.cn → API 传包" },
@@ -63,7 +67,7 @@ export const CREDENTIAL_GROUPS: Record<string, string[]> = {
     "AGC_CLIENT_ID",
     "AGC_CLIENT_SECRET",
   ],
-  xiaomi: ["MI_USER_NAME", "MI_PASSWORD", "MI_CERT_PATH"],
+  xiaomi: ["MI_USER_NAME", "MI_PASSWORD", "MI_CERT_PATH", "MI_APP_NAME"],
   oppo: ["OPPO_CLIENT_ID", "OPPO_CLIENT_SECRET"],
   vivo: ["VIVO_ACCESS_KEY", "VIVO_ACCESS_SECRET"],
   honor: ["HONOR_CLIENT_ID", "HONOR_CLIENT_SECRET", "HONOR_APP_ID"],
@@ -259,7 +263,11 @@ export default defineConfig({
       registryRef.setup();
       const { config } = await loadProjectConfig(cmdOpts.cwd);
       const creds = loadCredentialsLayered(cmdOpts.cwd);
-      const profile = creds.profiles[resolveProfileFor(cmdOpts.cwd, config.profile)] ?? {};
+      const profile = resolveProfile(
+        creds,
+        resolveProfileFor(cmdOpts.cwd, config.profile),
+        KNOWN_CREDENTIAL_KEYS,
+      );
       const storeIds = (
         cmdOpts.stores ? cmdOpts.stores.split(",") : Object.keys(config.android?.stores ?? {})
       ).filter(Boolean);
@@ -314,9 +322,11 @@ export default defineConfig({
             p.log.message(`  ${icon} ${pc.bold(channel.label)} ${text}`);
           }
         } catch (e) {
-          results.push({ channel: id, state: "unknown", error: (e as Error).message });
+          // status 查询抛错可能内嵌凭据/响应体：--json results 与人话提示共用同一脱敏值
+          const msg = redactText((e as Error).message);
+          results.push({ channel: id, state: "unknown", error: msg });
           hasError = true;
-          if (!isJson) p.log.error(`${channel.label}: ${(e as Error).message}`);
+          if (!isJson) p.log.error(`${channel.label}: ${msg}`);
         }
       }
       if (isJson) process.stdout.write(JSON.stringify({ status: results }, null, 2) + "\n");

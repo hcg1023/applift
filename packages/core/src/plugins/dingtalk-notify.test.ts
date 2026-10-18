@@ -15,7 +15,7 @@ function summary(ok: boolean): PipelineSummary {
     label: "华为应用市场",
     ok,
     plan,
-    stageError: ok ? undefined : "boom",
+    stageError: ok ? undefined : "boom token=topsecret123",
   };
   return { stage: [entry], submit: [{ ...entry }] };
 }
@@ -34,7 +34,9 @@ describe("dingtalkNotify", () => {
     const bodies = fetchMock.mock.calls.map((c) => JSON.parse(String(c[1]?.body)));
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(bodies[0]?.markdown?.text).toContain("✅ 成功");
-    expect(bodies[1]?.markdown?.text).toContain("❌ boom");
+    // 外发前脱敏：token=xxx → [REDACTED]，原始值不进 webhook body
+    expect(bodies[1]?.markdown?.text).toContain("❌ boom token=[REDACTED]");
+    expect(bodies[1]?.markdown?.text).not.toContain("topsecret123");
     expect(bodies[0]?.msgtype).toBe("markdown");
     expect(bodies[0]?.markdown?.title).toBe("applift 发布结果");
     vi.unstubAllGlobals();

@@ -16,7 +16,7 @@ import path from "node:path";
 import { afterEach, beforeAll, afterAll, describe, expect, it, vi } from "vitest";
 import type { ChannelContext } from "../channel.js";
 import { AgcHarmonyChannel } from "./agc-harmony.js";
-import { mockFetch } from "../test-utils.js";
+import { mockFetch, readStreamToBuffer } from "../test-utils.js";
 
 const BETA_OBJECT_ID = "agc-beta-obj-1";
 const FORMAL_OBJECT_ID = "agc-formal-obj-9";
@@ -156,10 +156,9 @@ describe("agc flow: 同一渠道实例 beta stage → formal submit → status",
     expect(
       fetchMock.calls.some((c) => c.url.includes("test/app/version") && c.method === "PUT"),
     ).toBe(true);
-    // PUT 上传的是真实 .app 字节（非空产物）
-    expect(fetchMock.calls.find((c) => c.url === "https://obs-agc.example.com/beta")!.body).toEqual(
-      appBytes,
-    );
+    // PUT 上传的是真实 .app 字节（非空产物；流式 body 读回再比对）
+    const betaPut = fetchMock.calls.find((c) => c.url === "https://obs-agc.example.com/beta")!;
+    expect(await readStreamToBuffer(betaPut.body)).toEqual(appBytes);
 
     // ---------- submit：.app 整包 v3 全链（同渠道实例） ----------
     const formal = makeCtx({ appId: APP_ID }, appPath);
@@ -198,5 +197,57 @@ describe("agc flow: 同一渠道实例 beta stage → formal submit → status",
     // ---------- status：未接入，契约返回 unknown ----------
     const st = await channel.status();
     expect(st.state).toBe("unknown");
+  });
+
+  it("formal stage → submit(stagedRef)：全程恰好 1 次整包上传，submit 复用 packageId 直接等编译+提审", async () => {
+    vi.useFakeTimers();
+    const fetchMock = mockFetch([
+      { match: "oauth2/v1/token", response: { json: { access_token: "agc-flow-token" } } },
+      {
+        match: "upload-url/for-obs",
+        response: {
+          json: {
+            ret: { code: 0 },
+            urlInfo: {
+              url: "https://obs-agc.example.com/formal-once",
+              objectId: FORMAL_OBJECT_ID,
+              method: "PUT",
+            },
+          },
+        },
+      },
+      { match: "obs-agc.example.com", response: { status: 200, text: "" } },
+      {
+        match: "app-package-info",
+        response: { json: { ret: { code: 0 }, packageId: FORMAL_PACKAGE_ID } },
+      },
+      { match: "app-language-info", response: { json: { ret: { code: 0 } } } },
+      {
+        match: "package/compile/status",
+        response: {
+          json: {
+            ret: { code: 0 },
+            pkgStateList: [{ pkgId: FORMAL_PACKAGE_ID, successStatus: 0 }],
+          },
+        },
+      },
+      { match: "publish/v3/app-submit", response: { json: { ret: { code: 0 } } } },
+    ]);
+    const channel = new AgcHarmonyChannel();
+    const { ctx } = makeCtx({ appId: APP_ID }, appPath);
+    const staged = await channel.stage(ctx);
+    expect(staged).toEqual({ ok: true, ref: FORMAL_PACKAGE_ID });
+    const before = fetchMock.calls.length;
+    const result = await channel.submit(ctx, staged.ref);
+    expect(result.ok).toBe(true);
+    // 不变量：submit 阶段零次上传地址获取、零次 PUT（复用 stage 的 packageId）
+    const after = fetchMock.calls.slice(before);
+    expect(after.filter((c) => c.url.includes("upload-url"))).toHaveLength(0);
+    expect(after.filter((c) => c.url === "https://obs-agc.example.com/formal-once")).toHaveLength(
+      0,
+    );
+    // 编译轮询与提审照常发生
+    expect(after.some((c) => c.url.includes(`pkgIds=${FORMAL_PACKAGE_ID}`))).toBe(true);
+    expect(after.some((c) => c.url.includes("publish/v3/app-submit"))).toBe(true);
   });
 });

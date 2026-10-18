@@ -124,6 +124,17 @@ describe("ascGet", () => {
       m.restore();
     }
   });
+
+  it("返回非 JSON（HTML 网关页）→ 报返回非 JSON（HTTP x）", async () => {
+    const m = mockFetch([
+      { match: "/v1/x", response: { status: 502, text: "<html>bad gateway</html>" } },
+    ]);
+    try {
+      await expect(ascGet("j", "/v1/x")).rejects.toThrow("ASC API /v1/x 返回非 JSON（HTTP 502）");
+    } finally {
+      m.restore();
+    }
+  });
 });
 
 describe("ascRequest", () => {

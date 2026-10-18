@@ -132,9 +132,14 @@ export class AscChannel implements Channel {
           "--apiIssuer",
           issuerId,
         ],
-        { cwd, encoding: "utf8" },
+        { cwd, encoding: "utf8", timeout: 30 * 60 * 1000 },
       );
-      if (r.error) throw new Error(`无法执行 xcrun: ${r.error.message}（altool 需 macOS + Xcode）`);
+      if (r.error) {
+        // spawnSync timeout 到点回传 ETIMEDOUT 错误
+        if ("code" in r.error && r.error.code === "ETIMEDOUT")
+          throw new Error("xcrun altool 超时（30min）——检查网络/钥匙串/CI 无 TTY 弹窗");
+        throw new Error(`无法执行 xcrun: ${r.error.message}（altool 需 macOS + Xcode）`);
+      }
       // altool 输出含敏感路径，v1 直接透传，这里同样经 emit 透传（脱敏由 logger 层负责）
       const output = `${r.stdout ?? ""}${r.stderr ?? ""}`.trim().slice(-2000);
       if (r.status !== 0)

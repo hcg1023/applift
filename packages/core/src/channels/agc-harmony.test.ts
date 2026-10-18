@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { AgcHarmonyChannel, getHarmonyAppId } from "./agc-harmony.js";
-import { mockFetch, makeTestCtx } from "../test-utils.js";
+import { mockFetch, makeTestCtx, readStreamToBuffer } from "../test-utils.js";
 
 const TOKEN = "tok-abc123";
 const ARTIFACT = path.join(os.tmpdir(), "applift-test-agc-harmony.app");
@@ -206,7 +206,7 @@ describe("AgcHarmonyChannel.submit 全链路", () => {
     expect(put.method).toBe("PUT");
     expect(put.headers["x-obs-acl"]).toBe("public-read");
     expect(put.headers["Content-Length"]).toBe(String(FILE_CONTENT.length));
-    expect(put.body).toEqual(FILE_CONTENT);
+    expect(await readStreamToBuffer(put.body)).toEqual(FILE_CONTENT);
 
     // v3 绑定
     const bind = find("app-package-info")!;

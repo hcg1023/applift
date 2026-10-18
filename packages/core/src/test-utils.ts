@@ -84,16 +84,20 @@ export function mockFetch(
   };
 }
 
-/** 读尽 web ReadableStream 为 Buffer（流式上传 body 的字节级断言用） */
+/** 读尽上传 body 为 Buffer（web ReadableStream 或整读 Buffer 两种形态；字节级断言用） */
 export async function readStreamToBuffer(body: unknown): Promise<Buffer> {
-  const reader = (body as ReadableStream<Uint8Array>).getReader();
-  const chunks: Buffer[] = [];
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(Buffer.from(value));
+  if (Buffer.isBuffer(body)) return body;
+  if (body instanceof ReadableStream) {
+    const reader = body.getReader();
+    const chunks: Buffer[] = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(Buffer.from(value));
+    }
+    return Buffer.concat(chunks);
   }
-  return Buffer.concat(chunks);
+  throw new Error(`readStreamToBuffer: 不支持的 body 形态 ${typeof body}`);
 }
 
 /**

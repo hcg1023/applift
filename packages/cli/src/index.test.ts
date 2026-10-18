@@ -52,6 +52,29 @@ describe("makeContext（P2-2 透传）", () => {
   });
 });
 
+describe("makeContext emit 脱敏（SEC-002）", () => {
+  it("warn/phase message 内嵌凭据 → stderr 输出 [REDACTED] 且不含原文", () => {
+    const ctx = makeContext(stubChannel, {}, {}, "/tmp/a.apk", undefined);
+    const writes: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((b) => {
+      writes.push(String(b));
+      return true;
+    });
+    try {
+      ctx.emit?.({ type: "warn", message: "渠道警告：token=leak-me-123" });
+      ctx.emit?.({ type: "phase", phase: "upload", message: "上传响应 token=phase-leak-9" });
+      ctx.emit?.({ type: "phase", phase: "done", message: "已提交（versionCode=301）" });
+    } finally {
+      spy.mockRestore();
+    }
+    const text = writes.join("");
+    expect(text).toContain("token=[REDACTED]");
+    expect(text).not.toContain("leak-me-123");
+    expect(text).not.toContain("phase-leak-9");
+    expect(text).toContain("已提交（versionCode=301）"); // 非敏感 message 原样保留
+  });
+});
+
 describe("CLI 旗标面（P2-2 入口）", () => {
   it("release 暴露 --release-time/--remark；beta 暴露 --install-password", () => {
     const release = program.commands.find((c) => c.name() === "release");

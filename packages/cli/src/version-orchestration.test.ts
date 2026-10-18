@@ -115,10 +115,34 @@ describe("bump 非交互门控（spawn 级，非 TTY）", () => {
     expect(r.out).toContain("bump 需 --yes");
   });
 
-  it("version bump --yes → 正常走完闭环（门控不拦授权路径）", () => {
+  it("version bump 无 --yes 但 config.toml assumeYes=true → 门控放行走完闭环", () => {
     setupRn();
-    const r = cli(["version", "bump", "--yes"]);
+    fs.mkdirSync(path.join(dir, ".applift"), { recursive: true });
+    fs.writeFileSync(path.join(dir, ".applift", "config.toml"), "assumeYes = true\n");
+    // 新写文件先入 git：bump 代 commit 有「计划外未提交变更」护栏
+    spawnSync("git", ["add", "-A"], { cwd: dir });
+    spawnSync("git", ["commit", "-qm", "chore: test config"], { cwd: dir });
+    const r = cli(["version", "bump"]);
     expect(r.code).toBe(0);
     expect(r.out).toContain("git tag: v4.0.1");
+  });
+});
+
+describe("config.build 构建命令覆盖（spawn 级）", () => {
+  it("beta android --bump：config.build.android 覆盖命令生效（优先于框架内置）", () => {
+    setupRn();
+    fs.writeFileSync(
+      path.join(dir, "applift.config.ts"),
+      `import { defineConfig } from "@applift/core";\nexport default defineConfig({ build: { android: "touch built-marker.txt" } });\n`,
+    );
+    // 最小凭据（default 空 profile）：bump+构建先于渠道流程，产物缺失在后续报错（本用例只验构建覆盖）
+    fs.mkdirSync(path.join(dir, ".applift"), { recursive: true });
+    fs.writeFileSync(path.join(dir, ".applift", "credentials.json"), `{"profiles":{"default":{}}}`);
+    // 新写文件先入 git：bump 代 commit 有「计划外未提交变更」护栏
+    spawnSync("git", ["add", "-A"], { cwd: dir });
+    spawnSync("git", ["commit", "-qm", "chore: test config"], { cwd: dir });
+    const r = cli(["beta", "android", "--bump", "--yes"]);
+    expect(r.out).toContain("▶ 构建 android: touch built-marker.txt");
+    expect(fs.existsSync(path.join(dir, "built-marker.txt"))).toBe(true);
   });
 });

@@ -440,7 +440,7 @@ describe("YybChannel.submit", () => {
     expect(res).toEqual({ ok: true, ref: SERIAL });
     expect(events.map((e) => e.type)).toEqual(["phase", "phase"]);
     expect(events[0]).toEqual({ type: "phase", phase: "submit" });
-    expect(String(events[1]?.message)).toContain("已提交审核");
+    expect(String(events[1]?.message)).toBe(`已提交审核（流水号 ${SERIAL}）`);
     m.restore();
   });
 
@@ -523,13 +523,43 @@ describe("YybChannel.submit", () => {
     m.restore();
   });
 
-  it("未 stage 直接 submit 抛错（serial_number/md5 不可用），不调 update_app", async () => {
-    const m = mockFetch([]);
-    const { ctx } = makeTestCtx({ credentials: CREDS, target: TARGET, artifactPath: apkPath });
+  it("未 stage 直接 submit（跨进程 --skip-stage）→ 现场重传当前包后提审成功", async () => {
+    const m = mockFetch([
+      ...stageRoutes(),
+      { match: "/update_app", response: { json: { ret: 0 } } },
+    ]);
+    const { ctx, events } = makeTestCtx({
+      credentials: CREDS,
+      target: TARGET,
+      artifactPath: apkPath,
+    });
 
-    await expect(new YybChannel().submit(ctx)).rejects.toThrow("应用宝渠道缺少上传流水号");
-    expect(m.calls.length).toBe(0);
+    const res = await new YybChannel().submit(ctx);
+
+    expect(res).toEqual({ ok: true, ref: SERIAL });
+    // 重传链路完整：detail → upload_info → COS PUT → update_app
+    expect(m.calls.map((c) => new URL(c.url).pathname)).toEqual([
+      "/open_file/developer_api/query_app_detail",
+      "/open_file/developer_api/get_file_upload_info",
+      "/apk/20240001/presigned",
+      "/open_file/developer_api/update_app",
+    ]);
+    expect(events.some((e) => e.type === "warn" && String(e.message).includes("重新上传"))).toBe(
+      true,
+    );
+    const params = bodyParams(m.calls[3]);
+    expect(params.get("apk32_file_serial_number")).toBe(SERIAL);
     m.restore();
+  });
+
+  it("未 stage 直接 submit 且 stage 返回不 ok → 抛「重新上传失败」（防御臂，子类直返 not-ok）", async () => {
+    class FailingStageYyb extends YybChannel {
+      override async stage(): Promise<{ ok: boolean; ref?: string; error?: string }> {
+        return { ok: false, error: "上传凭证服务暂不可用" };
+      }
+    }
+    const { ctx } = makeTestCtx({ credentials: CREDS, target: TARGET, artifactPath: apkPath });
+    await expect(new FailingStageYyb().submit(ctx)).rejects.toThrow("应用宝重新上传失败");
   });
 
   it("update_app ret!=0 抛错", async () => {

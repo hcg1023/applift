@@ -196,6 +196,22 @@ describe("stage（altool 上传）", () => {
     spawnSyncMock.mockReturnValue({ status: 71, stdout: "", stderr: "" } as never);
     await expect(ch.stage(makeCtx())).rejects.toThrow("altool 上传失败（exit 71）: 无输出");
   });
+
+  it("spawnSync 带 30 分钟 timeout（CI 卡死不无限挂起）", async () => {
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: "", stderr: "" } as never);
+    await ch.stage(makeCtx());
+    const opts = spawnSyncMock.mock.calls[0]![2] as { timeout?: number };
+    expect(opts.timeout).toBe(30 * 60 * 1000);
+  });
+
+  it("altool 超时（ETIMEDOUT）→ 报 30min 超时并指向网络/钥匙串/CI 无 TTY", async () => {
+    const err: Error & { code?: string } = new Error("spawnSync xcrun ETIMEDOUT");
+    err.code = "ETIMEDOUT";
+    spawnSyncMock.mockReturnValue({ error: err, status: null } as never);
+    await expect(ch.stage(makeCtx())).rejects.toThrow(
+      "xcrun altool 超时（30min）——检查网络/钥匙串/CI 无 TTY 弹窗",
+    );
+  });
 });
 
 describe("submit（ASC REST 提审）", () => {

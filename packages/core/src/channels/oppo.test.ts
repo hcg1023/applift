@@ -710,7 +710,11 @@ describe("OppoChannel.submit", () => {
     });
     expect(params.update_desc).toBe("修复已知问题，优化用户体验");
     expect(res).toEqual({ ok: true, ref: "{}" });
-    expect(events.at(-1)).toEqual({ type: "phase", phase: "done", message: "已提交（{}）" });
+    expect(events.at(-1)).toEqual({
+      type: "phase",
+      phase: "done",
+      message: "已提交（versionCode=301）",
+    });
   });
 
   it("errno=911215 应用审核中：非失败，warn 提示 + ok 返回（对拍 apkgo oppo.go 语义）", async () => {

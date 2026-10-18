@@ -6,7 +6,7 @@ export const REQUIRED_KEYS_BY_CHANNEL: Record<string, string[]> = {
   pgyer: ["PGYER_API_KEY"],
   huawei: ["HW_CLIENT_ID", "HW_CLIENT_SECRET", "HW_ANDROID_APP_ID"],
   agc: ["AGC_CLIENT_ID", "AGC_CLIENT_SECRET"],
-  xiaomi: ["MI_USER_NAME", "MI_PASSWORD", "MI_CERT_PATH"],
+  xiaomi: ["MI_USER_NAME", "MI_PASSWORD", "MI_CERT_PATH", "MI_APP_NAME"],
   oppo: ["OPPO_CLIENT_ID", "OPPO_CLIENT_SECRET"],
   vivo: ["VIVO_ACCESS_KEY", "VIVO_ACCESS_SECRET"],
   honor: ["HONOR_CLIENT_ID", "HONOR_CLIENT_SECRET", "HONOR_APP_ID"],
@@ -14,6 +14,15 @@ export const REQUIRED_KEYS_BY_CHANNEL: Record<string, string[]> = {
   asc: ["ASC_KEY_ID", "ASC_ISSUER_ID"],
   googleplay: ["GOOGLEPLAY_SA_JSON 或 GOOGLEPLAY_SA_KEY"],
 };
+
+/** 环境变量兼容的裸键名全集（渠道凭据键展开；release/status/listing/doctor 统一 resolveProfile 用） */
+export const KNOWN_CREDENTIAL_KEYS = [
+  ...new Set(
+    Object.values(REQUIRED_KEYS_BY_CHANNEL)
+      .flat()
+      .flatMap((k) => k.split(" 或 ")),
+  ),
+];
 
 export const CHANNEL_HINTS: Record<string, string> = {
   pgyer: "pgyer.com → 账号设置 → API（免费，内测分发三端）",

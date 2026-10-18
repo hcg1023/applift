@@ -21,7 +21,6 @@ import {
   AgcHarmonyChannel,
   AscChannel,
   GooglePlayChannel,
-  loadCredentials,
   loadCredentialsLayered,
   resolveProfile,
   resolveProfileFor,
@@ -84,7 +83,8 @@ export function makeContext(
 ): ChannelContext {
   const label = pc.bold(channel.label);
   const emit = (event: ChannelEvent) => {
-    // 渠道进度写 stderr——保证 --json 的 stdout 纯净（AI/CI 消费契约）
+    // 渠道进度写 stderr——保证 --json 的 stdout 纯净（AI/CI 消费契约）；
+    // message 可能内嵌渠道响应体切片（含预签名上传 URL）→ 出口统一过 redactText（label 是渠道名，不含凭据）
     if (event.type === "phase") {
       const phaseText =
         {
@@ -96,10 +96,10 @@ export function makeContext(
           done: pc.green("完成"),
         }[event.phase] ?? event.phase;
       process.stderr.write(
-        `  ${label} ${phaseText}${event.message ? pc.dim(` — ${event.message}`) : ""}\n`,
+        `  ${label} ${phaseText}${event.message ? pc.dim(` — ${redactText(event.message)}`) : ""}\n`,
       );
     } else if (event.type === "warn") {
-      process.stderr.write(`  ${label} ⚠ ${event.message}\n`);
+      process.stderr.write(`  ${label} ⚠ ${redactText(event.message)}\n`);
     }
   };
   return {
@@ -192,9 +192,24 @@ async function loadPluginHost(
   return { host, config: r.value, extraFrameworks };
 }
 
+/** config.build 平台覆盖取值：harmony 先试 harmonyApp（应用级）再 harmony（通用） */
+function buildOverrideFor(config: ProjectConfig, platform: string): string | undefined {
+  const b = config.build;
+  if (!b) return undefined;
+  if (platform === "harmony") return b.harmonyApp ?? b.harmony;
+  return b[platform as "android" | "ios"];
+}
 /** 构建指定平台（bump 后必须重新构建——旧产物内嵌老 versionCode，复用即版本错位） */
-function runBuildFor(cwd: string, framework: FrameworkAdapter | null, platform: string): boolean {
-  const cmd = framework?.buildCommand(platform);
+function runBuildFor(
+  cwd: string,
+  framework: FrameworkAdapter | null,
+  platform: string,
+  configOverride?: string,
+): boolean {
+  // config.build 覆盖优先于框架内置命令（命令串按空白切分）
+  const cmd = configOverride?.trim()
+    ? configOverride.trim().split(/\s+/)
+    : framework?.buildCommand(platform);
   if (!cmd || cmd.length === 0) {
     process.stderr.write(pc.yellow(`⚠ ${platform} 无自动构建命令：请手动构建新版本产物后再发\n`));
     return false;
@@ -299,7 +314,8 @@ async function runBumpOrchestration(args: {
   if (applied.committed) p.log.success(`git commit: chore(release): ${plan.nextVersion}`);
   if (applied.tagged) p.log.success(`git tag: v${plan.nextVersion}`);
   p.log.info(pc.dim("推送：git push --follow-tags（applift 永不代 push）"));
-  for (const plat of args.buildPlatforms ?? []) runBuildFor(args.cwd, args.framework, plat);
+  for (const plat of args.buildPlatforms ?? [])
+    runBuildFor(args.cwd, args.framework, plat, buildOverrideFor(args.config, plat));
   // 护栏①兜底：构建后探测产物读版本，与本次写入比对——不一致即构建未生效（发出去就是版本错位）
   if (args.buildPlatforms && args.buildPlatforms.length > 0) {
     const framework = args.framework;
@@ -383,6 +399,8 @@ program
       }
 
       // ---- bump：复用 runBumpOrchestration 闭环（写文件 + changelog + commit + tag），不传 buildPlatforms 即不构建 ----
+      // 全局 config.toml assumeYes 与 --yes 同权（与 release 一致；本批修复：version 命令此前未透传）
+      const globalCfg = loadGlobalConfig().config;
       const platforms = cmdOpts.platform
         ?.split(",")
         .map((s) => s.trim())
@@ -394,6 +412,7 @@ program
         bump: level ?? true,
         pre: cmdOpts.pre,
         yes: cmdOpts.yes,
+        assumeYes: globalCfg.assumeYes,
         platforms,
         commit: cmdOpts.commit,
         tag: cmdOpts.tag,
@@ -628,7 +647,7 @@ program
           } else {
             failed = true;
             process.stderr.write(
-              `${pc.red("✗")} ${label} — ${(r.reason as Error)?.message ?? r.reason}\n`,
+              `${pc.red("✗")} ${label} — ${redactText(String((r.reason as Error)?.message ?? r.reason))}\n`,
             );
           }
         });
@@ -667,7 +686,7 @@ program
         const r = await agc.stage({
           ...ctx,
           emit: (e) => {
-            if (e.type === "warn") s.message(pc.yellow(`⚠ ${e.message}`));
+            if (e.type === "warn") s.message(pc.yellow(`⚠ ${redactText(e.message)}`));
           },
         });
         if (r.ok) {
@@ -675,7 +694,7 @@ program
             `AGC 测试版本已就绪 ${pc.green("✓")}（未提交审核），到控制台「测试」提交并指定测试群组`,
           );
         } else {
-          s.stop(`AGC 测试发布失败: ${r.error}`);
+          s.stop(`AGC 测试发布失败: ${redactText(r.error ?? "")}`);
           process.exitCode = 1;
         }
         return;
@@ -696,13 +715,13 @@ program
       const r = await pgyer.stage({
         ...ctx,
         emit: (e) => {
-          if (e.type === "warn") s.message(pc.yellow(`⚠ ${e.message}`));
+          if (e.type === "warn") s.message(pc.yellow(`⚠ ${redactText(e.message)}`));
         },
       });
       if (r.ok) {
         s.stop(`蒲公英发布成功 ${pc.green("✓")} 扫码即装`);
       } else {
-        s.stop(`蒲公英上传失败: ${r.error}`);
+        s.stop(`蒲公英上传失败: ${redactText(r.error ?? "")}`);
         process.exitCode = 1;
       }
     },
@@ -853,7 +872,28 @@ program
       if (configured.length > 0) {
         storeIds = configured;
       } else if (opts.dryRun || opts.yes || isJson || global.assumeYes) {
-        storeIds = registry.all().map((c) => c.id);
+        // 默认全渠道收敛（P2）：按发布平台过滤（plan().platform）且仅限可提审渠道（capabilities.submit）
+        // —— pgyer（submit=false 内测渠道）与 ios/harmony 渠道不再混入 `release android` 默认集
+        const detectedDefault = detectBundleIds(opts.cwd);
+        const candidates: string[] = [];
+        for (const c of registry.all()) {
+          if (!c.capabilities.submit) continue;
+          try {
+            const plan = await c.plan(
+              makeContext(
+                c,
+                creds,
+                resolveChannelTarget(c.id, config, detectedDefault),
+                artifactPath ?? "",
+                opts.note,
+              ),
+            );
+            if (plan.platform === platform) candidates.push(c.id);
+          } catch {
+            // plan 失败（缺 target/应用配置）的渠道不进默认集；显式 --stores 仍可指定
+          }
+        }
+        storeIds = candidates;
       } else {
         const selected = await p.multiselect({
           message: "选择提审渠道",
@@ -867,7 +907,7 @@ program
         storeIds = selected as string[];
       }
     }
-    const channels: Channel[] = storeIds
+    let channels: Channel[] = storeIds
       .map((id) => registry.get(id))
       .filter((c): c is Channel => c !== undefined);
     if (channels.length === 0)
@@ -877,6 +917,24 @@ program
           .map((c) => c.id)
           .join(", ")}`,
       );
+
+    // stage-only 流排除不支持草稿区的渠道（如小米上传即提审）：留在列表会走 runStage 的
+    // ok:false 兜底 → exit 1 + "修复后重跑"误导；--submit 流不受影响，dry-run 只读也不排除
+    if (!opts.submit && !opts.dryRun) {
+      const excluded = channels.filter((c) => c.capabilities.stage === false);
+      if (excluded.length > 0) {
+        const excludedIds = new Set(excluded.map((c) => c.id));
+        channels = channels.filter((c) => !excludedIds.has(c.id));
+        for (const c of excluded) {
+          // --json 下 stdout 纯净（AI/CI 消费契约）：提示改走 stderr
+          const msg = `「${c.label}」上传即提审、无草稿区，已从本次传包排除（需提审请用 --submit）`;
+          if (isJson) process.stderr.write(`${pc.yellow(`⚠ ${msg}`)}\n`);
+          else p.log.warn(msg);
+        }
+      }
+      if (channels.length === 0)
+        throw new Error("所选渠道均不支持只传包（上传即提审），需提审请加 --submit");
+    }
 
     // 渠道 target 取值链：stores 渠道配置 > 平台段配置 > 包名自动推导（项目配置 > 自动推导）
     // 小米特例：icon 未配置时从工程 mipmap 自动发现（配置覆盖优先）
@@ -912,8 +970,9 @@ program
               `${pc.cyan(plan.platform.padEnd(8))} ${pc.bold(plan.channel.padEnd(12))} → ${plan.action} (${plan.afterApproval})`,
             );
         } catch (e) {
-          errors[c.id] = (e as Error).message;
-          if (!isJson) p.log.warn(`${pc.bold(c.label)}: ${(e as Error).message}`);
+          // plan 抛错可能内嵌凭据/响应体：--json errors 与非 JSON 警告共用同一脱敏值
+          errors[c.id] = redactText((e as Error).message);
+          if (!isJson) p.log.warn(`${pc.bold(c.label)}: ${errors[c.id]}`);
         }
       }
       if (isJson)
@@ -938,18 +997,21 @@ program
     const artifactVersionOf = () =>
       artifactPath ? readArtifactVersion(artifactPath)?.versionName : undefined;
     // --json 的 ref 字段来源：core 汇总条目不带 ref，从 history 事件按渠道+动作取值；
-    // 取不到显式置 null（字段稳定出现，不被 JSON.stringify 丢弃）
+    // 取不到显式置 null（字段稳定出现，不被 JSON.stringify 丢弃）。
+    // ref 可能内嵌渠道响应体切片（OBS/COS 预签名上传 URL）：在 historySink 入口统一脱敏一次，
+    // refOf 与落盘共用（重复脱敏会改写 [REDACTED <len>] 的长度线索，禁止二次过 redactText）
     const jsonRefs = new Map<string, string>();
     const refOf = (channel: string, action: "stage" | "submit") =>
       jsonRefs.get(`${channel}:${action}`) ?? jsonRefs.get(`${channel}:stage`) ?? null;
     const historySink = (e: HistoryEvent) => {
-      if (e.ref) jsonRefs.set(`${e.channel}:${e.action}`, e.ref);
+      const ev: HistoryEvent = e.ref ? { ...e, ref: redactText(e.ref) } : e;
+      if (ev.ref) jsonRefs.set(`${ev.channel}:${ev.action}`, ev.ref);
       appendEntry({
         ts: Date.now(),
         cwd: opts.cwd,
         artifactSha256: artifactSha256(),
         artifactVersion: e.artifactVersion ?? artifactVersionOf(),
-        ...e,
+        ...ev,
       });
     };
     // 护栏②：同渠道同 versionName 重复提交警告
@@ -983,7 +1045,7 @@ program
                 channel: e.channel,
                 ok: e.ok,
                 ref: refOf(e.channel, "stage"),
-                error: e.stageError,
+                error: e.stageError === undefined ? undefined : redactText(e.stageError),
               })),
             },
             null,
@@ -1054,12 +1116,15 @@ program
       process.stdout.write(
         JSON.stringify(
           {
-            submit: summary.submit.map((e) => ({
-              channel: e.channel,
-              ok: e.ok,
-              ref: refOf(e.channel, "submit"),
-              error: e.submitError ?? e.stageError,
-            })),
+            submit: summary.submit.map((e) => {
+              const error = e.submitError ?? e.stageError;
+              return {
+                channel: e.channel,
+                ok: e.ok,
+                ref: refOf(e.channel, "submit"),
+                error: error === undefined ? undefined : redactText(error),
+              };
+            }),
           },
           null,
           2,
@@ -1131,31 +1196,24 @@ program
     if (stores.length > 0) p.log.success(`项目渠道: ${stores.join(", ")}（profile=${profile}）`);
     else p.log.info("项目未配置渠道（applift.config.ts → android.stores）");
     // 逐渠道凭据核对（llms.txt 承诺的「凭据缺失清单」）
-    const activeProfile = creds.profiles[profile];
-    if (stores.length > 0) {
-      if (!activeProfile) {
-        p.log.error(
-          `凭据 profile "${profile}" 不存在（可用: ${profileNames.join(", ") || "无"}；个人可 applift use 切换）`,
+    // 与 release 同链解析（P2）：env 覆盖生效、缺 profile 报错形态一致（列出可用 profiles）
+    const activeProfile =
+      stores.length > 0 ? resolveProfile(creds, profile, KNOWN_CREDENTIAL_KEYS) : undefined;
+    if (stores.length > 0 && activeProfile) {
+      for (const id of stores) {
+        const need = REQUIRED_KEYS_BY_CHANNEL[id];
+        if (!need) continue;
+        // “或”型键（A 或 B）任一备选存在即过，全缺则整串报缺失；普通键直接查缺
+        const missing = need.filter((k) =>
+          k.includes(" 或 ")
+            ? !k.split(" 或 ").some((alt) => activeProfile[alt])
+            : !activeProfile[k],
         );
-        healthy = false;
-      } else {
-        for (const id of stores) {
-          const need = REQUIRED_KEYS_BY_CHANNEL[id];
-          if (!need) continue;
-          // “或”型键（A 或 B）任一备选存在即过，全缺则整串报缺失；普通键直接查缺
-          const missing = need.filter((k) =>
-            k.includes(" 或 ")
-              ? !k.split(" 或 ").some((alt) => activeProfile[alt])
-              : !activeProfile[k],
-          );
-          if (missing.length > 0) {
-            p.log.error(
-              `${pc.bold(id)}: 缺凭据 ${missing.join(", ")} — ${CHANNEL_HINTS[id] ?? ""}`,
-            );
-            healthy = false;
-          } else {
-            p.log.success(`${id}: 凭据齐全`);
-          }
+        if (missing.length > 0) {
+          p.log.error(`${pc.bold(id)}: 缺凭据 ${missing.join(", ")} — ${CHANNEL_HINTS[id] ?? ""}`);
+          healthy = false;
+        } else {
+          p.log.success(`${id}: 凭据齐全`);
         }
       }
     }
@@ -1180,16 +1238,7 @@ program
 import { registerLifecycleCommands } from "./lifecycle.js";
 import { registerListingCommand } from "./listing.js";
 registerListingCommand(program, { setup: setupChannels, registry });
-import { REQUIRED_KEYS_BY_CHANNEL, CHANNEL_HINTS } from "./channel-meta.js";
-
-/** 环境变量兼容的裸键名全集（渠道凭据键展开） */
-const KNOWN_CREDENTIAL_KEYS = [
-  ...new Set(
-    Object.values(REQUIRED_KEYS_BY_CHANNEL)
-      .flat()
-      .flatMap((k) => k.split(" 或 ")),
-  ),
-];
+import { REQUIRED_KEYS_BY_CHANNEL, CHANNEL_HINTS, KNOWN_CREDENTIAL_KEYS } from "./channel-meta.js";
 registerLifecycleCommands(program, { setup: setupChannels, registry });
 
 program

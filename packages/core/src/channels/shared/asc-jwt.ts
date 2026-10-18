@@ -57,7 +57,13 @@ export async function ascGet<T = unknown>(jwt: string, apiPath: string): Promise
     headers: { Authorization: `Bearer ${jwt}` },
     signal: AbortSignal.timeout(30_000),
   });
-  const json = (await res.json()) as T & AscErrorBody;
+  const text = await res.text();
+  let json: T & AscErrorBody;
+  try {
+    json = JSON.parse(text) as T & AscErrorBody;
+  } catch {
+    throw new Error(`ASC API ${apiPath} 返回非 JSON（HTTP ${res.status}）: ${text.slice(0, 300)}`);
+  }
   if (!res.ok) {
     throw new Error(
       `ASC API ${apiPath} 失败 HTTP ${res.status}: ${JSON.stringify(json.errors ?? json).slice(0, 300)}`,

@@ -4,7 +4,7 @@
  *   1. stage 返回的 serial_number 被 submit 的 update_app 复用（apk32_file_serial_number），
  *      且 apk32_file_md5 = 上传工件真实 MD5（提审包 = COS 上传的包）
  *   2. 请求顺序 = query_app_detail → get_file_upload_info → COS PUT → update_app → query_app_update_status
- *   3. submit 前必须先 stage（无 stage 时 submit 拒绝，不允许无流水号提审）
+ *   3. submit 无本进程 stage 记录时现场重传当前包再提审（跨进程 --skip-stage 回退，产物即当前文件）
  *   4. status 终态与提审结果一致（audit_status=3 → approved 已上架）
  */
 import fs from "node:fs";
@@ -105,14 +105,26 @@ describe("应用宝渠道 业务流程", () => {
     expect(st).toEqual({ state: "approved", live: true });
   });
 
-  it("无 stage 直接 submit 被拒绝：不允许无上传流水号提审（防止提审到旧包）", async () => {
-    installMock();
+  it("无 stage 直接 submit：现场重传当前包后提审（跨进程 --skip-stage 回退，无旧包风险）", async () => {
+    const { calls } = installMock();
     const ch = new YybChannel();
     const { ctx } = makeTestCtx({
       credentials: { YYB_USER_ID: "u1", YYB_ACCESS_SECRET: "sec", YYB_APP_ID: "yyb-app-9" },
       target: { pkgName: "com.demo.yyb" },
       artifactPath: apkPath,
     });
-    await expect(ch.submit(ctx)).rejects.toThrow("缺少上传流水号");
+    const res = await ch.submit(ctx);
+    expect(res).toEqual({ ok: true, ref: "556677" });
+    // 重传链路完整：detail → upload_info → COS PUT（当前产物字节）→ update_app（重传流水号 + 真实 md5）
+    expect(seqOf(calls)).toEqual([
+      "query_app_detail",
+      "get_file_upload_info",
+      "cos-put",
+      "update_app",
+    ]);
+    const upd = new URLSearchParams(String(calls.find((c) => c.url.includes("update_app"))!.body));
+    expect(upd.get("apk32_file_serial_number")).toBe("556677");
+    expect(upd.get("apk32_file_md5")).toBe(APK_MD5);
+    expect(calls.find((c) => c.url.includes("cos.example.com"))!.body).toEqual(APK_BYTES);
   });
 });

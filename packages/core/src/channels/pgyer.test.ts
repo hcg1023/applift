@@ -285,6 +285,60 @@ describe("PgyerChannel", () => {
     await expect(p).resolves.toEqual({ ok: true, ref: "bk-123" });
   });
 
+  it("buildInfo 主域名持续 502 → 备用域名接管 → 最终 done", async () => {
+    vi.useFakeTimers();
+    const fetchMock = mockFetch([
+      { match: "getCOSToken", response: { json: COS_TOKEN_OK } },
+      { match: /cos\.ap-shanghai/, response: { status: 204, text: "" } },
+      {
+        match: "api.pgyer.com/apiv2/app/buildInfo",
+        response: { status: 502, text: "<html>bad gateway</html>" },
+      },
+      { match: "api.xcxwo.com/apiv2/app/buildInfo", response: { json: BUILD_INFO_OK } },
+    ]);
+    const { ctx, events } = makeTestCtx({
+      credentials: { PGYER_API_KEY: "pk" },
+      artifactPath: ARTIFACT,
+    });
+
+    const p = ch.stage(ctx);
+    await flushRealIo();
+    await vi.advanceTimersByTimeAsync(6000);
+    await expect(p).resolves.toEqual({ ok: true, ref: "bk-123" });
+    expect(fetchMock.find("api.xcxwo.com/apiv2/app/buildInfo")).toBeTruthy();
+    expect(
+      events.some((e) => e.type === "warn" && String(e.message).includes("api.pgyer.com 不可用")),
+    ).toBe(true);
+  });
+
+  it("buildInfo 全域名持续失败 → 连续 10 次后提前失败（文案含控制台）", async () => {
+    vi.useFakeTimers();
+    const bad = (): MockResponseSpec => ({ status: 502, text: "<html>bad gateway</html>" });
+    const fetchMock = mockFetch([
+      { match: "getCOSToken", response: { json: COS_TOKEN_OK } },
+      { match: /cos\.ap-shanghai/, response: { status: 204, text: "" } },
+      { match: "api.pgyer.com", response: bad },
+      { match: "api.xcxwo.com", response: bad },
+      { match: "api.pgyerapp.com", response: bad },
+    ]);
+    const { ctx, events } = makeTestCtx({
+      credentials: { PGYER_API_KEY: "pk" },
+      artifactPath: ARTIFACT,
+    });
+
+    const p = ch.stage(ctx);
+    await flushRealIo();
+    await vi.advanceTimersByTimeAsync(10 * 3000 + 2000);
+    const res = await p;
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toContain(
+      "蒲公英状态查询持续失败（包已上传，可到控制台确认）",
+    );
+    // 10 轮 × 3 域名全试尽；轮询计数在成功时清零，此处每轮 3 域名计 1 次连续失败
+    expect(fetchMock.calls.filter((c) => c.url.includes("buildInfo"))).toHaveLength(30);
+    expect(events.some((e) => e.type === "warn" && String(e.message).includes("10/10"))).toBe(true);
+  });
+
   it("15 分钟超时返回错误", async () => {
     vi.useFakeTimers();
     const fetchMock = mockFetch(
@@ -301,7 +355,7 @@ describe("PgyerChannel", () => {
       error:
         "蒲公英 15 分钟内未完成处理（大包云端处理慢属正常，可到 pgyer.com 控制台确认实际状态）",
     });
-    // 3000ms 一轮 → 300 轮
+    // 3000ms 一轮 → 300 轮；buildInfo 走三域名 failover，首轮成功即止（1247 有效 JSON）→ 每轮 1 次
     expect(fetchMock.calls.filter((c) => c.url.includes("buildInfo"))).toHaveLength(300);
   });
 

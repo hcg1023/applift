@@ -8,15 +8,18 @@ import type { Command } from "commander";
 import {
   loadCredentialsLayered,
   loadProjectConfig,
+  resolveProfile,
   resolveListing,
   resolveProfileFor,
   loadListingFile,
   assertListingFiles,
+  redactText,
   type ChannelRegistry,
   type ListingCapableChannel,
   type ListingInput,
   type ListingResult,
 } from "@applift/core";
+import { KNOWN_CREDENTIAL_KEYS } from "./channel-meta.js";
 
 interface ListingOpts {
   stores?: string;
@@ -67,7 +70,11 @@ export function registerListingCommand(
       const { config } = await loadProjectConfig(cwd);
       // 与 release/doctor 同链：项目级 .applift/credentials.json + profile 解析链（use 个人选择 > 项目默认）
       const creds = loadCredentialsLayered(cwd);
-      const profile = creds.profiles[resolveProfileFor(cwd, config.profile)] ?? {};
+      const profile = resolveProfile(
+        creds,
+        resolveProfileFor(cwd, config.profile),
+        KNOWN_CREDENTIAL_KEYS,
+      );
 
       if (opts.dryRun) {
         const preview = storeIds.map((id) => ({ store: id, ...resolveListing(listing, id) }));
@@ -119,7 +126,7 @@ export function registerListingCommand(
               credentials: profile,
               target: config.android?.stores?.[id] ?? {},
               emit: (e) => {
-                if (!opts.json && e.type === "warn") p.log.warn(e.message);
+                if (!opts.json && e.type === "warn") p.log.warn(redactText(e.message));
               },
             },
             listing,
@@ -133,15 +140,17 @@ export function registerListingCommand(
             p.log.message(`  ${pc.green("●")} ${pc.bold(channel.label)} ${up}${skip}`);
           }
         } catch (e) {
+          // listing 更新抛错可能内嵌凭据/响应体：--json results 与人话提示共用同一脱敏值
+          const msg = redactText((e as Error).message);
           results.push({
             ok: false,
             store: id,
             updated: [],
             skipped: [],
-            error: (e as Error).message,
+            error: msg,
             label: channel.label,
           });
-          if (!opts.json) p.log.error(`${channel.label}: ${(e as Error).message}`);
+          if (!opts.json) p.log.error(`${channel.label}: ${msg}`);
         }
       }
       // 任何渠道失败（未知渠道/不支持/接口异常）→ exit 1（CI 可判失败；JSON 形态仍完整输出）

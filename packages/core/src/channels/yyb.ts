@@ -176,9 +176,19 @@ export class YybChannel implements Channel {
   async submit(ctx: ChannelContext): Promise<SubmitResult> {
     const { userId, accessSecret, appId, pkgName } = this.creds(ctx);
 
-    const stagedInfo = this.staged.get(appId);
-    if (!stagedInfo)
-      throw new Error("应用宝渠道缺少上传流水号（stage 未执行，serial_number/md5 不可用）");
+    // 跨进程 --skip-stage 回退：CLI 两处推荐 --skip-stage 复用草稿，但进程内 Map 无法跨进程取回；
+    // 无内存暂存时现场重新上传再提审（产物即当前文件，无提审旧包风险——参照 vivo.submit 同构）
+    let stagedInfo = this.staged.get(appId);
+    if (!stagedInfo) {
+      ctx.emit({
+        type: "warn",
+        message: "无本进程 stage 记录（--skip-stage 跨进程），重新上传当前包后提审",
+      });
+      const r = await this.stage(ctx);
+      if (!r.ok) throw new Error(`应用宝重新上传失败: ${r.error ?? "未知错误"}`);
+      stagedInfo = this.staged.get(appId);
+      if (!stagedInfo) throw new Error("应用宝重新上传后仍缺少流水号（内部状态异常）");
+    }
 
     // update_app 字段集 —— 对拍 apkgo tencent.go（2026-10 源码仲裁）：
     // pkg_name/app_id/deploy_type(1 立即|2 定时) + feature(文案)；
@@ -214,11 +224,12 @@ export class YybChannel implements Channel {
       businessParams["deploy_type"] = "1";
     }
 
-    const submit = await yybApi("/update_app", { userId, accessSecret }, businessParams);
+    await yybApi("/update_app", { userId, accessSecret }, businessParams);
+    // done 消息不内嵌响应体（预签名 URL 等泄露面）：给受理流水号（与 ref 同源），响应体排查走错误路径
     ctx.emit({
       type: "phase",
       phase: "done",
-      message: `已提交审核（${JSON.stringify(submit).slice(0, 120)}）`,
+      message: `已提交审核（流水号 ${stagedInfo.serialNumber}）`,
     });
     return { ok: true, ref: stagedInfo.serialNumber };
   }

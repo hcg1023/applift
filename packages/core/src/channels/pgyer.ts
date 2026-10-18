@@ -42,6 +42,24 @@ async function pgyerPost<T>(
   }
 }
 
+/** 按 HOSTS 序尝试的 POST（任一域名成功即返回；全挂抛最后一个错误）——状态查询等幂等接口用 */
+async function pgyerPostFailover<T>(
+  ctx: Pick<ChannelContext, "emit">,
+  apiPath: string,
+  form: Record<string, string>,
+): Promise<T> {
+  let lastErr: unknown;
+  for (const host of HOSTS) {
+    try {
+      return await pgyerPost<T>(host, apiPath, form);
+    } catch (e) {
+      lastErr = e;
+      ctx.emit({ type: "warn", message: `${host} 不可用，尝试备用域名` });
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(`蒲公英 ${apiPath} 请求失败`);
+}
+
 interface CosTokenResp {
   code: number;
   message?: string;
@@ -141,13 +159,30 @@ export class PgyerChannel implements Channel {
 
     ctx.emit({ type: "phase", phase: "wait", message: "等待蒲公英处理" });
     const deadline = Date.now() + 15 * 60 * 1000;
+    let consecutiveErrors = 0;
     while (Date.now() < deadline) {
       await sleep(3000);
-      const info = await pgyerPost<BuildInfoResp>(HOSTS[0], "/apiv2/app/buildInfo", {
-        _api_key: apiKey,
-        buildKey,
-      });
-      // 成功判定：code===0 且已出短链（对拍 apkgo pgyer.go 权威：code 0 + buildUpdated 非空才算发布完成）
+      let info: BuildInfoResp;
+      try {
+        info = await pgyerPostFailover<BuildInfoResp>(ctx, "/apiv2/app/buildInfo", {
+          _api_key: apiKey,
+          buildKey,
+        });
+        consecutiveErrors = 0;
+      } catch (e) {
+        consecutiveErrors++;
+        const lastErr = e instanceof Error ? e.message : String(e);
+        ctx.emit({
+          type: "warn",
+          message: `buildInfo 状态查询失败（连续 ${consecutiveErrors}/10）: ${lastErr}`,
+        });
+        if (consecutiveErrors >= 10)
+          return {
+            ok: false,
+            error: `蒲公英状态查询持续失败（包已上传，可到控制台确认）: ${lastErr}`,
+          };
+        continue;
+      }
       if (info.code === 0 && info.data?.buildShortcutUrl) {
         ctx.emit({
           type: "phase",

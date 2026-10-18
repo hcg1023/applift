@@ -92,6 +92,12 @@ describe("全命令冒烟（非交互路径）", () => {
   });
 
   it("listing --stores nope --json：未知渠道 → ok:false 且 exit 1", () => {
+    // resolveProfile 对齐 release：缺 profile 直接报错——先给最小 default profile 再验未知渠道路径
+    fs.mkdirSync(path.join(proj, ".applift"), { recursive: true });
+    fs.writeFileSync(
+      path.join(proj, ".applift", "credentials.json"),
+      `{"profiles":{"default":{}}}`,
+    );
     const r = cli(["listing", "--stores", "nope", "--brief", "简介", "--json"]);
     expect(r.code).toBe(1);
     const parsed = JSON.parse(r.out) as { stores: Array<{ ok: boolean; error: string }> };

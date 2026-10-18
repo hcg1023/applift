@@ -9,6 +9,7 @@ describe("getAgcToken", () => {
       return {
         status: 200,
         ok: true,
+        text: async () => JSON.stringify({ access_token: "tok-1" }),
         json: async () => ({ access_token: "tok-1" }),
       } as unknown as Response;
     };
@@ -33,6 +34,8 @@ describe("getAgcToken", () => {
     globalThis.fetch = (async () => ({
       status: 401,
       ok: false,
+      text: async () =>
+        JSON.stringify({ error: "invalid_client", error_description: "bad secret" }),
       json: async () => ({ error: "invalid_client", error_description: "bad secret" }),
     })) as unknown as typeof fetch;
     try {
@@ -48,6 +51,7 @@ describe("getAgcToken", () => {
       status: 200,
       ok: true,
       json: async () => ({ ret: { code: 1003, msg: "client not found" } }),
+      text: async () => JSON.stringify({ ret: { code: 1003, msg: "client not found" } }),
     })) as unknown as typeof fetch;
     try {
       await expect(getAgcToken({ clientId: "x", clientSecret: "y" })).rejects.toThrow(
@@ -64,10 +68,26 @@ describe("getAgcToken", () => {
       status: 200,
       ok: true,
       json: async () => ({}),
+      text: async () => "{}",
     })) as unknown as typeof fetch;
     try {
       await expect(getAgcToken({ clientId: "x", clientSecret: "y" })).rejects.toThrow(
         /\{\}.*client_id\/client_secret/s,
+      );
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+  it("返回非 JSON（HTML 网关页）→ 报返回非 JSON（HTTP x）", async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () => ({
+      status: 502,
+      ok: false,
+      text: async () => "<html>bad gateway</html>",
+    })) as unknown as typeof fetch;
+    try {
+      await expect(getAgcToken({ clientId: "x", clientSecret: "y" })).rejects.toThrow(
+        "AGC token 接口返回非 JSON（HTTP 502）",
       );
     } finally {
       globalThis.fetch = original;

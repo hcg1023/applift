@@ -453,6 +453,14 @@ describe("runSubmit", () => {
     expect(summary.submit[0]?.plan.platform).toBe("ios");
   });
 
+  it("plan 抛错时兜底计划平台按产物推断（.hap → harmony）", async () => {
+    const a = fakeChannel({ id: "a", planThrows: true });
+    const { input } = makePipelineInput([a]);
+    input.contexts.set("a", makeTestCtx({ artifactPath: "/tmp/a-release.hap" }).ctx);
+    const summary = await runSubmit(input, { skipStage: true });
+    expect(summary.submit[0]?.plan.platform).toBe("harmony");
+  });
+
   it("stage 失败 → 短路不入 submit，错误记入 stageError", async () => {
     const a = fakeChannel({ id: "a", stage: async () => ({ ok: false, error: "上传超时" }) });
     const { input } = makePipelineInput([a]);

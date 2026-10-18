@@ -6,6 +6,7 @@
  *   export default defineConfig({ plugins: [dingtalkNotify({ webhook: 'https://oapi.dingtalk.com/robot/send?...' })] });
  */
 import { createHmac } from "node:crypto";
+import { redactText } from "../channels/shared/redact.js";
 import type { AppliftPlugin } from "../plugin.js";
 
 export interface DingtalkNotifyOptions {
@@ -24,8 +25,9 @@ export function dingtalkNotify(options: DingtalkNotifyOptions): AppliftPlugin {
         summary.submit.length === 0 ? "applift stage 草稿（未提审）" : "applift 发布结果";
       const lines: string[] = [title];
       for (const e of [...summary.stage, ...summary.submit]) {
+        // 外发前脱敏：错误消息可能内嵌凭据/响应体切片（预签名 URL），不把秘密推到群机器人
         lines.push(
-          `- ${e.label}: ${e.ok ? "✅ 成功" : `❌ ${e.stageError ?? e.submitError ?? "失败"}`}`,
+          `- ${e.label}: ${e.ok ? "✅ 成功" : `❌ ${redactText(e.stageError ?? e.submitError ?? "失败")}`}`,
         );
       }
       const body: Record<string, unknown> = {

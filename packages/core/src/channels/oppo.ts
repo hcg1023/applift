@@ -381,11 +381,8 @@ export class OppoChannel implements Channel {
     // app/upd 是异步任务：errno=0 仅代表已受理，轮询 task-state 确认处理结果
     // （包名校验失败等在异步段暴露，不轮询会误报成功）
     await this.pollTaskState(ctx, auth, versionCode);
-    ctx.emit({
-      type: "phase",
-      phase: "done",
-      message: `已提交（${JSON.stringify(upd.data ?? {}).slice(0, 120)}）`,
-    });
+    // done 消息不内嵌响应体（预签名 URL 等泄露面）：给结构化关键字段，响应体排查走错误路径
+    ctx.emit({ type: "phase", phase: "done", message: `已提交（versionCode=${versionCode}）` });
     return { ok: true, ref: JSON.stringify(upd.data ?? {}).slice(0, 80) };
   }
 

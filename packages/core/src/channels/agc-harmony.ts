@@ -19,6 +19,7 @@
  *   4. PUT  /api/publish/v2/test/app/version                   {versionId, pkgId} 绑定；提交审核/测试群组由控制台人工完成。
  * 官方文档: https://developer.huawei.com/consumer/cn/doc/doccenter-connect-api/agc-help-test-api-guide-0000002236015562
  */
+import { Readable } from "node:stream";
 import fs from "node:fs";
 import path from "node:path";
 import { sha256File, formatSize, sleep } from "../util.js";
@@ -244,8 +245,9 @@ export class AgcHarmonyChannel implements Channel {
     return { ok: true, ref: packageId || objectId };
   }
 
-  /** submit = v1 releaseHarmonyApp 完整链路：上传+绑定+文案 → 等编译轮询 → 提审（带重试） */
-  async submit(ctx: ChannelContext): Promise<SubmitResult> {
+  /** submit = v1 releaseHarmonyApp 完整链路：上传+绑定+文案 → 等编译轮询 → 提审（带重试）。
+   *  stagedRef = stage() 返回的 packageId：包已在草稿区，跳过重传直接等编译+提审（.app 常为数百 MB~GB，双倍上传不可接受） */
+  async submit(ctx: ChannelContext, stagedRef?: string): Promise<SubmitResult> {
     if (ctx.target.releaseType === "6") {
       return {
         ok: false,
@@ -256,7 +258,16 @@ export class AgcHarmonyChannel implements Channel {
     const { clientId, token, headers } = await this.authHeaders(ctx);
     const appId = await this.resolveAppId(ctx, clientId, token);
     ctx.emit({ type: "phase", phase: "auth", message: "token 获取成功" });
-    const { packageId } = await this.uploadFormal(ctx, appId, headers);
+    let packageId: string | undefined = stagedRef;
+    if (packageId) {
+      ctx.emit({
+        type: "phase",
+        phase: "upload",
+        message: `复用 stage 已上传的软件包（pkgId: ${packageId}，跳过重传）`,
+      });
+    } else {
+      ({ packageId } = await this.uploadFormal(ctx, appId, headers));
+    }
 
     // step 5: 轮询编译状态
     if (packageId) await this.awaitCompile(ctx, appId, packageId, headers);
@@ -404,7 +415,9 @@ export class AgcHarmonyChannel implements Channel {
     const upRes = await fetch(urlInfo.url, {
       method,
       headers: upHeaders,
-      body: fs.readFileSync(ctx.artifactPath),
+      // 流式上传：避免 readFileSync 整读 + fetch 拷贝双份内存（Content-Length 已显式携带，框架等价）
+      body: Readable.toWeb(fs.createReadStream(ctx.artifactPath)),
+      duplex: "half",
       signal: AbortSignal.timeout(1800_000),
     });
     if (![200, 201, 204].includes(upRes.status)) {
