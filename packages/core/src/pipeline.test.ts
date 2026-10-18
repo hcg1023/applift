@@ -593,3 +593,18 @@ describe("runSubmit", () => {
     ]);
   });
 });
+
+describe("错误消息 cause 解包", () => {
+  it("stage 抛错带 cause（fetch failed 外壳 + NotReadableError 真因）→ 汇总消息两层都含", async () => {
+    const ch = fakeChannel({
+      id: "x",
+      stage: async () => {
+        throw new Error("fetch failed", { cause: new Error("NotReadableError: 文件读盘中途失败") });
+      },
+    });
+    const { input } = makePipelineInput([ch]);
+    const summary = await runStage(input);
+    expect(summary.stage[0]?.stageError).toContain("fetch failed");
+    expect(summary.stage[0]?.stageError).toContain("NotReadableError");
+  });
+});

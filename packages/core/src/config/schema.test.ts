@@ -129,3 +129,11 @@ describe("BetaConfigSchema（beta 多渠道）", () => {
     expect(BetaConfigSchema.safeParse({ agc: { submit: "yes" } }).success).toBe(false);
   });
 });
+
+describe("StoresSchema 混排数组单键约束", () => {
+  it("对象元素多键 → safeParse 失败且 issue 消息含单键指引（可被人话化层消费）", () => {
+    const r = StoresSchema.safeParse(["huawei", { a: "1", b: "2" }]);
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0]?.message ?? "").toContain("单键");
+  });
+});

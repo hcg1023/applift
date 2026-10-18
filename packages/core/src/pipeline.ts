@@ -49,6 +49,15 @@ async function runLimited<T>(
   await Promise.all(workers);
 }
 
+/** 错误消息（带一层 cause 解包：fetch 网络层的真实原因如 NotReadableError 藏在 cause 里） */
+function errText(e: unknown): string {
+  if (e instanceof Error) {
+    const cause = e.cause instanceof Error ? `（${e.cause.message}）` : "";
+    return `${e.message}${cause}`;
+  }
+  return String(e);
+}
+
 /** stage 阶段：并发传包到各渠道草稿（不提审）；'stage:before' 返回 false 跳过该渠道 */
 export async function runStage(input: PipelineInput): Promise<PipelineSummary> {
   const plugins = input.plugins;
@@ -96,7 +105,7 @@ export async function runStage(input: PipelineInput): Promise<PipelineSummary> {
         channel: channel.id,
         label: channel.label,
         ok: false,
-        stageError: (e as Error).message,
+        stageError: errText(e),
         plan,
       });
       input.historySink?.({
@@ -212,7 +221,7 @@ export async function runSubmit(
         channel: channel.id,
         label: channel.label,
         ok: false,
-        submitError: (e as Error).message,
+        submitError: errText(e),
         plan: planFor(plans, basePlans, channel.id, ctx.artifactPath),
       });
       input.historySink?.({ channel: channel.id, action: "submit", ok: false });

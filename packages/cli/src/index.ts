@@ -134,7 +134,8 @@ async function confirmWithClack(plans: ReleasePlanEntry[]): Promise<boolean> {
     p.log.warn(`${pc.red("⚠")} 提审后审核通过即自动上架，无法撤回（iOS manual 除外）`);
   }
   const yes = await p.confirm({ message: `确认提交以上 ${plans.length} 项？` });
-  if (p.isCancel(yes)) return false;
+  // Ctrl-C 抛「已取消」而非返回 false：bin 据此退 130（中止≠失败）；false 保留给明确选"否"
+  if (p.isCancel(yes)) throw new Error("已取消（Ctrl-C，未做任何变更）");
   return Boolean(yes);
 }
 
@@ -237,6 +238,8 @@ async function runBumpOrchestration(args: {
   bump: boolean | string;
   pre?: string;
   yes?: boolean;
+  /** 全局 config.toml 的 assumeYes（与 --yes 同权的 CI 授权，release 路径透传） */
+  assumeYes?: boolean;
   /** bump 后需重新构建的平台 */
   buildPlatforms?: string[];
   /** 限定端（version 命令的 --platform） */
@@ -275,14 +278,17 @@ async function runBumpOrchestration(args: {
       `疑似失败重跑（${plan.reason}）——为防 CI 反复重试烧版本号：显式指定 level/版本号确认继续，或 beta/release 改用 --no-bump 复用已 bump 版本`,
     );
   p.log.info(`versionCode 策略: ${plan.versionCodeNote}`);
-  // 非 TTY（CI/管道）无法完成 clack 交互确认（会挂起），fail-fast 引导 --yes
-  if (!args.yes && !process.stdout.isTTY)
+  // 非 TTY（CI/管道）无法完成 clack 交互确认（会挂起），fail-fast 引导 --yes / assumeYes
+  if (!(args.yes || args.assumeYes) && !process.stdout.isTTY)
     throw new Error(
       "非交互环境（CI/管道）bump 需 --yes 跳过确认；疑似失败重跑请显式指定 level 或版本号",
     );
-  if (!args.yes) {
+  if (!(args.yes || args.assumeYes)) {
+    // 文案如实反映将发生的动作：--no-commit --tag 时仍会打 tag，不能漏报
+    const effects =
+      commit && tag ? "并代 commit + tag" : commit ? "并代 commit" : tag ? "并打 tag" : "";
     const go = await p.confirm({
-      message: `确认 bump 到 ${pc.bold(plan.nextVersion)}${commit ? " 并代 commit + tag" : ""}？`,
+      message: `确认 bump 到 ${pc.bold(plan.nextVersion)}${effects ? ` ${effects}` : ""}？`,
     });
     if (p.isCancel(go) || !go) throw new Error("已取消（未做任何变更）");
   }
@@ -753,7 +759,12 @@ program
     }
     // 提审确认非交互门控（fail-fast）：--submit 且未授权（--yes / config.toml assumeYes）时，
     // 无 TTY（CI/管道）或 --json 无法完成交互确认（挂起或被拒），入口即报原因与出路
-    if (opts.submit && !(opts.yes || global.assumeYes) && (!process.stdout.isTTY || isJson))
+    if (
+      opts.submit &&
+      !opts.dryRun &&
+      !(opts.yes || global.assumeYes) &&
+      (!process.stdout.isTTY || isJson)
+    )
       throw new Error(
         "非交互环境（无 TTY 或 --json）下提审需显式授权：加 --yes，或在 ~/.applift/config.toml 设 assumeYes",
       );
@@ -761,7 +772,7 @@ program
     const creds = opts.dryRun
       ? {}
       : resolveProfile(
-          loadCredentials(),
+          loadCredentialsLayered(opts.cwd),
           opts.profile ?? resolveProfileFor(opts.cwd, config.profile),
           KNOWN_CREDENTIAL_KEYS,
         );
@@ -792,6 +803,7 @@ program
         bump: releaseBumpFlag,
         pre: opts.pre,
         yes: opts.yes,
+        assumeYes: global.assumeYes,
         buildPlatforms: [platform],
       });
     }

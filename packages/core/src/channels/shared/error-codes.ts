@@ -3,8 +3,13 @@
  * 网络类故障（AbortSignal 超时/断连/DNS）渠道层不转译，统一在此兜底提示。
  */
 
-/** 网络故障特征 → 人话提示（命中即返回，优先于渠道码表） */
+/** 网络故障特征 → 人话提示（命中即返回，按序优先：文件可读性 > 超时 > 网络故障） */
 const NETWORK_HINTS: Array<[RegExp, string]> = [
+  // fetch failed 只是外壳，真实原因在 cause（pipeline 的 errText 已解包进消息）
+  [
+    /NotReadableError/i,
+    "产物/图标文件在上传期间被修改或不可读（惰性 Blob 读盘中途失败）：确认构建已完成、无并发进程改动产物，重跑",
+  ],
   [
     /aborted due to timeout|TimeoutError/i,
     "请求超时（服务端无响应或网络不稳）：可重跑；大包上传建议在稳定网络环境执行",

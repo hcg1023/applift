@@ -60,3 +60,11 @@ describe("humanizeError 网络故障人话化", () => {
     expect(out).not.toContain("client_id");
   });
 });
+
+describe("humanizeError 文件可读性优先级", () => {
+  it("fetch failed（NotReadableError cause 已解包）→ 文件提示优先，不给网络误导", () => {
+    const out = humanizeError(undefined, "fetch failed（NotReadableError: read failed）");
+    expect(out).toContain("上传期间被修改");
+    expect(out).not.toContain("网络故障");
+  });
+});

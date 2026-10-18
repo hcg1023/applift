@@ -106,3 +106,19 @@ describe("CLI version show/bump 编排（spawn 级）", () => {
     expect(fs.existsSync(path.join(dir, "CHANGELOG.md"))).toBe(false);
   });
 });
+
+describe("bump 非交互门控（spawn 级，非 TTY）", () => {
+  it("version bump 无 --yes → fail-fast exit 1 并引导 --yes（不挂起）", () => {
+    setupRn();
+    const r = cli(["version", "bump"]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("bump 需 --yes");
+  });
+
+  it("version bump --yes → 正常走完闭环（门控不拦授权路径）", () => {
+    setupRn();
+    const r = cli(["version", "bump", "--yes"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("git tag: v4.0.1");
+  });
+});

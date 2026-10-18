@@ -255,4 +255,86 @@ describe("release L3 提审路径（桩渠道进程内）", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("凭据只在项目级 .applift/（全局无 default profile）→ release 仍可用（分层凭据链回归）", async () => {
+    const dir = makeProj();
+    // 全局凭据置空 profiles：旧实现（loadCredentials 仅全局）会抛"凭据 profile 不存在"
+    const globalCreds = path.join(home, "credentials.json");
+    const original = fs.readFileSync(globalCreds, "utf8");
+    fs.writeFileSync(globalCreds, `{"profiles":{}}`);
+    fs.mkdirSync(path.join(dir, ".applift"));
+    fs.writeFileSync(
+      path.join(dir, ".applift", "credentials.json"),
+      `{"profiles":{"default":{"REL_STUB_KEY":"v"}}}`,
+    );
+    const out = capture();
+    const histPath = path.join(home, "history.jsonl");
+    try {
+      process.exitCode = 0;
+      await program.parseAsync(
+        [
+          "release",
+          "android",
+          "--cwd",
+          dir,
+          "--stores",
+          "rel-stub",
+          "--artifact",
+          path.join(dir, "demo.apk"),
+          "--json",
+        ],
+        { from: "user" },
+      );
+      const json = JSON.parse(out.join("")) as { stage?: Array<{ channel: string; ok: boolean }> };
+      expect(json.stage?.[0]).toMatchObject({ channel: "rel-stub", ok: true });
+    } finally {
+      vi.restoreAllMocks();
+      fs.writeFileSync(globalCreds, original);
+      fs.rmSync(histPath, { force: true });
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("--submit --json 无 --yes（非 TTY）→ fail-fast 拒绝并给出 --yes 出路（P0 门控）", async () => {
+    const dir = makeProj();
+    slot.__relCaptured = { stageResults: [] }; // 捕获器跨用例共享，重置后再断言零触达
+    try {
+      await expect(
+        program.parseAsync(
+          ["release", "android", "--cwd", dir, "--stores", "rel-stub", "--submit", "--json"],
+          { from: "user" },
+        ),
+      ).rejects.toThrow(/提审需显式授权：加 --yes/);
+      expect(slot.__relCaptured?.stageResults).toHaveLength(0); // 渠道零触达
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("--dry-run --submit --json：零副作用预览不被提审门控误拦", async () => {
+    const dir = makeProj();
+    const out = capture();
+    try {
+      await program.parseAsync(
+        [
+          "release",
+          "android",
+          "--cwd",
+          dir,
+          "--stores",
+          "rel-stub",
+          "--dry-run",
+          "--submit",
+          "--json",
+        ],
+        { from: "user" },
+      );
+      const json = JSON.parse(out.join("")) as { dryRun?: boolean; plans?: unknown[] };
+      expect(json.dryRun).toBe(true);
+      expect(json.plans?.length).toBeGreaterThan(0);
+    } finally {
+      vi.restoreAllMocks();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

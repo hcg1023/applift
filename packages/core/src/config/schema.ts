@@ -31,19 +31,13 @@ const storesNormalize = (
 ): Record<string, Record<string, string>> => {
   if (Array.isArray(stores))
     return Object.fromEntries(
-      stores.map((el) =>
-        typeof el === "string"
-          ? [el, {}]
-          : (() => {
-              const entries = Object.entries(el);
-              if (entries.length !== 1)
-                throw new Error(
-                  `stores 数组内的对象元素必须形如 { 渠道id: appId简写 }（单键），收到: ${JSON.stringify(el)}`,
-                );
-              const [id, cfg] = entries[0]!;
-              return [id, typeof cfg === "string" ? { appId: cfg } : cfg] as const;
-            })(),
-      ),
+      stores.flatMap((el): Array<[string, Record<string, string>]> => {
+        if (typeof el === "string") return [[el, {}]];
+        // 单键已由 superRefine 保证；此处防御性跳过异常形态（理论不可达）
+        const [id, cfg] = Object.entries(el)[0] ?? [];
+        if (id === undefined || cfg === undefined) return [];
+        return [[id, typeof cfg === "string" ? { appId: cfg } : cfg]];
+      }),
     );
   return Object.fromEntries(
     Object.entries(stores).map(([id, cfg]) => [id, typeof cfg === "string" ? { appId: cfg } : cfg]),
@@ -55,6 +49,18 @@ export const StoresSchema = z
     z.record(z.string(), z.union([StoreConfigSchema, z.string()])),
     z.array(z.union([z.string(), StoreConfigSchema])),
   ])
+  // 混排数组的单键约束走 zod issue（而非 transform 内裸抛）：错误进入 safeParse 结果，被 loadProjectConfig 人话化
+  .superRefine((val, ctx) => {
+    if (!Array.isArray(val)) return;
+    for (const el of val) {
+      if (typeof el === "string") continue;
+      if (Object.keys(el).length !== 1)
+        ctx.addIssue({
+          code: "custom",
+          message: `stores 数组内的对象元素必须形如 { 渠道id: appId简写 }（单键），收到: ${JSON.stringify(el)}`,
+        });
+    }
+  })
   .transform(storesNormalize)
   .default({});
 export type Stores = z.infer<typeof StoresSchema>;
