@@ -11,7 +11,7 @@
 | `applift doctor --cwd <dir>` | 体检：框架识别/凭据/渠道配置 | 否 |
 | `applift init --cwd <dir>` | 向导：生成 applift.config.ts + 凭据引导（交互） | 否 |
 | `applift beta <platform> [--artifact <path>]` | 内测：android/ios→蒲公英，harmony 默认 AGC 指定设备（--via pgyer 改蒲公英）；产物自动探测 | 是 |
-| `applift beta` | 多渠道内测：读 applift.config.ts 的 `test` 段（pgyer.platforms / agc{submit,group,testType} / testflight{note}）并行发布，任一失败退出码 1 | 是 |
+| `applift beta` | 多渠道内测：读 applift.config.ts 的 `beta` 段（pgyer.platforms / agc{submit,group,testType} / testflight{note}）并行发布，任一失败退出码 1 | 是 |
 | `applift release <platform> [--stores a,b]` | stage：只传包到各家草稿（安全，不提审） | 是 |
 | `applift release <platform> --submit [--yes]` | submit：提审（审核通过自动上架，需确认） | 是 |
 | `applift release <platform> --dry-run` | 计划预览（无需凭据，安全） | 否 |
@@ -30,9 +30,8 @@
 
 ## 语义约定（机器消费）
 
-- **退出码**：0=全部成功，1=有失败（逐渠道错误在 stderr/JSON）
-- **--json**：stdout 输出结构化 JSON（stage 模式返回 `{stage:[...]}`；submit 模式返回 `{submit:[...]}`；status 返回 `{status:[...]}`；dry-run 返回 `{dryRun,plans,errors}`）；渠道进度与人类渲染走 stderr
-- **--yes**：跳过 clack 交互确认（CI/agent 专用）；--dry-run 永远无副作用
+- **退出码**：0=全部成功，1=有失败（逐渠道错误在 stderr/JSON）；listing 任一渠道失败 exit 1；status 中"暂未接入状态查询"的渠道不计入退出码
+- **--json**：stdout 输出结构化 JSON（stage 模式返回 `{stage:[...]}`，每项含 `ref`（渠道草稿引用，无则 null）；submit 模式返回 `{submit:[...]}`，每项含 `ref`（提审后的渠道引用，无则 null）；status 返回 `{status:[...]}`；dry-run 返回 `{dryRun,plans,errors}`）；渠道进度与人类渲染走 stderr
 - **错误格式**：`<渠道> 缺少 <KEY>（<获取指引>）`——可直接把指引转述给用户
 - **两段式安全**：stage 只传草稿；submit = 提审 = 审核通过自动上架（iOS 除外，默认 manual）
 

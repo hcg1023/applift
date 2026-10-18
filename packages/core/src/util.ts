@@ -1,4 +1,4 @@
-/** core 内部共用小工具（不进公共 API） */
+/** core 内部共用小工具（sleep/formatSize 仅内部使用；sha256File 经 index 导出，CLI 历史指纹用） */
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 

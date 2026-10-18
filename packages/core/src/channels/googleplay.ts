@@ -187,6 +187,10 @@ export class GooglePlayChannel implements Channel {
     scheduled: false,
     status: true,
   };
+  /** 平台错误码 → 人话（HTTP 状态：依据为本仓测试已固化的失败路径） */
+  readonly errorHints = {
+    "403": "权限不足（检查 Service Account 是否已关联 Play Console 且有发布权限）",
+  };
 
   async plan(_ctx: ChannelContext): Promise<ReleasePlanEntry> {
     return {
@@ -205,9 +209,51 @@ export class GooglePlayChannel implements Channel {
     return { ok: true, ref: result };
   }
 
-  async submit(ctx: ChannelContext): Promise<SubmitResult> {
+  async submit(ctx: ChannelContext, stagedRef?: string): Promise<SubmitResult> {
+    // stagedRef = stage 返回的 `editId:versionCode`：edit commit 后 versionCode 已在服务端，
+    // 开新 edit 的轨道分配可直接引用该 versionCode，无需重传二进制
+    const reusedVc = stagedRef?.split(":")[1];
+    if (reusedVc !== undefined && reusedVc !== "") {
+      const ref = await this.assignExisting(ctx, "production", Number(reusedVc));
+      return { ok: true, ref };
+    }
     const result = await this.uploadAndAssign(ctx, "production", ctx.updateDescription);
     return { ok: true, ref: result };
+  }
+
+  /** 复用 stage 已上传的 versionCode：开新 edit（仍需 auth）→ 部署 production → commit，跳过上传 */
+  private async assignExisting(
+    ctx: ChannelContext,
+    track: string,
+    versionCode: number,
+  ): Promise<string> {
+    const pkgName = this.requirePkgName(ctx);
+    const token = await getAccessToken(ctx.credentials);
+    ctx.emit({ type: "phase", phase: "auth", message: "OAuth2 token 获取成功" });
+    const edit = await apiFetch<{ id?: string }>(
+      `${API_BASE}/${pkgName}/edits`,
+      token,
+      { method: "POST", body: "{}" },
+      "创建 edit",
+    );
+    if (!edit.id)
+      throw new Error(`Google Play 创建 edit 响应缺少 id: ${JSON.stringify(edit).slice(0, 300)}`);
+    const editId = edit.id;
+    ctx.emit({
+      type: "phase",
+      phase: "upload",
+      message: `复用 stage 上传的 versionCode ${versionCode}（跳过重复上传）`,
+    });
+    await this.deployAndCommit(
+      ctx,
+      pkgName,
+      token,
+      editId,
+      track,
+      versionCode,
+      ctx.updateDescription,
+    );
+    return `${editId}:${versionCode}`;
   }
 
   /** 上传 + 部署到指定轨道 + commit，返回 `editId:versionCode` */
@@ -265,9 +311,25 @@ export class GooglePlayChannel implements Channel {
     }
     ctx.emit({ type: "progress", detail: `上传成功（versionCode: ${versionCode}）` });
 
-    // step 3: 部署到轨道（completed；releaseNotes zh-CN，仅 submit 有文案时携带）
-    // 先 GET 轨道现有 releases 再合并 PUT：目标 release（同 status=completed 配置）追加新 versionCode，
-    // 其余 releases 原样保留（status/userFraction 不变），避免整轨覆盖把旧版本从轨道剔除
+    // step 3+4: 部署到轨道并 commit（复用方法，stagedRef 路径共用）
+    return this.deployAndCommit(ctx, pkgName, token, editId, track, versionCode, releaseNotes);
+  }
+
+  /**
+   * 部署 versionCode 到指定轨道并 commit：
+   * 先 GET 轨道现有 releases 再合并 PUT——目标 release（同 status=completed 配置）追加新 versionCode，
+   * 其余 releases 原样保留（status/userFraction 不变），避免整轨覆盖把旧版本从轨道剔除；
+   * :commit 冒号语法（对拍 apkgo googleplay.go 权威；对 production 含提交审核语义，internal 即生效）
+   */
+  private async deployAndCommit(
+    ctx: ChannelContext,
+    pkgName: string,
+    token: string,
+    editId: string,
+    track: string,
+    versionCode: number,
+    releaseNotes: string | undefined,
+  ): Promise<string> {
     const currentTrack = await apiFetch<{ releases?: TrackRelease[] }>(
       `${API_BASE}/${pkgName}/edits/${editId}/tracks/${track}`,
       token,
@@ -295,8 +357,6 @@ export class GooglePlayChannel implements Channel {
       phase: "bind",
       message: `已部署到 ${track} 轨道（versionCode: ${versionCode}）`,
     });
-
-    // step 4: commit（:commit 冒号语法，对拍 apkgo googleplay.go 权威；对 production 含提交审核语义，internal 即生效）
     await apiFetch(
       `${API_BASE}/${pkgName}/edits/${editId}:commit`,
       token,

@@ -2,7 +2,9 @@
  * 测试共享基建：fetch mock（契约测试）——零依赖，vitest vi.stubGlobal 惯用法。
  * 断言各渠道请求形状（URL/method/headers/body），商店 API 变更时测试立红。
  */
+import { setImmediate as realSetImmediate } from "node:timers";
 import { vi } from "vitest";
+import type { ChannelContext } from "./channel.js";
 
 export interface MockCall {
   url: string;
@@ -94,6 +96,15 @@ export async function readStreamToBuffer(body: unknown): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
+/**
+ * fake timers 下驱动时钟前先让真实线程池 I/O（fileBlob 惰性/openAsBlob 异步打开）落地：
+ * sinon 只假造全局定时器，fs 线程池回调仍走真实事件循环——
+ * 不先 flush，sleep 定时器会在 advance 结束后才挂上，测试假死。
+ */
+export async function flushRealIo(times = 10): Promise<void> {
+  for (let i = 0; i < times; i++) await new Promise<void>((r) => realSetImmediate(r));
+}
+
 /** 构造渠道上下文（凭据/target/产物路径 + 事件收集） */
 export function makeTestCtx(
   overrides: {
@@ -116,6 +127,6 @@ export function makeTestCtx(
       emit: (e: { type: string; [k: string]: unknown }) => {
         events.push(e);
       },
-    } as import("./channel.js").ChannelContext,
+    } as ChannelContext,
   };
 }

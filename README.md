@@ -120,14 +120,14 @@ plugins: [
 
 ## AI / CI
 
-- `--json` 全命令结构化输出（stdout 纯净，进度走 stderr）；退出码 0=全成 1=有败
+- `--json` 结构化输出（channels/status/history/listing/release 支持；stdout 纯净，进度走 stderr）；退出码 0=全成 1=有败
 - `applift channels --json` 自发现；`--yes` 无人值守；错误信息自带"缺什么键去哪拿"
 - Agent 技能文档：`SKILL.md`（可装入 Claude Code/Cursor）/ `docs/llms.txt`
 
 ## 开发
 
 ```bash
-pnpm install && pnpm build && pnpm test     # 574 项测试，覆盖率阈值 98（分支 95）
+pnpm install && pnpm build && pnpm test     # 全量测试；pnpm test:coverage 覆盖率门禁（CI 强制，阈值=现实基线棘轮）
 pnpm vitest run --coverage                   # 覆盖率报告
 bun build --compile packages/cli/src/bin.ts --target=bun-darwin-arm64   # 出二进制
 ```

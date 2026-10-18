@@ -2,8 +2,8 @@
  * 蒲公英（内测分发）渠道 —— 自 v1 lib/pgyer.mjs 迁移，逻辑不变；包一层 Channel 接口。
  * 内测渠道：stage=上传即发布（不影响任何线上商店），submit 不适用。
  */
-import fs from "node:fs";
 import path from "node:path";
+import { fileBlob } from "./shared/file-blob.js";
 import { sleep } from "../util.js";
 import type {
   Channel,
@@ -32,6 +32,7 @@ async function pgyerPost<T>(
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
+    signal: AbortSignal.timeout(30_000),
   });
   const text = await res.text();
   try {
@@ -70,6 +71,10 @@ export class PgyerChannel implements Channel {
     submit: false,
     scheduled: false,
     status: false,
+  };
+  /** 平台错误码 → 人话（1247：源码注释已证 = buildKey 尚未就绪/COS 仍在入库） */
+  readonly errorHints = {
+    "1247": "buildKey 尚未就绪（COS 上传仍在入库），属处理中状态，稍候即可",
   };
 
   async plan(ctx: ChannelContext): Promise<ReleasePlanEntry> {
@@ -125,12 +130,8 @@ export class PgyerChannel implements Channel {
     form.append("x-cos-security-token", params["x-cos-security-token"]);
     form.append("key", params.key);
     form.append("x-cos-meta-file-name", path.basename(ctx.artifactPath));
-    // FormData 无法携带流式 body（Blob 需完整材料，undici 限制），整读内存代价已知（docs/REVIEW.md P2-3）
-    form.append(
-      "file",
-      new Blob([fs.readFileSync(ctx.artifactPath)]),
-      path.basename(ctx.artifactPath),
-    );
+    // openAsBlob 惰性 Blob：按需分片读，零整读内存（旧运行时回退 readFile 整读）
+    form.append("file", await fileBlob(ctx.artifactPath), path.basename(ctx.artifactPath));
     const upRes = await fetch(endpoint, {
       method: "POST",
       body: form,

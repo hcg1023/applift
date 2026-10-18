@@ -3,7 +3,7 @@ import {
   PluginHost,
   defineConfig,
   resolvePlugins,
-  type QypubPlugin,
+  type AppliftPlugin,
   type ReleasePlanEntry,
 } from "./plugin.js";
 
@@ -96,7 +96,7 @@ describe("PluginHost.apply", () => {
 
 describe("defineConfig / resolvePlugins", () => {
   it("工厂函数惰性求值，对象直接透传", () => {
-    const objPlugin: QypubPlugin = { name: "obj" };
+    const objPlugin: AppliftPlugin = { name: "obj" };
     const cfg = defineConfig({ plugins: [objPlugin, () => ({ name: "factory" })] });
     const plugins = resolvePlugins(cfg);
     expect(plugins.map((p) => p.name)).toEqual(["obj", "factory"]);

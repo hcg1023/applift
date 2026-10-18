@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { appendEntry, readEntries, HISTORY_PATH, type HistoryEntry } from "./history.js";
 
 function makeEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
@@ -119,4 +120,47 @@ describe("HISTORY_PATH", () => {
   it("位于 ~/.applift 下", () => {
     expect(HISTORY_PATH).toBe(path.join(os.homedir(), ".applift", "history.jsonl"));
   });
+});
+
+describe("多进程并发追加", () => {
+  it("两进程各 20 条并发写同一 jsonl → 40 条全部完整可解析（append 原子性契约）", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-history-conc-"));
+    const target = path.join(dir, "history.jsonl");
+    // 经构建产物 dist/index.mjs 起 worker（src 的 .js 扩展名映射 node 直跑不了）；
+    // vitest 下 import.meta.url 基准不可靠，按运行目录显式探测
+    const dist =
+      [path.resolve("packages/core/dist/index.mjs"), path.resolve("dist/index.mjs")].find((p) =>
+        fs.existsSync(p),
+      ) ?? "";
+    if (!dist)
+      throw new Error("未找到 packages/core/dist/index.mjs（测试脚本前置 build 保证了它存在）");
+    const worker = (tag: string) =>
+      new Promise<void>((resolve, reject) => {
+        let errTail = "";
+        const child = spawn(
+          process.execPath,
+          [
+            "-e",
+            `import(${JSON.stringify(dist)}).then((m) => {
+              for (let i = 0; i < 20; i++)
+                m.appendEntry({ ts: Date.now(), channel: ${JSON.stringify(tag)}, action: "stage", artifactSha256: "x", ok: true, cwd: "/tmp" }, ${JSON.stringify(target)});
+            }).then(() => process.exit(0), (e) => { console.error(e); process.exit(1); });`,
+          ],
+          { stdio: ["ignore", "ignore", "pipe"] },
+        );
+        child.stderr?.on("data", (d) => {
+          errTail += d.toString();
+        });
+        child.on("exit", (c) =>
+          c === 0
+            ? resolve()
+            : reject(new Error(`worker ${tag} exit ${c}: ${errTail.slice(0, 400)}`)),
+        );
+      });
+    await Promise.all([worker("conc-a"), worker("conc-b")]);
+    const entries = readEntries({}, target);
+    expect(entries).toHaveLength(40);
+    expect(entries.filter((e) => e.channel === "conc-a")).toHaveLength(20);
+    expect(entries.filter((e) => e.channel === "conc-b")).toHaveLength(20);
+  }, 30_000);
 });

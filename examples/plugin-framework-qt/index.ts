@@ -15,7 +15,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import type { FrameworkAdapter } from "../../core/src/framework.js";
+import type { FrameworkAdapter } from "@applift/core";
 
 export const qtAdapter: FrameworkAdapter = {
   id: "qt",

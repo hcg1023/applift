@@ -23,12 +23,15 @@ afterAll(() => {
 });
 const slot = globalThis as unknown as {
   __relCaptured?: { stageResults: Array<{ ok: boolean; ctx?: ChannelContext }> };
+  __relStageOk?: boolean;
+  __relStageError?: string;
 };
 slot.__relCaptured = { stageResults: [] };
 
-function makeProj(stageOk = true) {
+function makeProj(stageOk = true, stageError = "桩渠道 stage 失败") {
   // 桩 stage 行为走 globalThis 开关（registry 是模块单例：多用例共用一个桩，行为随用例切换）
-  (globalThis as { __relStageOk?: boolean }).__relStageOk = stageOk;
+  slot.__relStageOk = stageOk;
+  slot.__relStageError = stageError;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-rel-proj-"));
   fs.writeFileSync(
     path.join(dir, "applift.config.ts"),
@@ -43,7 +46,7 @@ function makeProj(stageOk = true) {
       "        id: 'rel-stub', label: '桩渠道',",
       `        capabilities: { stage: true, submit: true, scheduled: false, status: false },`,
       "        plan: async () => ({ channel: 'rel-stub', platform: 'android', artifactVersion: '1.0.0', action: 'two-phase', afterApproval: 'auto-publish' }),",
-      `        stage: async (ctx) => { const ok = globalThis.__relStageOk !== false; globalThis.__relCaptured.stageResults.push({ ok, ctx }); return { ok, ...(ok ? {} : { error: '桩渠道 stage 失败' }) }; },`,
+      `        stage: async (ctx) => { const ok = globalThis.__relStageOk !== false; globalThis.__relCaptured.stageResults.push({ ok, ctx }); return { ok, ...(ok ? { ref: 'rel-stub-ref' } : { error: globalThis.__relStageError ?? '桩渠道 stage 失败' }) }; },`,
       "        submit: async () => ({ ok: true }),",
       "        status: async () => ({ state: 'unknown' }),",
       "      });",
@@ -176,6 +179,78 @@ describe("release L3 提审路径（桩渠道进程内）", () => {
       expect(entries.filter((e) => e.ok)).toHaveLength(2); // stage + submit
       expect(entries.every((e) => e.artifactSha256.length > 0)).toBe(true);
     } finally {
+      fs.rmSync(histPath, { force: true });
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("stage-only --json：ref 字段显式出现并透出桩渠道 ref", async () => {
+    const dir = makeProj();
+    const out: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((b) => {
+      out.push(String(b));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const histPath = path.join(home, "history.jsonl");
+    try {
+      process.exitCode = 0;
+      await program.parseAsync(
+        [
+          "release",
+          "android",
+          "--cwd",
+          dir,
+          "--stores",
+          "rel-stub",
+          "--artifact",
+          path.join(dir, "demo.apk"),
+          "--yes",
+          "--json",
+        ],
+        { from: "user" },
+      );
+      // stdout 纯 JSON（stderr 抑制捕获）：ref 字段必须显式出现（null 也不被 stringify 丢弃）
+      const json = JSON.parse(out.join("")) as {
+        stage: Array<{ channel: string; ok: boolean; ref: string | null }>;
+      };
+      expect(json.stage).toHaveLength(1);
+      expect(json.stage[0]).toMatchObject({ channel: "rel-stub", ok: true });
+      expect(json.stage[0]!.ref).toBe("rel-stub-ref");
+      expect(process.exitCode ?? 0).toBe(0);
+    } finally {
+      vi.restoreAllMocks();
+      fs.rmSync(histPath, { force: true });
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("渠道错误消息内嵌凭据（Authorization=token）→ 渲染前脱敏为 [REDACTED…", async () => {
+    const dir = makeProj(false, "上传失败：Authorization=abc123xyz 被渠道拒绝");
+    const out = capture();
+    const histPath = path.join(home, "history.jsonl");
+    try {
+      process.exitCode = 0;
+      await program.parseAsync(
+        [
+          "release",
+          "android",
+          "--cwd",
+          dir,
+          "--stores",
+          "rel-stub",
+          "--artifact",
+          path.join(dir, "demo.apk"),
+          "--yes",
+        ],
+        { from: "user" },
+      );
+      const text = out.join("");
+      expect(text).toContain("[REDACTED"); // 汇总渲染先过 redactText
+      expect(text).not.toContain("abc123xyz"); // 原始 token 不落任何输出
+      expect(process.exitCode).toBe(1);
+    } finally {
+      vi.restoreAllMocks();
       fs.rmSync(histPath, { force: true });
       fs.rmSync(dir, { recursive: true, force: true });
     }

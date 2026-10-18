@@ -19,22 +19,43 @@ export const StoreConfigSchema = z.record(z.string(), z.string());
 export type StoreConfig = z.infer<typeof StoreConfigSchema>;
 
 /**
- * stores 三种等价写法，统一规范化为 record：
+ * stores 等价写法，统一规范化为 record：
  * ① 对象：{ huawei: { appId: 'x' } }（原有写法，原样保留）
  * ② 数组：['oppo', 'vivo'] → { oppo: {}, vivo: {} }（无配置渠道）
  * ③ 字符串值：{ huawei: '10xxx' } → { huawei: { appId: '10xxx' } }（appId 简写）
+ * ④ 混排数组（README 首例）：['huawei', { yyb: 'appId值' }] → 元素对象须单键 { 渠道: 值 }，
+ *    值走 ③ 同款 appId 简写归一
  */
-export const StoresSchema = z
-  .union([z.record(z.string(), z.union([StoreConfigSchema, z.string()])), z.array(z.string())])
-  .transform((stores): Record<string, Record<string, string>> => {
-    if (Array.isArray(stores)) return Object.fromEntries(stores.map((id) => [id, {}]));
+const storesNormalize = (
+  stores: Record<string, Record<string, string> | string> | Array<string | Record<string, string>>,
+): Record<string, Record<string, string>> => {
+  if (Array.isArray(stores))
     return Object.fromEntries(
-      Object.entries(stores).map(([id, cfg]) => [
-        id,
-        typeof cfg === "string" ? { appId: cfg } : cfg,
-      ]),
+      stores.map((el) =>
+        typeof el === "string"
+          ? [el, {}]
+          : (() => {
+              const entries = Object.entries(el);
+              if (entries.length !== 1)
+                throw new Error(
+                  `stores 数组内的对象元素必须形如 { 渠道id: appId简写 }（单键），收到: ${JSON.stringify(el)}`,
+                );
+              const [id, cfg] = entries[0]!;
+              return [id, typeof cfg === "string" ? { appId: cfg } : cfg] as const;
+            })(),
+      ),
     );
-  })
+  return Object.fromEntries(
+    Object.entries(stores).map(([id, cfg]) => [id, typeof cfg === "string" ? { appId: cfg } : cfg]),
+  );
+};
+
+export const StoresSchema = z
+  .union([
+    z.record(z.string(), z.union([StoreConfigSchema, z.string()])),
+    z.array(z.union([z.string(), StoreConfigSchema])),
+  ])
+  .transform(storesNormalize)
   .default({});
 export type Stores = z.infer<typeof StoresSchema>;
 
@@ -100,20 +121,23 @@ export const ProjectConfigSchema = z.object({
   profile: z.string().default("default"),
   android: z
     .object({
-      pkgName: z.string(),
+      /** 缺省经 detectBundleIds 从工程文件自动推导（README 首例即只有 stores 的最小配置） */
+      pkgName: z.string().optional(),
       /** 渠道 → 渠道侧配置（appId 等）；stores 里列出的渠道才发 */
       stores: StoresSchema,
     })
     .optional(),
   harmony: z
     .object({
-      bundleName: z.string(),
+      /** 缺省自动推导（AppScope/app.json5） */
+      bundleName: z.string().optional(),
       appId: z.string().optional(),
     })
     .optional(),
   ios: z
     .object({
-      scheme: z.string(),
+      /** 缺省自动推导（工程 scheme 探测） */
+      scheme: z.string().optional(),
       workspace: z.string().optional(),
       /** App Store Connect 按 bundleId 定位 App（asc 渠道 submit 用） */
       bundleId: z.string().optional(),

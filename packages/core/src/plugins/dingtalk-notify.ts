@@ -6,7 +6,7 @@
  *   export default defineConfig({ plugins: [dingtalkNotify({ webhook: 'https://oapi.dingtalk.com/robot/send?...' })] });
  */
 import { createHmac } from "node:crypto";
-import type { QypubPlugin } from "../plugin.js";
+import type { AppliftPlugin } from "../plugin.js";
 
 export interface DingtalkNotifyOptions {
   webhook: string;
@@ -15,7 +15,7 @@ export interface DingtalkNotifyOptions {
   atMobiles?: string[];
 }
 
-export function dingtalkNotify(options: DingtalkNotifyOptions): QypubPlugin {
+export function dingtalkNotify(options: DingtalkNotifyOptions): AppliftPlugin {
   return {
     name: "dingtalk-notify",
     async notify(summary) {

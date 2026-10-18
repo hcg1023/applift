@@ -17,6 +17,12 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      # 全量门禁跑 22/24：构建工具链 tsdown/rolldown 用到 Promise.withResolvers（Node ≥22），
+      # Node 20 会挂 Build（本地 v20.20.2 实测）；产物自身的 Node 20 运行时下限由下方 runtime-node20 job 验证
+      matrix:
+        node-version: [22, 24]
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v7
@@ -27,7 +33,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: ${{ matrix.node-version }}
           cache: pnpm
 
       - name: Install Dependencies
@@ -40,7 +46,9 @@ jobs:
         run: pnpm run format:check
 
       - name: Typecheck
-        run: pnpm run typecheck
+        run: |
+          pnpm run typecheck
+          pnpm run typecheck:examples
 
       - name: Test
         run: |
@@ -51,7 +59,45 @@ jobs:
             grep -aE 'FAIL|Error|Cannot|ENOENT|AssertionError' /tmp/t.log | head -8 | while IFS= read -r l; do echo "::error::${l:0:220}"; done
             tail -25 /tmp/t.log | while IFS= read -r l; do echo "::error::${l:0:220}"; done
           fi
-          exit $code
+
+      - name: Coverage
+        run: pnpm run test:coverage
 
       - name: Build & Smoke
         run: pnpm run smoke
+
+  # 产物运行时下限：Node 20（openAsBlob 20.1+ / AbortSignal.timeout 17.3+；本地 v20.20.2 实测通过）。
+  # 构建仍在 Node 24 完成，本 job 只用 Node 20 执行 dist——与真实低版本消费者的运行形态一致
+  runtime-node20:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js (build)
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Setup Node.js (runtime)
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Runtime Smoke on Node 20
+        run: |
+          node --version
+          node packages/cli/dist/bin.mjs --help > /dev/null
+          node packages/cli/dist/bin.mjs channels --json > /dev/null
+          node -e "import('./packages/core/dist/index.mjs').then(m => { if (typeof m.redactText !== 'function' || typeof m.runStage !== 'function') throw new Error('core dist import broken on node20') })"

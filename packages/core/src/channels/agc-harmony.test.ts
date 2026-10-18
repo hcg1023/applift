@@ -107,6 +107,8 @@ describe("getHarmonyAppId", () => {
     expect(call.url).toContain("packageTypes=7");
     expect(call.url).toContain("packageName=com.example.foo");
     expect(call.headers).toEqual({ client_id: "cid", Authorization: "Bearer tk" });
+    // P2-4 契约：agcJson 业务请求全部 fetch 带 AbortSignal 超时（默认 60s）
+    expect(call.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("未找到 bundleName 抛错", async () => {

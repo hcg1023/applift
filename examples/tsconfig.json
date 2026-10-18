@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "@applift/core": ["../packages/core/src/index.ts"]
+    }
+  },
+  "include": ["plugin-oss/index.ts", "plugin-framework-qt/index.ts"]
+}

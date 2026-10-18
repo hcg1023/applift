@@ -16,6 +16,7 @@ import { publicEncrypt, constants, X509Certificate } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { md5String, md5File } from "./shared/sign.js";
+import { fileBlob } from "./shared/file-blob.js";
 import type {
   Channel,
   ChannelCapabilities,
@@ -93,6 +94,11 @@ export class XiaomiChannel implements Channel {
     submit: true,
     scheduled: false,
     status: true,
+  };
+  /** 平台错误码 → 人话（result 码：依据为本仓测试已固化的真实失败路径文案） */
+  readonly errorHints = {
+    "401": "签名无效或账号无该包名权限（检查 MI_CLIENT_SECRET 与 /dev/query 权限）",
+    "1005": "push SIG 校验失败（检查证书公钥与密码是否匹配）",
   };
 
   async plan(_ctx: ChannelContext): Promise<ReleasePlanEntry> {
@@ -190,9 +196,9 @@ export class XiaomiChannel implements Channel {
     const form = new FormData();
     form.append("RequestData", requestJson);
     form.append("SIG", sig);
-    // FormData 无法携带流式 body（Blob 需完整材料，undici 限制），整读内存代价已知（docs/REVIEW.md P2-3）
-    form.append("apk", new Blob([fs.readFileSync(ctx.artifactPath)]), fileName);
-    form.append("icon", new Blob([fs.readFileSync(iconPath)]), path.basename(iconPath));
+    // openAsBlob 惰性 Blob：按需分片读，零整读内存（旧运行时回退 readFile 整读）
+    form.append("apk", await fileBlob(ctx.artifactPath), fileName);
+    form.append("icon", await fileBlob(iconPath), path.basename(iconPath));
     const res = await fetch(`${MI_API_BASE}/dev/push`, {
       method: "POST",
       body: form,

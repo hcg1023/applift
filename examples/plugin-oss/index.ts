@@ -23,7 +23,7 @@ import type {
   ReviewStatus,
   StageResult,
   SubmitResult,
-} from "../../core/src/channel.js";
+} from "@applift/core";
 
 export interface OssChannelOptions {
   endpoint: string; // https://oss.example.com

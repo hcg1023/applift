@@ -20,6 +20,7 @@ import type { Channel, ChannelContext, ReleasePlanEntry } from "./channel.js";
 import type { PipelineSummary } from "./pipeline.js";
 import type { ProjectConfig, GlobalConfig } from "./config/schema.js";
 import type { ChannelRegistry } from "./channel.js";
+import type { FrameworkAdapter } from "./framework.js";
 
 export interface HookContext {
   /** 触发钩子的渠道 id（channel 级钩子才有） */
@@ -28,7 +29,7 @@ export interface HookContext {
   cwd: string;
 }
 
-export interface QypubPlugin {
+export interface AppliftPlugin {
   name: string;
   "config:resolved"?(
     config: ProjectConfig,
@@ -36,10 +37,7 @@ export interface QypubPlugin {
   ): Promise<ProjectConfig | void> | ProjectConfig | void;
   "channel:register"?(registry: ChannelRegistry, ctx: HookContext): Promise<void> | void;
   /** 注册自定义框架适配器（detect/artifactPatterns/buildCommand——扩展新框架的入口，与渠道扩展对称） */
-  "framework:register"?(
-    adapters: import("./framework.js").FrameworkAdapter[],
-    ctx: HookContext,
-  ): Promise<void> | void;
+  "framework:register"?(adapters: FrameworkAdapter[], ctx: HookContext): Promise<void> | void;
   "plan:before"?(
     plans: ReleasePlanEntry[],
     ctx: HookContext,
@@ -60,13 +58,15 @@ export interface QypubPlugin {
   notify?(summary: PipelineSummary, ctx: HookContext): Promise<void> | void;
 }
 
-export type PluginHookName = Exclude<keyof QypubPlugin, "name">;
+export type PluginHookName = Exclude<keyof AppliftPlugin, "name">;
 
 export class PluginHost {
-  constructor(private readonly plugins: QypubPlugin[]) {}
+  constructor(private readonly plugins: AppliftPlugin[]) {}
 
   /**
    * 顺序执行某钩子；支持「链式替换」（返回对象则替换后继续传给下一插件）与「拦截」（返回 false 立即中止）。
+   * 信任边界：返回值按 T 强转、不做形状校验（vite 同款取舍）——插件作者自负其责，
+   * 坏形状会在后续消费点显式抛错，宿主不代为静默兜底。
    * @returns {[被拦截?, 最终值]} false 表示被某插件拦截
    */
   async apply<T>(
@@ -101,16 +101,16 @@ export class PluginHost {
  * defineConfig —— vite 同款体验：applift.config.ts 导出时提供类型提示。
  * plugins 中允许嵌套工厂函数（如 dingtalkNotify({...}) 直接返回插件对象）。
  */
-export interface QypubUserConfig extends Partial<ProjectConfig> {
-  plugins?: Array<QypubPlugin | (() => QypubPlugin)>;
+export interface AppliftUserConfig extends Partial<ProjectConfig> {
+  plugins?: Array<AppliftPlugin | (() => AppliftPlugin)>;
 }
 
-export function defineConfig(config: QypubUserConfig): QypubUserConfig {
+export function defineConfig(config: AppliftUserConfig): AppliftUserConfig {
   return config;
 }
 
 /** 解析用户配置中的插件（工厂惰性求值），供 PluginHost 构造 */
-export function resolvePlugins(userConfig: QypubUserConfig): QypubPlugin[] {
+export function resolvePlugins(userConfig: AppliftUserConfig): AppliftPlugin[] {
   return (userConfig.plugins ?? []).map((p) => (typeof p === "function" ? p() : p));
 }
 

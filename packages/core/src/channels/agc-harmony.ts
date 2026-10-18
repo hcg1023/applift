@@ -108,7 +108,7 @@ async function agcJson<T extends AgcRet>(
   init: RequestInit,
   context: string,
 ): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(60_000) });
   let json: T;
   try {
     json = (await res.json()) as T;
@@ -615,6 +615,7 @@ export class AgcHarmonyChannel implements Channel {
       const qs = new URLSearchParams({ current: String(current), pageSize: "50" });
       const res = await fetch(`${APP_TEST_BASE}/test-group/list?${qs}`, {
         headers: { ...headers, appId },
+        signal: AbortSignal.timeout(60_000),
       });
       if (!res.ok) throw new Error(`AGC 查询测试群组失败 HTTP ${res.status}`);
       const json = (await res.json()) as TestGroupListResp;

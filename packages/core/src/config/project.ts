@@ -9,7 +9,7 @@ import { loadConfig as c12Load } from "c12";
 import { findUp } from "./loader.js";
 import { createJiti } from "jiti";
 import { ProjectConfigSchema, type ProjectConfig } from "./schema.js";
-import type { QypubUserConfig } from "../plugin.js";
+import type { AppliftUserConfig } from "../plugin.js";
 
 /**
  * 裸工程兼容：applift.config.ts 里的 `@applift/core` / `@applift/cli` 导入按目标工程解析会
@@ -37,7 +37,7 @@ export interface LoadedProjectConfig {
    * c12 原始配置（保留 plugins 等 schema 外键）——插件发现（resolvePlugins）用；
    * 业务字段一律以 config（zod 解析后）为准。
    */
-  raw: QypubUserConfig;
+  raw: AppliftUserConfig;
   /** 配置文件所在目录（解析相对路径用），无配置文件时为 cwd */
   cwd: string;
 }
@@ -73,6 +73,14 @@ export async function loadProjectConfig(cwd: string): Promise<LoadedProjectConfi
     packageJson: false,
     defaults: ProjectConfigSchema.parse({}),
   });
-  const config = ProjectConfigSchema.parse(result.config ?? {});
+  const parsed = ProjectConfigSchema.safeParse(result.config ?? {});
+  if (!parsed.success) {
+    // 人话化 zod issues：原始 JSON 数组对 CLI 用户不可读
+    const details = parsed.error.issues
+      .map((i) => `${i.path.join(".") || "(根)"}: ${i.message}`)
+      .join("；");
+    throw new Error(`applift.config.ts 字段校验失败 → ${details}`);
+  }
+  const config = parsed.data;
   return { config, raw: result.config ?? {}, cwd: result.cwd ?? cwd };
 }

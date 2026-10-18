@@ -8,6 +8,7 @@
  *   stage  = 只把包送到渠道草稿区，不动线上（iOS 上传构建≈只进 TestFlight）
  *   submit = 提审；除 iOS（默认 manual 发布）外，审核通过即自动上架 —— 不可逆，需计划确认
  */
+import type { Platform } from "./framework.js";
 
 /** 渠道能力声明（编排与确认界面据此渲染/拦截） */
 export interface ChannelCapabilities {
@@ -53,7 +54,7 @@ export type ChannelEvent =
 /** 发布计划条目：干跑/确认界面渲染的数据（无副作用产出） */
 export interface ReleasePlanEntry {
   channel: string;
-  platform: import("./framework.js").Platform;
+  platform: Platform;
   /** 渠道侧当前线上版本（尽力而为，查不到为空） */
   onlineVersion?: string;
   /** 本地包版本（读自工件） */
@@ -95,8 +96,12 @@ export interface Channel {
   plan(ctx: ChannelContext): Promise<ReleasePlanEntry>;
   /** 传包到草稿（capabilities.stage=false 的渠道返回明确错误） */
   stage(ctx: ChannelContext): Promise<StageResult>;
-  /** 提审（=审核通过自动上架，L3 不可逆操作） */
-  submit(ctx: ChannelContext): Promise<SubmitResult>;
+  /**
+   * 提审（=审核通过自动上架，L3 不可逆操作）。
+   * stagedRef = 同渠道 stage 成功返回的 ref（如 googleplay 的 `editId:versionCode`），
+   * 供实现复用 stage 已上传的草稿、避免重复上传；实现方可忽略。
+   */
+  submit(ctx: ChannelContext, stagedRef?: string): Promise<SubmitResult>;
   /** 查询审核状态（capabilities.status=false 时抛 NotSupported） */
   status(ctx: Pick<ChannelContext, "credentials" | "target">): Promise<ReviewStatus>;
 }

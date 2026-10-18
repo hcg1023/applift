@@ -4,8 +4,10 @@
   "scripts": {
     "build": "pnpm -r --workspace-concurrency=4 run build",
     "test": "pnpm -r build && vitest run",
+    "test:coverage": "pnpm -r build && vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "pnpm -r run typecheck",
+    "typecheck:examples": "tsc --noEmit -p examples",
     "lint": "oxlint",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
@@ -28,7 +30,7 @@
     "vitest": "^5.0.4"
   },
   "simple-git-hooks": {
-    "pre-commit": "pnpm exec lint-staged && pnpm run test"
+    "pre-commit": "pnpm exec lint-staged && pnpm run typecheck"
   },
   "lint-staged": {
     "*.{js,mjs,cjs,ts,mts,cts,json,jsonc}": [

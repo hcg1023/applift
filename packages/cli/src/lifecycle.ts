@@ -18,9 +18,10 @@ import {
 } from "@applift/core";
 import { resolveChannelTarget } from "./target.js";
 import type { Command } from "commander";
+import type { ChannelRegistry } from "@applift/core";
 
-/** 各渠道在 init/status 场景需要的凭据键与获取指引 */
-const CREDENTIAL_FIELDS: Array<{ key: string; label: string; where: string }> = [
+/** 各渠道在 init/status 场景需要的凭据键与获取指引（导出供与 CREDENTIAL_GROUPS 一致性测试对拍） */
+export const CREDENTIAL_FIELDS: Array<{ key: string; label: string; where: string }> = [
   { key: "PGYER_API_KEY", label: "蒲公英（内测）", where: "pgyer.com → 账号设置 → API" },
   {
     key: "AGC_CLIENT_ID",
@@ -28,6 +29,12 @@ const CREDENTIAL_FIELDS: Array<{ key: string; label: string; where: string }> = 
     where: "AGC → 项目设置 → 常规 → API Client",
   },
   { key: "AGC_CLIENT_SECRET", label: "华为 AGC Secret", where: "同上" },
+  {
+    key: "HW_CLIENT_ID",
+    label: "华为 Client ID",
+    where: "AGC → 项目设置 → 常规 → API Client（与 AGC_* 同源）",
+  },
+  { key: "HW_CLIENT_SECRET", label: "华为 Client Secret", where: "同上" },
   { key: "HW_ANDROID_APP_ID", label: "华为安卓 App ID", where: "AGC 我的应用（安卓）" },
   { key: "MI_USER_NAME", label: "小米账号", where: "dev.mi.com → 管理中心" },
   { key: "MI_PASSWORD", label: "小米上传密码", where: "同上" },
@@ -46,9 +53,27 @@ const CREDENTIAL_FIELDS: Array<{ key: string; label: string; where: string }> = 
   { key: "ASC_ISSUER_ID", label: "ASC Issuer ID", where: "同上" },
 ];
 
+/** init 向导凭据组 → 键映射（导出供一致性测试：每组键 ⊆ CREDENTIAL_FIELDS，huawei 组覆盖渠道元数据 huawei+agc） */
+export const CREDENTIAL_GROUPS: Record<string, string[]> = {
+  beta: ["PGYER_API_KEY"],
+  huawei: [
+    "HW_CLIENT_ID",
+    "HW_CLIENT_SECRET",
+    "HW_ANDROID_APP_ID",
+    "AGC_CLIENT_ID",
+    "AGC_CLIENT_SECRET",
+  ],
+  xiaomi: ["MI_USER_NAME", "MI_PASSWORD", "MI_CERT_PATH"],
+  oppo: ["OPPO_CLIENT_ID", "OPPO_CLIENT_SECRET"],
+  vivo: ["VIVO_ACCESS_KEY", "VIVO_ACCESS_SECRET"],
+  honor: ["HONOR_CLIENT_ID", "HONOR_CLIENT_SECRET", "HONOR_APP_ID"],
+  yyb: ["YYB_USER_ID", "YYB_ACCESS_SECRET", "YYB_APP_ID"],
+  asc: ["ASC_KEY_ID", "ASC_ISSUER_ID"],
+};
+
 export function registerLifecycleCommands(
   program: Command,
-  registryRef: { setup: () => void; registry: import("@applift/core").ChannelRegistry },
+  registryRef: { setup: () => void; registry: ChannelRegistry },
 ): void {
   program
     .command("init")
@@ -158,18 +183,8 @@ export default defineConfig({
           required: false,
         });
         if (!p.isCancel(group)) {
-          const groups: Record<string, string[]> = {
-            beta: ["PGYER_API_KEY"],
-            huawei: ["AGC_CLIENT_ID", "AGC_CLIENT_SECRET", "HW_ANDROID_APP_ID"],
-            xiaomi: ["MI_USER_NAME", "MI_PASSWORD", "MI_CERT_PATH"],
-            oppo: ["OPPO_CLIENT_ID", "OPPO_CLIENT_SECRET"],
-            vivo: ["VIVO_ACCESS_KEY", "VIVO_ACCESS_SECRET"],
-            honor: ["HONOR_CLIENT_ID", "HONOR_CLIENT_SECRET", "HONOR_APP_ID"],
-            yyb: ["YYB_USER_ID", "YYB_ACCESS_SECRET", "YYB_APP_ID"],
-            asc: ["ASC_KEY_ID", "ASC_ISSUER_ID"],
-          };
           for (const g of group) {
-            for (const key of groups[String(g)] ?? []) {
+            for (const key of CREDENTIAL_GROUPS[String(g)] ?? []) {
               const meta = CREDENTIAL_FIELDS.find((f) => f.key === key)!;
               // clack v0.11 无 password 选项；敏感值输入时终端可见，也可直接编辑文件
               const v = await p.text({

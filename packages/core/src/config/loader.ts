@@ -98,14 +98,22 @@ export function resolveProfile(
   return merged;
 }
 
-/** 全局配置装载（缺失/损坏降级默认值并警告，不阻断） */
-export function loadGlobalConfig(filePath = GLOBAL_CONFIG_PATH): GlobalConfig {
-  if (!fs.existsSync(filePath)) return GlobalConfigSchema.parse({});
+export interface GlobalConfigLoadResult {
+  config: GlobalConfig;
+  /** 配置文件损坏降级默认值时的警告（调用方决定呈现方式；core 保持 headless 不写 stderr） */
+  warning?: string;
+}
+
+/** 全局配置装载（缺失/损坏降级默认值；警告经返回值交给调用方，不阻断） */
+export function loadGlobalConfig(filePath = GLOBAL_CONFIG_PATH): GlobalConfigLoadResult {
+  if (!fs.existsSync(filePath)) return { config: GlobalConfigSchema.parse({}) };
   try {
-    return GlobalConfigSchema.parse(parseToml(fs.readFileSync(filePath, "utf8")));
+    return { config: GlobalConfigSchema.parse(parseToml(fs.readFileSync(filePath, "utf8"))) };
   } catch (e) {
-    process.stderr.write?.(`[applift] 全局配置解析失败，使用默认值: ${(e as Error).message}\n`);
-    return GlobalConfigSchema.parse({});
+    return {
+      config: GlobalConfigSchema.parse({}),
+      warning: `全局配置解析失败，使用默认值: ${(e as Error).message}`,
+    };
   }
 }
 

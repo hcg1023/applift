@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PgyerChannel } from "./pgyer.js";
-import { makeTestCtx, mockFetch, type MockResponseSpec } from "../test-utils.js";
+import { flushRealIo, makeTestCtx, mockFetch, type MockResponseSpec } from "../test-utils.js";
 
 const ARTIFACT = path.join(os.tmpdir(), "pgyer-test-app-release.apk");
 
@@ -100,6 +100,8 @@ describe("PgyerChannel", () => {
     });
 
     const p = ch.stage(ctx);
+    // fileBlob 惰性读走真实线程池：先 flush 事件循环再驱动 fake 时钟，否则 sleep 定时器挂不上
+    await flushRealIo();
     // 两次轮询各一次 sleep(3000)，一次推进 6s 驱动两轮
     await vi.advanceTimersByTimeAsync(6000);
     const result = await p;
@@ -126,6 +128,8 @@ describe("PgyerChannel", () => {
     expect(fd.get("key")).toBe("dir/app.apk");
     expect(fd.get("x-cos-meta-file-name")).toBe("pgyer-test-app-release.apk");
     expect((fd.get("file") as File).name).toBe("pgyer-test-app-release.apk");
+    // openAsBlob 惰性 Blob 字节数与源文件一致（file-blob 契约）
+    expect((fd.get("file") as File).size).toBe(fs.statSync(ARTIFACT).size);
 
     // buildInfo 请求形状 + 轮询两次
     const infoCall = fetchMock.find("buildInfo");
@@ -137,6 +141,8 @@ describe("PgyerChannel", () => {
     // 事件流: auth → upload → wait → done(短链)
     expect(events.map((e) => e.type)).toEqual(["phase", "phase", "phase", "phase"]);
     expect(events.at(-1)).toMatchObject({ phase: "done", message: "https://www.pgyer.com/abc123" });
+    // P2-4 契约：pgyerPost（getCOSToken/buildInfo）与 COS 上传全部 fetch 带 AbortSignal 超时
+    for (const c of fetchMock.calls) expect(c.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("stage 密码安装: installPassword 传 buildInstallType=2 + buildPassword（v1 回归）", async () => {
@@ -149,6 +155,7 @@ describe("PgyerChannel", () => {
     (ctx as { installPassword?: string }).installPassword = "secret-123";
 
     const p = ch.stage(ctx);
+    await flushRealIo();
     await vi.advanceTimersByTimeAsync(6000);
     await p;
 
@@ -241,6 +248,7 @@ describe("PgyerChannel", () => {
     const { ctx } = makeTestCtx({ credentials: { PGYER_API_KEY: "pk" }, artifactPath: ARTIFACT });
 
     const p = ch.stage(ctx);
+    await flushRealIo();
     await vi.advanceTimersByTimeAsync(3000);
     await expect(p).resolves.toEqual({ ok: false, error: "蒲公英处理失败 9001: build deleted" });
   });
@@ -254,6 +262,7 @@ describe("PgyerChannel", () => {
     const { ctx } = makeTestCtx({ credentials: { PGYER_API_KEY: "pk" }, artifactPath: ARTIFACT });
 
     const p = ch.stage(ctx);
+    await flushRealIo();
     await vi.advanceTimersByTimeAsync(6000);
     await expect(p).resolves.toEqual({ ok: true, ref: "bk-123" });
   });
@@ -271,6 +280,7 @@ describe("PgyerChannel", () => {
     const { ctx } = makeTestCtx({ credentials: { PGYER_API_KEY: "pk" }, artifactPath: ARTIFACT });
 
     const p = ch.stage(ctx);
+    await flushRealIo();
     await vi.advanceTimersByTimeAsync(6000);
     await expect(p).resolves.toEqual({ ok: true, ref: "bk-123" });
   });
@@ -284,6 +294,7 @@ describe("PgyerChannel", () => {
 
     const p = ch.stage(ctx);
     // 推进 15 分钟以上，驱动所有轮询轮次
+    await flushRealIo();
     await vi.advanceTimersByTimeAsync(15 * 60 * 1000 + 10_000);
     await expect(p).resolves.toEqual({
       ok: false,

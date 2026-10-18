@@ -6,9 +6,10 @@ import * as p from "@clack/prompts";
 import pc from "picocolors";
 import type { Command } from "commander";
 import {
-  loadCredentials,
+  loadCredentialsLayered,
   loadProjectConfig,
   resolveListing,
+  resolveProfileFor,
   loadListingFile,
   assertListingFiles,
   type ChannelRegistry,
@@ -62,9 +63,11 @@ export function registerListingCommand(
         .filter(Boolean);
       if (storeIds.length === 0) throw new Error("未指定渠道（--stores huawei[,xiaomi]）");
 
-      const { config } = await loadProjectConfig(opts.cwd ?? process.cwd());
-      const creds = loadCredentials();
-      const profile = creds.profiles[config.profile] ?? {};
+      const cwd = opts.cwd ?? process.cwd();
+      const { config } = await loadProjectConfig(cwd);
+      // 与 release/doctor 同链：项目级 .applift/credentials.json + profile 解析链（use 个人选择 > 项目默认）
+      const creds = loadCredentialsLayered(cwd);
+      const profile = creds.profiles[resolveProfileFor(cwd, config.profile)] ?? {};
 
       if (opts.dryRun) {
         const preview = storeIds.map((id) => ({ store: id, ...resolveListing(listing, id) }));
@@ -141,6 +144,8 @@ export function registerListingCommand(
           if (!opts.json) p.log.error(`${channel.label}: ${(e as Error).message}`);
         }
       }
+      // 任何渠道失败（未知渠道/不支持/接口异常）→ exit 1（CI 可判失败；JSON 形态仍完整输出）
+      if (results.some((r) => !r.ok)) process.exitCode = 1;
       if (opts.json) console.log(JSON.stringify({ stores: results }));
       else p.outro("listing 更新完成");
     });

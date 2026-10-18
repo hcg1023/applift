@@ -24,4 +24,5 @@ export * from "./history.js";
 
 export { sha256File } from "./util.js";
 export { humanizeError } from "./channels/shared/error-codes.js";
+export { redactText } from "./channels/shared/redact.js";
 export * from "./version/index.js";

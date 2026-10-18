@@ -116,4 +116,26 @@ describe("loadProjectConfig", () => {
       vi.resetModules();
     }
   });
+
+  it("README 最小示例（android 仅 stores，无 pkgName）合法——包名自动推导承诺", async () => {
+    const dir = tmpProject((d) => {
+      fs.writeFileSync(
+        path.join(d, "applift.config.ts"),
+        "export default { android: { stores: ['huawei'] } };",
+      );
+    });
+    const { config } = await loadProjectConfig(dir);
+    expect(config.android?.pkgName).toBeUndefined();
+    expect(Object.keys(config.android?.stores ?? {})).toEqual(["huawei"]);
+  });
+
+  it("字段类型错误 → 人话化校验失败信息（含字段路径，非原始 zod JSON）", async () => {
+    const dir = tmpProject((d) => {
+      fs.writeFileSync(
+        path.join(d, "applift.config.ts"),
+        "export default { android: { pkgName: 123, stores: [] } };",
+      );
+    });
+    await expect(loadProjectConfig(dir)).rejects.toThrow(/字段校验失败.*android\.pkgName/);
+  });
 });

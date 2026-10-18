@@ -3,6 +3,7 @@
  * headless：确认通过注入的 confirm 回调完成（CLI 用 clack/弹窗），core 不碰终端。
  * 插件：可选 PluginHost，在 plan/stage/submit 生命周期触发钩子（可拦截可修改）。
  */
+import path from "node:path";
 import type { Channel, ChannelContext, ReleasePlanEntry } from "./channel.js";
 import type { HistoryEvent } from "./history.js";
 import type { PluginHost } from "./plugin.js";
@@ -155,12 +156,13 @@ export async function runSubmit(
             label: channel.label,
             ok: false,
             submitError: "被插件跳过",
-            plan: planFor(plans, basePlans, channel.id),
+            plan: planFor(plans, basePlans, channel.id, ctx.artifactPath),
           });
           return;
         }
         effectiveCtx = r.value;
       }
+      let stagedRef: string | undefined;
       if (!options.skipStage && channel.capabilities.stage) {
         const stageResult = await channel.stage(effectiveCtx);
         if (!stageResult.ok) {
@@ -169,7 +171,7 @@ export async function runSubmit(
             label: channel.label,
             ok: false,
             stageError: stageResult.error,
-            plan: planFor(plans, basePlans, channel.id),
+            plan: planFor(plans, basePlans, channel.id, ctx.artifactPath),
           });
           input.historySink?.({
             channel: channel.id,
@@ -179,6 +181,8 @@ export async function runSubmit(
           });
           return;
         }
+        // stage 成功的 ref 透传给 submit（供渠道复用已上传草稿，如 googleplay 复用 versionCode 免重传）
+        stagedRef = stageResult.ref;
         input.historySink?.({
           channel: channel.id,
           action: "stage",
@@ -188,13 +192,13 @@ export async function runSubmit(
             plans.find((p) => p.channel === channel.id)?.artifactVersion || undefined,
         });
       }
-      const r = await channel.submit(effectiveCtx);
+      const r = await channel.submit(effectiveCtx, stagedRef);
       summary.push({
         channel: channel.id,
         label: channel.label,
         ok: r.ok,
         submitError: r.error,
-        plan: planFor(plans, basePlans, channel.id),
+        plan: planFor(plans, basePlans, channel.id, ctx.artifactPath),
       });
       input.historySink?.({
         channel: channel.id,
@@ -209,7 +213,7 @@ export async function runSubmit(
         label: channel.label,
         ok: false,
         submitError: (e as Error).message,
-        plan: planFor(plans, basePlans, channel.id),
+        plan: planFor(plans, basePlans, channel.id, ctx.artifactPath),
       });
       input.historySink?.({ channel: channel.id, action: "submit", ok: false });
     }
@@ -226,26 +230,34 @@ async function safePlan(channel: Channel, ctx: ChannelContext): Promise<ReleaseP
   try {
     return await channel.plan(ctx);
   } catch {
-    return fallbackPlan(channel.id);
+    return fallbackPlan(channel.id, ctx.artifactPath);
   }
 }
 
-/** plan 失败/被插件删除时的兜底条目（保 summary.plan 非可选契约） */
-function fallbackPlan(channelId: string): ReleasePlanEntry {
+/** 按产物扩展名推断平台（兜底条目用）：.ipa→ios，.hap→harmony，.apk/.aab 及其余→android */
+function platformOfArtifact(artifactPath: string): "android" | "ios" | "harmony" {
+  const ext = path.extname(artifactPath).toLowerCase();
+  if (ext === ".ipa") return "ios";
+  if (ext === ".hap") return "harmony";
+  return "android";
+}
+
+/** plan 失败/被插件删除时的兜底条目（保 summary.plan 非可选契约；平台按产物推断不再硬编码 android） */
+function fallbackPlan(channelId: string, artifactPath: string): ReleasePlanEntry {
   return {
     channel: channelId,
-    platform: "android",
+    platform: platformOfArtifact(artifactPath),
     artifactVersion: "",
     action: "stage+submit",
     afterApproval: "auto-publish",
   };
 }
-
 /** 汇总条目取计划：plan:before 改写后的 plans 优先，被插件删除时回退改写前快照，永不返回 undefined */
 function planFor(
   plans: ReleasePlanEntry[],
   base: Map<string, ReleasePlanEntry>,
   id: string,
+  artifactPath: string,
 ): ReleasePlanEntry {
-  return plans.find((p) => p.channel === id) ?? base.get(id) ?? fallbackPlan(id);
+  return plans.find((p) => p.channel === id) ?? base.get(id) ?? fallbackPlan(id, artifactPath);
 }

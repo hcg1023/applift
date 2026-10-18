@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { hmacSign, tsSeconds } from "./shared/sign.js";
+import { fileBlob } from "./shared/file-blob.js";
 import { sleep } from "../util.js";
 import type {
   Channel,
@@ -302,8 +303,8 @@ export class OppoChannel implements Channel {
     const form = new FormData();
     form.append("type", "apk");
     form.append("sign", sign);
-    // FormData 无法携带流式 body（Blob 需完整材料，undici 限制），整读内存代价已知（docs/REVIEW.md P2-3）
-    form.append("file", new Blob([fs.readFileSync(ctx.artifactPath)]), fileName);
+    // openAsBlob 惰性 Blob：按需分片读，零整读内存（旧运行时回退 readFile 整读）
+    form.append("file", await fileBlob(ctx.artifactPath), fileName);
     const upRes = await fetch(uploadUrl, {
       method: "POST",
       body: form,

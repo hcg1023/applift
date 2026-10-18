@@ -67,6 +67,38 @@ describe("全命令冒烟（非交互路径）", () => {
     expect(r.out).toMatch(/体检完成/);
   });
 
+  it("doctor：googleplay 缺 SA 凭据 → “或”型键整串报缺失且 exit 1；项目级凭据文件被识别", () => {
+    fs.writeFileSync(
+      path.join(proj, "applift.config.ts"),
+      `import { defineConfig } from "@applift/core";\nexport default defineConfig({ android: { pkgName: "com.doc.demo", stores: { googleplay: {} } } });\n`,
+    );
+    // ① profile 存在但 SA 键全缺：命中“或”型键分支（A 或 B 任一存在即过，全缺报整串）
+    fs.mkdirSync(path.join(proj, ".applift"), { recursive: true });
+    fs.writeFileSync(
+      path.join(proj, ".applift", "credentials.json"),
+      `{"profiles":{"default":{}}}`,
+    );
+    const miss = cli(["doctor"]);
+    expect(miss.code).toBe(1);
+    expect(miss.out).toContain("GOOGLEPLAY_SA_JSON 或 GOOGLEPLAY_SA_KEY");
+    // ② 项目级 .applift/credentials.json（HOME 隔离无全局凭据）写入 SA 键 → doctor 识别到
+    fs.writeFileSync(
+      path.join(proj, ".applift", "credentials.json"),
+      `{"profiles":{"default":{"GOOGLEPLAY_SA_JSON":"{}"}}}`,
+    );
+    const ok = cli(["doctor"]);
+    expect(ok.out).toContain("googleplay: 凭据齐全");
+    expect(ok.code).toBe(0);
+  });
+
+  it("listing --stores nope --json：未知渠道 → ok:false 且 exit 1", () => {
+    const r = cli(["listing", "--stores", "nope", "--brief", "简介", "--json"]);
+    expect(r.code).toBe(1);
+    const parsed = JSON.parse(r.out) as { stores: Array<{ ok: boolean; error: string }> };
+    expect(parsed.stores[0]?.ok).toBe(false);
+    expect(parsed.stores[0]?.error).toBe("未知渠道");
+  });
+
   it("history：空历史输出（HOME 隔离）+ --json 形态", () => {
     const r = cli(["history", "--json"]);
     expect(r.code).toBe(0);

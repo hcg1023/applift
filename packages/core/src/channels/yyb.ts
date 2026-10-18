@@ -76,6 +76,10 @@ export class YybChannel implements Channel {
     scheduled: true,
     status: true,
   };
+  /** 平台错误码 → 人话（ret 码：依据为本仓测试已固化的真实失败路径） */
+  readonly errorHints = {
+    "10010": "应用不存在（检查 YYB_APP_ID 与 user_id 是否匹配该应用）",
+  };
 
   /** stage 产物暂存（serial_number + md5），submit 按 appId 取回 */
   private readonly staged = new Map<string, { serialNumber: string; md5: string }>();

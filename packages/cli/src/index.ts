@@ -45,6 +45,7 @@ import {
   type ReleasePlanEntry,
   type ProjectConfig,
   humanizeError,
+  redactText,
   readArtifactVersion,
   readProjectVersions,
   planBump,
@@ -113,8 +114,9 @@ export function makeContext(
   };
 }
 
-/** clack 确认：计划表 → confirm（非 TTY/CI 环境自动拒绝，需 --yes） */
+/** clack 确认：计划表 → confirm。非 TTY 自动拒绝（防御兜底；正常路径由 release 入口门控提前报错） */
 async function confirmWithClack(plans: ReleasePlanEntry[]): Promise<boolean> {
+  if (!process.stdout.isTTY) return false;
   const rows = plans.map(
     (plan) =>
       `  ${pc.cyan(plan.platform.padEnd(7))} ${pc.bold(plan.channel.padEnd(12))} ${plan.action.padEnd(13)} ${
@@ -168,6 +170,8 @@ interface ReleaseOpts {
   autoArtifact: boolean;
   bump?: boolean | string;
   pre?: string;
+  /** 结构化输出（stdout 给机器，渲染抑制） */
+  json?: boolean;
 }
 
 /** 装载插件宿主与生效配置：c12 只 load 一次；config:resolved 钩子返回值即生效配置（P2-5） */
@@ -215,8 +219,9 @@ function warnDuplicateVersion(channel: string, artifactPath: string): void {
 }
 
 /**
- * bump 编排闭环（beta/release 的 --bump 与 config bump:true 共用）：
+ * bump 编排闭环（beta/release 的 --bump、config bump:true 与 version bump 命令共用）：
  * plan → 展示确认 → apply（写文件+changelog+commit+tag）→ 构建涉及平台。
+ * commit/tag 可关（version --no-commit/--no-tag）；不传 buildPlatforms 即不构建（version 命令不触发构建）。
  * 返回 storeName/writes 供产物版本校验；未启用返回 undefined。
  */
 /** bump 编排产物：供后续产物终验（--artifact 路径的版本比对） */
@@ -236,9 +241,17 @@ async function runBumpOrchestration(args: {
   buildPlatforms?: string[];
   /** 限定端（version 命令的 --platform） */
   platforms?: string[];
+  /** 代 commit（version 命令 --no-commit 透传；缺省开） */
+  commit?: boolean;
+  /** 代 tag（version 命令 --no-tag 透传；缺省开） */
+  tag?: boolean;
 }): Promise<BumpOutcome | undefined> {
   if (args.bump === false) return undefined;
   const level = typeof args.bump === "string" && args.bump !== "" ? args.bump : undefined;
+  // commit/tag 开关：version 命令 --no-commit/--no-tag 透传，缺省全开
+  const commit = args.commit !== false;
+  // tag 默认依赖 commit：--no-commit 时 tag 会指向不含版本变更的旧树，须显式保留才打
+  const tag = args.tag !== false && (commit || args.tag === true);
   const plan = planBump({
     cwd: args.cwd,
     framework: args.framework,
@@ -259,16 +272,21 @@ async function runBumpOrchestration(args: {
   // 疑似失败重跑 + --yes（CI 自动重试高发）+ 无显式 level → 拒绝：防止反复失败连烧版本号
   if (args.yes && plan.suspectRerun && !level)
     throw new Error(
-      `疑似失败重跑（${plan.reason}）——用 --no-bump 复用已 bump 版本，或显式指定 level/版本号确认继续`,
+      `疑似失败重跑（${plan.reason}）——为防 CI 反复重试烧版本号：显式指定 level/版本号确认继续，或 beta/release 改用 --no-bump 复用已 bump 版本`,
     );
   p.log.info(`versionCode 策略: ${plan.versionCodeNote}`);
+  // 非 TTY（CI/管道）无法完成 clack 交互确认（会挂起），fail-fast 引导 --yes
+  if (!args.yes && !process.stdout.isTTY)
+    throw new Error(
+      "非交互环境（CI/管道）bump 需 --yes 跳过确认；疑似失败重跑请显式指定 level 或版本号",
+    );
   if (!args.yes) {
     const go = await p.confirm({
-      message: `确认 bump 到 ${pc.bold(plan.nextVersion)} 并代 commit + tag？`,
+      message: `确认 bump 到 ${pc.bold(plan.nextVersion)}${commit ? " 并代 commit + tag" : ""}？`,
     });
     if (p.isCancel(go) || !go) throw new Error("已取消（未做任何变更）");
   }
-  const applied = applyBump(args.cwd, plan, args.framework, { commit: true, tag: true });
+  const applied = applyBump(args.cwd, plan, args.framework, { commit, tag });
   for (const f of applied.changedFiles) p.log.success(`已更新 ${path.relative(args.cwd, f)}`);
   for (const s of applied.skipped) p.log.warn(`跳过 ${s.platform}: ${s.reason}`);
   for (const w of applied.warnings) p.log.warn(w);
@@ -358,50 +376,22 @@ program
         return;
       }
 
-      // ---- bump：闭环（写文件 + changelog + commit + tag），不触发构建（构建是 beta/release 编排的事） ----
+      // ---- bump：复用 runBumpOrchestration 闭环（写文件 + changelog + commit + tag），不传 buildPlatforms 即不构建 ----
       const platforms = cmdOpts.platform
         ?.split(",")
         .map((s) => s.trim())
         .filter(Boolean);
-      const plan = planBump({
+      await runBumpOrchestration({
         cwd: cmdOpts.cwd,
         framework,
-        level,
+        config,
+        bump: level ?? true,
         pre: cmdOpts.pre,
-        versionCode: config.version?.versionCode as VersionCodeConfig | undefined,
+        yes: cmdOpts.yes,
         platforms,
+        commit: cmdOpts.commit,
+        tag: cmdOpts.tag,
       });
-      p.intro(pc.bgCyan(pc.black(" applift version · bump ")));
-      p.log.info(`锚点 tag: ${plan.anchorTag ?? pc.dim("无（首次，推断退化为 patch 兜底）")}`);
-      p.log.info(plan.reason);
-      for (const c of plan.currentVersions) {
-        const w = plan.writes.find((x) => x.platform === c.platform);
-        p.log.step(
-          `${c.platform}: ${pc.bold(c.versionName ?? "?")}${c.versionCode ? pc.dim(`+${c.versionCode}`) : ""} → ${pc.green(w?.versionName ?? "?")}${w ? pc.dim(`+${w.versionCode}`) : ""}${c.problem ? pc.yellow(` ⚠ ${c.problem}`) : ""}`,
-        );
-      }
-      // 疑似失败重跑 + --yes + 无显式 level → 拒绝（与 runBumpOrchestration 同规，防 CI 反复重试烧版本号）
-      if (cmdOpts.yes && plan.suspectRerun && !level)
-        throw new Error(
-          `疑似失败重跑（${plan.reason}）——各端已是最近 bump 的版本，如需继续请显式指定 level 或版本号`,
-        );
-      p.log.info(`versionCode 策略: ${plan.versionCodeNote}`);
-      if (!cmdOpts.yes) {
-        const go = await p.confirm({ message: `确认 bump 到 ${pc.bold(plan.nextVersion)}？` });
-        if (p.isCancel(go) || !go) throw new Error("已取消（未做任何变更）");
-      }
-      const applied = applyBump(cmdOpts.cwd, plan, framework, {
-        commit: cmdOpts.commit !== false,
-        // tag 默认依赖 commit：--no-commit 时 tag 会指向不含版本变更的旧树，须显式 --tag 才打
-        tag: cmdOpts.tag !== false && (cmdOpts.commit !== false || cmdOpts.tag === true),
-      });
-      for (const f of applied.changedFiles)
-        p.log.success(`已更新 ${path.relative(cmdOpts.cwd, f)}`);
-      for (const s of applied.skipped) p.log.warn(`跳过 ${s.platform}: ${s.reason}`);
-      for (const w of applied.warnings) p.log.warn(w);
-      if (applied.committed) p.log.success(`git commit: chore(release): ${plan.nextVersion}`);
-      if (applied.tagged) p.log.success(`git tag: v${plan.nextVersion}`);
-      p.log.info(pc.dim("推送：git push --follow-tags（applift 永不代 push）"));
     },
   );
 
@@ -754,7 +744,19 @@ program
       config,
       extraFrameworks: pluginFrameworks,
     } = await loadPluginHost(opts.cwd);
-    const global = loadGlobalConfig();
+    const { config: global, warning: globalWarning } = loadGlobalConfig();
+    const isJson = Boolean(opts.json);
+    // 全局配置损坏降级警告：--json 下走 stderr 保 stdout 纯净（AI/CI 消费契约）
+    if (globalWarning) {
+      if (isJson) process.stderr.write(`${pc.yellow(`⚠ ${globalWarning}`)}\n`);
+      else p.log.warn(globalWarning);
+    }
+    // 提审确认非交互门控（fail-fast）：--submit 且未授权（--yes / config.toml assumeYes）时，
+    // 无 TTY（CI/管道）或 --json 无法完成交互确认（挂起或被拒），入口即报原因与出路
+    if (opts.submit && !(opts.yes || global.assumeYes) && (!process.stdout.isTTY || isJson))
+      throw new Error(
+        "非交互环境（无 TTY 或 --json）下提审需显式授权：加 --yes，或在 ~/.applift/config.toml 设 assumeYes",
+      );
     // profile 优先级：--profile 旗标 > projects.json 个人选择（applift use）> 项目配置团队默认
     const creds = opts.dryRun
       ? {}
@@ -764,7 +766,6 @@ program
           KNOWN_CREDENTIAL_KEYS,
         );
 
-    const isJson = Boolean((opts as { json?: boolean }).json);
     // 框架探测（RN/Flutter/原生安卓/原生 iOS/原生鸿蒙）
     const framework = detectFrameworkWith(opts.cwd, pluginFrameworks);
     if (!isJson) {
@@ -924,7 +925,13 @@ program
     };
     const artifactVersionOf = () =>
       artifactPath ? readArtifactVersion(artifactPath)?.versionName : undefined;
+    // --json 的 ref 字段来源：core 汇总条目不带 ref，从 history 事件按渠道+动作取值；
+    // 取不到显式置 null（字段稳定出现，不被 JSON.stringify 丢弃）
+    const jsonRefs = new Map<string, string>();
+    const refOf = (channel: string, action: "stage" | "submit") =>
+      jsonRefs.get(`${channel}:${action}`) ?? jsonRefs.get(`${channel}:stage`) ?? null;
     const historySink = (e: HistoryEvent) => {
+      if (e.ref) jsonRefs.set(`${e.channel}:${e.action}`, e.ref);
       appendEntry({
         ts: Date.now(),
         cwd: opts.cwd,
@@ -963,7 +970,7 @@ program
               stage: summary.stage.map((e) => ({
                 channel: e.channel,
                 ok: e.ok,
-                ref: undefined,
+                ref: refOf(e.channel, "stage"),
                 error: e.stageError,
               })),
             },
@@ -1038,6 +1045,7 @@ program
             submit: summary.submit.map((e) => ({
               channel: e.channel,
               ok: e.ok,
+              ref: refOf(e.channel, "submit"),
               error: e.submitError ?? e.stageError,
             })),
           },
@@ -1063,9 +1071,9 @@ function renderSummary(
 ): void {
   for (const e of entries) {
     const raw = e.stageError ?? e.submitError;
-    // 错误码翻译：从渠道实例自带的 errorHints 取（平台内聚）
+    // 错误码翻译：从渠道实例自带的 errorHints 取（平台内聚）；先脱敏后人话化——错误码不受脱敏影响
     const hints = e.channel ? registry.get(e.channel)?.errorHints : undefined;
-    const err = raw ? humanizeError(hints, raw) : raw;
+    const err = raw ? humanizeError(hints, redactText(raw)) : raw;
     p.log.message(
       `  ${e.ok ? pc.green("✓") : pc.red("✗")} ${pc.bold(e.label)}${err ? pc.red(` — ${err}`) : ""}`,
     );
@@ -1098,7 +1106,7 @@ program
         "自动推导: 未识别到三端标识（app.json / build.gradle / AppScope/app.json5 / pbxproj 均未命中）",
       );
     let healthy = true;
-    const creds = loadCredentials();
+    const creds = loadCredentialsLayered(cmdOpts.cwd);
     const profileNames = Object.keys(creds.profiles);
     if (profileNames.length > 0)
       p.log.success(`凭据 profiles: ${pc.bold(profileNames.join(", "))}`);
@@ -1122,7 +1130,12 @@ program
         for (const id of stores) {
           const need = REQUIRED_KEYS_BY_CHANNEL[id];
           if (!need) continue;
-          const missing = need.filter((k) => !k.includes(" 或 ") && !activeProfile[k]);
+          // “或”型键（A 或 B）任一备选存在即过，全缺则整串报缺失；普通键直接查缺
+          const missing = need.filter((k) =>
+            k.includes(" 或 ")
+              ? !k.split(" 或 ").some((alt) => activeProfile[alt])
+              : !activeProfile[k],
+          );
           if (missing.length > 0) {
             p.log.error(
               `${pc.bold(id)}: 缺凭据 ${missing.join(", ")} — ${CHANNEL_HINTS[id] ?? ""}`,

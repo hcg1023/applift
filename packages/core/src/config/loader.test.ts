@@ -82,10 +82,11 @@ describe("resolveProfile", () => {
 });
 
 describe("loadGlobalConfig", () => {
-  it("文件不存在 → 全默认值", () => {
-    const cfg = loadGlobalConfig(tmpFile("nonexist"));
+  it("文件不存在 → 全默认值，无警告", () => {
+    const { config: cfg, warning } = loadGlobalConfig(tmpFile("nonexist"));
     expect(cfg.concurrency).toBe(4);
     expect(cfg.assumeYes).toBe(false);
+    expect(warning).toBeUndefined();
   });
 });
 
@@ -96,13 +97,14 @@ describe("CREDENTIALS_PATH 落在 ~/.applift", () => {
 });
 
 describe("loadGlobalConfig 容错", () => {
-  it("损坏 TOML 降级全默认值（stderr 警告不抛错）", () => {
+  it("损坏 TOML 降级全默认值（警告经返回值给出，不抛错不写流）", () => {
     const p = tmpFile("broken");
     fs.writeFileSync(p, "not [valid toml ===");
     try {
-      const cfg = loadGlobalConfig(p);
+      const { config: cfg, warning } = loadGlobalConfig(p);
       expect(cfg.concurrency).toBe(4);
       expect(cfg.assumeYes).toBe(false);
+      expect(warning).toContain("全局配置解析失败");
     } finally {
       fs.unlinkSync(p);
     }
@@ -115,7 +117,7 @@ describe("loadGlobalConfig 容错", () => {
       'defaultProfile = "company-b"\nconcurrency = 2\nuploadTimeoutMs = 1000\nassumeYes = true\n',
     );
     try {
-      const cfg = loadGlobalConfig(p);
+      const { config: cfg } = loadGlobalConfig(p);
       expect(cfg).toEqual({
         defaultProfile: "company-b",
         concurrency: 2,
@@ -130,7 +132,7 @@ describe("loadGlobalConfig 容错", () => {
 
 describe("loadCredentialsLayered 逐级凭据", () => {
   it("项目键就近优先，缺失键回退全局；同名 profile 逐键覆盖", () => {
-    const projDir = fs.mkdtempSync(path.join(os.tmpdir(), "qypub-layered-"));
+    const projDir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-layered-"));
     const localDir = path.join(projDir, ".applift");
     fs.mkdirSync(localDir);
     const globalFile = tmpFile("layered-global");
@@ -162,7 +164,7 @@ describe("loadCredentialsLayered 逐级凭据", () => {
     const globalFile = tmpFile("layered-global2");
     saveCredentials({ profiles: { default: { K: "v" } } }, globalFile);
     try {
-      const empty = fs.mkdtempSync(path.join(os.tmpdir(), "qypub-nolocal-"));
+      const empty = fs.mkdtempSync(path.join(os.tmpdir(), "applift-nolocal-"));
       const merged = loadCredentialsLayered(empty, globalFile);
       expect(merged.profiles.default).toEqual({ K: "v" });
       fs.rmSync(empty, { recursive: true, force: true });

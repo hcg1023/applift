@@ -43,6 +43,20 @@ describe("StoresSchema 规范化", () => {
   });
 });
 
+describe("ProjectConfigSchema 平台段", () => {
+  it("README 最小配置合法：android/harmony/ios 的标识字段全可缺省（detectBundleIds 自动推导）", () => {
+    const cfg = ProjectConfigSchema.parse({
+      android: { stores: ["huawei", { yyb: "appId值" }] },
+      harmony: {},
+      ios: {},
+    });
+    expect(cfg.android?.pkgName).toBeUndefined();
+    expect(Object.keys(cfg.android?.stores ?? {})).toEqual(["huawei", "yyb"]);
+    expect(cfg.harmony?.bundleName).toBeUndefined();
+    expect(cfg.ios?.scheme).toBeUndefined();
+  });
+});
+
 describe("ProjectConfigSchema android.stores 集成", () => {
   const base = { android: { pkgName: "com.example.app" } };
 

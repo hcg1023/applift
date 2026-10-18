@@ -14,7 +14,7 @@ import path from "node:path";
 import { afterEach, beforeAll, afterAll, describe, expect, it, vi } from "vitest";
 import type { ChannelContext } from "../channel.js";
 import { PgyerChannel } from "./pgyer.js";
-import { mockFetch } from "../test-utils.js";
+import { flushRealIo, mockFetch } from "../test-utils.js";
 
 const BUILD_KEY = "pgy-buildkey-flow-1";
 const SHORT_URL = "xY9zFlow";
@@ -112,6 +112,7 @@ describe("pgyer flow: stage 全流程（1247 → ok）出短链，无 submit", (
 
     // ---------- stage 全流程 ----------
     const stageP = channel.stage(ctx);
+    await flushRealIo();
     await vi.advanceTimersByTimeAsync(3_000); // 首轮轮询：1247
     await vi.advanceTimersByTimeAsync(3_000); // 次轮轮询：code 0 出短链
     const stage = await stageP;
@@ -178,6 +179,7 @@ describe("pgyer flow: stage 全流程（1247 → ok）出短链，无 submit", (
     ]);
     const { ctx } = makeCtx();
     const stageP = new PgyerChannel().stage(ctx);
+    await flushRealIo();
     await vi.advanceTimersByTimeAsync(3_000); // 首轮轮询即遇 2009
     const r = await stageP;
     expect(r.ok).toBe(false);

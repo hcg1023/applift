@@ -156,3 +156,64 @@ describe("googleplay flow: 同一渠道实例 internal stage → production subm
     expect(st).toEqual({ state: "approved", live: true });
   });
 });
+
+describe("googleplay submit 复用 stagedRef（editId:versionCode）", () => {
+  function reuseRoutes(editCount: { n: number }) {
+    return [
+      { match: "oauth2.googleapis.com/token", response: { json: { access_token: TOKEN } } },
+      {
+        match: /\/edits$/,
+        response: () => {
+          editCount.n++;
+          return { json: { id: `edit-${editCount.n}` } };
+        },
+      },
+      { match: "uploadType=media", response: { json: { versionCode: VERSION_CODE } } },
+      { match: "/tracks/internal", response: { json: { releases: [] } } },
+      { match: "/tracks/production", response: { json: { releases: [] } } },
+      { match: "/tracks/production", method: "PUT", response: { json: {} } },
+      { match: ":commit", response: { json: {} } },
+    ];
+  }
+
+  it("submit(ctx, stagedRef) 开新 edit 直接轨道分配——全程恰好 1 次上传", async () => {
+    const editCount = { n: 0 };
+    const fetchMock = mockFetch(reuseRoutes(editCount));
+    const channel = new GooglePlayChannel();
+    const { ctx } = makeCtx();
+
+    const stage = await channel.stage(ctx);
+    expect(stage).toEqual({ ok: true, ref: `edit-1:${VERSION_CODE}` });
+    const submit = await channel.submit(ctx, stage.ref);
+    expect(submit).toEqual({ ok: true, ref: `edit-2:${VERSION_CODE}` });
+
+    // 不变量：全程恰好 1 次二进制上传（submit 复用 versionCode，不重传）
+    expect(fetchMock.calls.filter((c) => c.url.includes("uploadType=media"))).toHaveLength(1);
+    // 两次动作各开独立 edit（stage 的 edit 已 commit，submit 需新 edit 引用同 versionCode）
+    expect(fetchMock.calls.filter((c) => c.url.endsWith("/edits"))).toHaveLength(2);
+    // production 轨道在新 edit 下分配该 versionCode 并 commit
+    const prodTrack = fetchMock.calls.find(
+      (c) => c.url.includes("/edits/edit-2/tracks/production") && c.method === "PUT",
+    )!;
+    expect(JSON.parse(prodTrack.body as string).releases).toEqual([
+      {
+        versionCodes: [VERSION_CODE],
+        status: "completed",
+        releaseNotes: [{ language: "zh-CN", text: "修复司机端定位漂移" }],
+      },
+    ]);
+    expect(fetchMock.calls.filter((c) => c.url.includes(":commit"))).toHaveLength(2);
+  });
+
+  it("submit 无 stagedRef（skip-stage 形态）仍走完整上传", async () => {
+    const editCount = { n: 0 };
+    const fetchMock = mockFetch(reuseRoutes(editCount));
+    const channel = new GooglePlayChannel();
+    const { ctx } = makeCtx();
+
+    const submit = await channel.submit(ctx);
+    expect(submit).toEqual({ ok: true, ref: `edit-1:${VERSION_CODE}` });
+    expect(fetchMock.calls.filter((c) => c.url.includes("uploadType=media"))).toHaveLength(1);
+    expect(fetchMock.calls.filter((c) => c.url.endsWith("/edits"))).toHaveLength(1);
+  });
+});

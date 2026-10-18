@@ -924,7 +924,7 @@ describe("OPPO version_code 解析分支补齐", () => {
     const os = await import("node:os");
     const fs = await import("node:fs");
     const path = await import("node:path");
-    const fakeSdk = fs.mkdtempSync(path.join(os.tmpdir(), "qypub-sdk-"));
+    const fakeSdk = fs.mkdtempSync(path.join(os.tmpdir(), "applift-sdk-"));
     const bt = path.join(fakeSdk, "build-tools", "34.0.0");
     fs.mkdirSync(bt, { recursive: true });
     // aapt2 假脚本：输出 versionCode

@@ -9,7 +9,7 @@ import type {
 } from "./channel.js";
 import type { HistoryEvent } from "./history.js";
 import { runStage, runSubmit, type PipelineInput, type PipelineSummary } from "./pipeline.js";
-import { PluginHost, type HookContext, type QypubPlugin } from "./plugin.js";
+import { PluginHost, type HookContext, type AppliftPlugin } from "./plugin.js";
 import { makeTestCtx } from "./test-utils.js";
 import { sleep } from "./util.js";
 
@@ -137,7 +137,7 @@ describe("runStage", () => {
   });
 
   it("stage:before 返回 false → 跳过该渠道（不发 stage、无汇总条目）并 emit warn", async () => {
-    const gate: QypubPlugin = {
+    const gate: AppliftPlugin = {
       name: "gate",
       "stage:before"(_ctx, hctx) {
         return hctx.channel === "b" ? false : undefined;
@@ -157,7 +157,7 @@ describe("runStage", () => {
   });
 
   it("stage:before 返回新 ctx → stage 与 plan 均收到改写后的上下文", async () => {
-    const rewrite: QypubPlugin = {
+    const rewrite: AppliftPlugin = {
       name: "rewrite",
       "stage:before"(ctx) {
         return { ...ctx, artifactPath: "/tmp/patched.apk", updateDescription: "内测" };
@@ -248,7 +248,7 @@ describe("runStage", () => {
       hctx: HookContext;
     }> = [];
     const notifies: Array<{ summary: PipelineSummary; hctx: HookContext }> = [];
-    const spy: QypubPlugin = {
+    const spy: AppliftPlugin = {
       name: "spy",
       "stage:after"(result, hctx) {
         afters.push({
@@ -305,7 +305,7 @@ describe("runSubmit", () => {
   it("正常路径：confirm 收到计划 → stage 成功后 submit，汇总 ok", async () => {
     const a = fakeChannel({ id: "a", artifactVersion: "3.1.4" });
     const confirmPlans: ReleasePlanEntry[][] = [];
-    const { input } = makePipelineInput([a], {
+    const { input, ctxs } = makePipelineInput([a], {
       confirm: async (plans) => {
         confirmPlans.push(plans);
         return true;
@@ -325,6 +325,8 @@ describe("runSubmit", () => {
     ]);
     expect(vi.mocked(a.stage).mock.calls).toHaveLength(1);
     expect(vi.mocked(a.submit).mock.calls).toHaveLength(1);
+    // stage 成功的 ref 作为第二参透传给 submit（渠道复用草稿免重传）
+    expect(a.submit).toHaveBeenCalledWith(ctxs.get("a")!.ctx, "a-stage-ref");
     expect(summary.stage).toEqual([]);
     expect(summary.submit[0]).toMatchObject({
       channel: "a",
@@ -336,7 +338,7 @@ describe("runSubmit", () => {
   });
 
   it("plan:before 修改计划 → confirm 与汇总均拿到改写后的计划", async () => {
-    const modifier: QypubPlugin = {
+    const modifier: AppliftPlugin = {
       name: "modifier",
       "plan:before"(plans) {
         return plans.map((p) => ({ ...p, notes: "改过的" }));
@@ -357,7 +359,7 @@ describe("runSubmit", () => {
   });
 
   it("plan:before 删除某渠道计划 → 汇总条目回退改写前计划，plan 永不为 undefined", async () => {
-    const pruner: QypubPlugin = {
+    const pruner: AppliftPlugin = {
       name: "pruner",
       "plan:before"(plans) {
         return plans.filter((p) => p.channel !== "b");
@@ -379,7 +381,7 @@ describe("runSubmit", () => {
   });
 
   it("plan:before 返回 false → 抛错且不触任何渠道", async () => {
-    const gate: QypubPlugin = {
+    const gate: AppliftPlugin = {
       name: "gate",
       "plan:before"() {
         return false;
@@ -397,7 +399,7 @@ describe("runSubmit", () => {
   });
 
   it("submit:before 返回 false → 抛错且未 confirm 未提审", async () => {
-    const gate: QypubPlugin = {
+    const gate: AppliftPlugin = {
       name: "gate",
       "submit:before"() {
         return false;
@@ -423,22 +425,32 @@ describe("runSubmit", () => {
     expect(vi.mocked(a.submit).mock.calls).toHaveLength(0);
   });
 
-  it("skipStage=true → 跳过 stage 直接 submit", async () => {
+  it("skipStage=true → 跳过 stage 直接 submit（stagedRef=undefined）", async () => {
     const a = fakeChannel({ id: "a" });
-    const { input } = makePipelineInput([a]);
+    const { input, ctxs } = makePipelineInput([a]);
     const summary = await runSubmit(input, { skipStage: true });
     expect(vi.mocked(a.stage).mock.calls).toHaveLength(0);
     expect(vi.mocked(a.submit).mock.calls).toHaveLength(1);
+    expect(a.submit).toHaveBeenCalledWith(ctxs.get("a")!.ctx, undefined);
     expect(summary.submit[0]?.ok).toBe(true);
   });
 
-  it("skipStage=false 且 capabilities.stage=false → 静默跳过 stage 直接 submit", async () => {
+  it("skipStage=false 且 capabilities.stage=false → 跳过 stage，submit 收 undefined stagedRef", async () => {
     const xiaomi = fakeChannel({ id: "xiaomi", canStage: false });
-    const { input } = makePipelineInput([xiaomi]);
+    const { input, ctxs } = makePipelineInput([xiaomi]);
     const summary = await runSubmit(input, { skipStage: false });
     expect(vi.mocked(xiaomi.stage).mock.calls).toHaveLength(0);
     expect(vi.mocked(xiaomi.submit).mock.calls).toHaveLength(1);
+    expect(xiaomi.submit).toHaveBeenCalledWith(ctxs.get("xiaomi")!.ctx, undefined);
     expect(summary.submit[0]?.ok).toBe(true);
+  });
+
+  it("plan 抛错时兜底计划平台按产物推断（.ipa → ios）", async () => {
+    const a = fakeChannel({ id: "a", planThrows: true });
+    const { input } = makePipelineInput([a]);
+    input.contexts.set("a", makeTestCtx({ artifactPath: "/tmp/a-release.ipa" }).ctx);
+    const summary = await runSubmit(input, { skipStage: true });
+    expect(summary.submit[0]?.plan.platform).toBe("ios");
   });
 
   it("stage 失败 → 短路不入 submit，错误记入 stageError", async () => {
@@ -491,7 +503,7 @@ describe("runSubmit", () => {
   });
 
   it("submit 阶段 stage:before 拦截 → 条目 ok:false、submitError=被插件跳过", async () => {
-    const gate: QypubPlugin = {
+    const gate: AppliftPlugin = {
       name: "gate",
       "stage:before"(_ctx, hctx) {
         return hctx.channel === "b" ? false : undefined;
@@ -552,7 +564,7 @@ describe("runSubmit", () => {
   it("submit:after 与 notify 收到同一份最终汇总", async () => {
     const afters: Array<{ summary: PipelineSummary; hctx: HookContext }> = [];
     const notifies: Array<{ summary: PipelineSummary; hctx: HookContext }> = [];
-    const spy: QypubPlugin = {
+    const spy: AppliftPlugin = {
       name: "spy",
       "submit:after"(summary, hctx) {
         afters.push({ summary, hctx });
