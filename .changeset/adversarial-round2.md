@@ -1,6 +1,6 @@
 ---
-'@applift/core': minor
-'@applift/cli': minor
+"@applift/core": minor
+"@applift/cli": minor
 ---
 
 对抗审查第二轮修复（0.6.0/0.5.0 之后合入）。
