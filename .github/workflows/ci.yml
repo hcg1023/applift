@@ -131,10 +131,11 @@ jobs:
 
       - name: Runtime Smoke on Bun (dist 直跑 + 裸工程配置)
         run: |
+          set -x
           bun --version
           bun packages/cli/dist/bin.mjs --version
           bun packages/cli/dist/bin.mjs channels --json > /dev/null
           D=$(mktemp -d) && cd "$D" && git init -q .
           printf 'import { defineConfig } from "@applift/cli";\nexport default defineConfig({ android: { stores: ["huawei"] } });\n' > applift.config.ts
-          OUT=$(bun "$GITHUB_WORKSPACE/packages/cli/dist/bin.mjs" doctor --cwd "$D" 2>&1)
+          OUT=$(bun "$GITHUB_WORKSPACE/packages/cli/dist/bin.mjs" doctor --cwd "$D" 2>&1); echo "$OUT"
           echo "$OUT" | grep -q huawei || { echo "bun 下配置装载失败：$OUT"; exit 1; }
