@@ -2,7 +2,8 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "paths": {
-      "@applift/core": ["../core/src/index.ts"]
+      "@applift/core": ["../core/src/index.ts"],
+      "@applift/core/plugins": ["../core/src/plugins/index.ts"]
     }
   },
   "include": ["src"]
