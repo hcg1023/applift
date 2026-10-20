@@ -8,9 +8,12 @@
 # 方式一：项目内（推荐，团队锁版本）
 pnpm add -D @applift/cli
 
-# 方式二：二进制（免 Node，CI/脚本机）
-# bun build --compile 后的单一可执行文件，或 npm 全局
+# 方式二：npm 全局
+npm i -g @applift/cli
 ```
+
+Node ≥20 与 Bun 双运行时支持（bun 直跑 dist 同一行为）；不做 bun --compile 单文件二进制分发——
+配置与插件深耦合工程 node_modules（`applift.config.ts` 的类型提示也需要工程内装包），裸机场景不存在。
 
 ## 5 分钟上手
 

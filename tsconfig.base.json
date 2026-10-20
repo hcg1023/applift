@@ -6,6 +6,7 @@
     "lib": ["ES2023"],
     "types": ["node"],
     "strict": true,
+    "resolveJsonModule": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "verbatimModuleSyntax": true,

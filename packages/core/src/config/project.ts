@@ -64,7 +64,7 @@ export async function loadProjectConfig(cwd: string): Promise<LoadedProjectConfi
   // 配置文件逐层向上（monorepo 子包可借用根配置）；未找到时用原 cwd（走 defaults）
   const cfgPath = findUp(cwd, "applift.config.ts");
   const cfgDir = cfgPath ? path.dirname(cfgPath) : cwd;
-  // 方案 B″（实验定稿）：bun 下 jiti 的 tryNative 默认启用——bun 原生加载 .ts 零转换（实测 compile 二进制内生效）；
+  // 方案 B″（实验定稿）：bun 下 jiti 的 tryNative 默认启用——bun 原生加载 .ts 零转换；
   // 注入 Bun.Transpiler 仅作原生路径失败时的 transform 兜底（tryNative 成功时不会被调用），消除 babel 外部文件隐患。
   // Node 运行时：不注入——c12 默认 jiti 路径，babel.cjs 在真实 node_modules 内无坑。
   type BunGlobal = {
@@ -91,7 +91,8 @@ export async function loadProjectConfig(cwd: string): Promise<LoadedProjectConfi
     packageJson: false,
     defaults: ProjectConfigSchema.parse({}),
   });
-  const parsed = ProjectConfigSchema.safeParse(result.config ?? {});
+  const raw = result.config ?? {};
+  const parsed = ProjectConfigSchema.safeParse(raw);
   if (!parsed.success) {
     // 人话化 zod issues：原始 JSON 数组对 CLI 用户不可读
     const details = parsed.error.issues
@@ -101,7 +102,6 @@ export async function loadProjectConfig(cwd: string): Promise<LoadedProjectConfi
   }
   const config = parsed.data;
   // 已删除配置键的迁移警告：zod 默认剥离未知键，不警告会静默失效（bump 不再执行/构建命令被忽略）
-  const raw = result.config ?? {};
   const rawRec = raw as Record<string, unknown>;
   const deprecated: Array<{ key: string; hint: string }> = [];
   if ("build" in rawRec)
@@ -120,5 +120,5 @@ export async function loadProjectConfig(cwd: string): Promise<LoadedProjectConfi
     const lines = deprecated.map((d) => `  - ${d.key}: ${d.hint}`).join("\n");
     process.stderr.write(`⚠ applift.config.ts 含已废弃配置键（将被忽略）：\n${lines}\n`);
   }
-  return { config, raw: result.config ?? {}, cwd: result.cwd ?? cwd };
+  return { config, raw, cwd: result.cwd ?? cwd };
 }

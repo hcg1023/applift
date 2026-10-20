@@ -101,3 +101,40 @@ jobs:
           node packages/cli/dist/bin.mjs --help > /dev/null
           node packages/cli/dist/bin.mjs channels --json > /dev/null
           node -e "import('./packages/core/dist/index.mjs').then(m => { if (typeof m.redactText !== 'function' || typeof m.runStage !== 'function') throw new Error('core dist import broken on node20') })"
+
+  # bun 运行时门禁（AGENTS.md 架构不变量 7：bun+node 双运行时，bun 以直跑 dist 形态支持）
+  # 冒烟：bun 直跑 dist + 裸工程 applift.config.ts 配置装载（jiti tryNative + Bun.Transpiler 路径）
+  runtime-bun:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js (build)
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Runtime Smoke on Bun (dist 直跑 + 裸工程配置)
+        run: |
+          bun --version
+          bun packages/cli/dist/bin.mjs --version
+          bun packages/cli/dist/bin.mjs channels --json > /dev/null
+          D=$(mktemp -d) && cd "$D" && git init -q .
+          printf 'import { defineConfig } from "@applift/cli";\nexport default defineConfig({ android: { stores: ["huawei"] } });\n' > applift.config.ts
+          OUT=$(bun "$GITHUB_WORKSPACE/packages/cli/dist/bin.mjs" doctor --cwd "$D" 2>&1)
+          echo "$OUT" | grep -q huawei || { echo "bun 下配置装载失败：$OUT"; exit 1; }
