@@ -35,11 +35,16 @@ function makeProj(stageOk = true, stageError = "桩渠道 stage 失败") {
   slot.__relStageError = stageError;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-rel-proj-"));
   fs.writeFileSync(
+    path.join(dir, "package.json"),
+    JSON.stringify({ name: "rel-demo", dependencies: { "react-native": "0.84.0" } }),
+  );
+  fs.writeFileSync(
     path.join(dir, "applift.config.ts"),
     [
+      "import { rnFramework } from '@applift/core';",
       "export default {",
       "  android: { pkgName: 'com.rel.demo', stores: { 'rel-stub': {} } },",
-      "  plugins: [{",
+      "  plugins: [rnFramework(), {",
       "    name: 'capture',",
       "    'channel:register': (registry) => {",
       "      if (registry.get('rel-stub')) return;",
@@ -98,7 +103,7 @@ describe("release L3 提审路径（桩渠道进程内）", () => {
       expect(JSON.stringify(json)).toContain("rel-stub");
       expect(slot.__relCaptured?.stageResults).toHaveLength(0); // dry-run 渠道零调用
       expect(fs.existsSync(histPath)).toBe(false); // 不落 history
-      expect(fs.readdirSync(dir).sort()).toEqual(["applift.config.ts", "demo.apk"]); // 不写任何文件
+      expect(fs.readdirSync(dir).sort()).toEqual(["applift.config.ts", "demo.apk", "package.json"]); // 不写任何文件
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -426,6 +431,10 @@ describe("release L3 提审路径（桩渠道进程内）", () => {
   it("无 --stores 且配置无 stores：默认渠道按平台+可提审过滤（pgyer 型与 ios 渠道不进默认集）", async () => {
     // 桩渠道矩阵：两安卓 submit 型 + 一 ios submit 型 + 一安卓 pgyer 型（submit=false）
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-rel-default-"));
+    fs.writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({ name: "rel-default-demo", dependencies: { "react-native": "0.84.0" } }),
+    );
     const mk = (id: string, platform: string, submit: boolean) =>
       [
         `registry.register({`,
@@ -440,8 +449,9 @@ describe("release L3 提审路径（桩渠道进程内）", () => {
     fs.writeFileSync(
       path.join(dir, "applift.config.ts"),
       [
+        "import { rnFramework } from '@applift/core';",
         "export default {",
-        "  plugins: [{",
+        "  plugins: [rnFramework(), {",
         "    name: 'matrix',",
         "    'channel:register': (registry) => {",
         `      if (registry.get('droid-a')) return;`,

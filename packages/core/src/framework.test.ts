@@ -4,13 +4,17 @@ import os from "node:os";
 import path from "node:path";
 import {
   detectBundleIds,
-  detectFramework,
   findArtifacts,
-  flutterAdapter,
-  nativeAndroidAdapter,
-  nativeIosAdapter,
+  resolveFramework,
   type FrameworkAdapter,
 } from "./framework.js";
+import {
+  flutterAdapter,
+  nativeAndroidAdapter,
+  nativeHarmonyAdapter,
+  nativeIosAdapter,
+  rnAdapter,
+} from "./plugins/frameworks.js";
 
 function tmpProject(setup: (dir: string) => void): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-fw-"));
@@ -18,7 +22,7 @@ function tmpProject(setup: (dir: string) => void): string {
   return dir;
 }
 
-describe("detectFramework", () => {
+describe("adapter detect（插件适配器的工程识别）", () => {
   it("识别 RN（package.json 含 react-native）", () => {
     const dir = tmpProject((d) => {
       fs.writeFileSync(
@@ -26,7 +30,7 @@ describe("detectFramework", () => {
         JSON.stringify({ dependencies: { "react-native": "0.84.0" } }),
       );
     });
-    expect(detectFramework(dir)?.id).toBe("rn");
+    expect(rnAdapter.detect(dir)).toBe(true);
   });
 
   it("识别 Flutter（pubspec.yaml 含 flutter sdk）", () => {
@@ -36,28 +40,24 @@ describe("detectFramework", () => {
         'name: demo\nenvironment:\n  sdk: ">=3.0.0"\ndependencies:\n  flutter:\n    sdk: flutter\n',
       );
     });
-    expect(detectFramework(dir)?.id).toBe("flutter");
+    expect(flutterAdapter.detect(dir)).toBe(true);
   });
 
   it("识别原生 Android（settings.gradle 且非 RN）", () => {
     const dir = tmpProject((d) => {
       fs.writeFileSync(path.join(d, "settings.gradle"), "include ':app'\n");
     });
-    expect(detectFramework(dir)?.id).toBe("native-android");
+    expect(nativeAndroidAdapter.detect(dir)).toBe(true);
   });
 
   it("识别原生鸿蒙（oh-package.json5）", () => {
     const dir = tmpProject((d) => {
       fs.writeFileSync(path.join(d, "oh-package.json5"), '{ "name": "entry" }');
     });
-    expect(detectFramework(dir)?.id).toBe("native-harmony");
+    expect(nativeHarmonyAdapter.detect(dir)).toBe(true);
   });
 
-  it("未知目录返回 null", () => {
-    expect(detectFramework(os.tmpdir())).toBeNull();
-  });
-
-  it("自定义适配器优先于内置（插件扩展点）", () => {
+  it("注册自定义 framework adapter 时 resolveFramework 生效（插件扩展点）", () => {
     const dir = tmpProject((d) => {
       fs.writeFileSync(path.join(d, "UnityProject.txt"), "x");
     });
@@ -66,9 +66,37 @@ describe("detectFramework", () => {
       label: "Unity",
       detect: (d) => fs.existsSync(path.join(d, "UnityProject.txt")),
       artifactPatterns: () => ["Build/*.apk"],
-      buildCommand: () => null,
     };
-    expect(detectFramework(dir, [custom])?.id).toBe("unity");
+    expect(resolveFramework(dir, [custom])?.id).toBe("unity");
+  });
+});
+
+describe("resolveFramework（声明式：插件注册是唯一来源）", () => {
+  it("未注册任何 adapter 返回 null（CLI 层负责提示声明）", () => {
+    const dir = tmpProject(() => {});
+    expect(resolveFramework(dir, [])).toBeNull();
+  });
+
+  it("注册单个 adapter 且 detect 通过 → 返回该 adapter", () => {
+    const dir = tmpProject((d) => {
+      fs.writeFileSync(
+        path.join(d, "package.json"),
+        JSON.stringify({ dependencies: { "react-native": "0.84.0" } }),
+      );
+    });
+    expect(resolveFramework(dir, [rnAdapter])?.id).toBe("rn");
+  });
+
+  it("注册单个 adapter 但 detect 不通过 → 抛错（声明与工程不符）", () => {
+    const dir = tmpProject((d) => {
+      fs.writeFileSync(path.join(d, "pubspec.yaml"), "name: demo\n");
+    });
+    expect(() => resolveFramework(dir, [rnAdapter])).toThrow(/不匹配/);
+  });
+
+  it("注册多个 adapter → 抛错（只能声明一个 framework）", () => {
+    const dir = tmpProject(() => {});
+    expect(() => resolveFramework(dir, [rnAdapter, flutterAdapter])).toThrow(/多个/);
   });
 });
 
@@ -116,7 +144,7 @@ describe("findArtifacts", () => {
 });
 
 describe("适配器 detect 分支补测", () => {
-  /** tmpProject 不自动清理；残留目录会被"未知目录返回 null"的两级子目录探测扫到，用完即删 */
+  /** tmpProject 不自动清理；残留目录可能干扰其他探测测试，用完即删 */
   function withTmpProject(setup: (dir: string) => void, run: (dir: string) => void): void {
     const dir = tmpProject(setup);
     try {

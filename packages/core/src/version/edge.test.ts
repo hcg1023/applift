@@ -10,7 +10,7 @@ import { applyBump, planBump } from "./bump.js";
 import { statusShort } from "./git.js";
 import { readProjectVersions, writeProjectVersions } from "./project.js";
 import { evalVersionCodeFormula } from "./version-code.js";
-import { rnAdapter, nativeAndroidAdapter } from "../framework.js";
+import { rnAdapter, nativeAndroidAdapter } from "../plugins/frameworks.js";
 
 let dir: string;
 beforeEach(() => {

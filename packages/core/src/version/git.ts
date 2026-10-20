@@ -71,3 +71,31 @@ export function statusShort(cwd: string): string[] {
     .map((l) => l.trimEnd())
     .filter(Boolean);
 }
+
+export interface TagResult {
+  tagged: boolean;
+  reason?: string;
+}
+
+/**
+ * release 分发成功后补 tag（tag = 实际已发布的正式版本；beta 不打 tag，追溯走 history）。
+ * - tag 已存在（多端发布，前一端已打）→ 跳过
+ * - dryRun / 无版本 / 非 git 仓库 → 不动、不炸（tag 失败不阻断发布主流程）
+ */
+export function tagReleaseVersion(
+  cwd: string,
+  version: string | undefined,
+  opts: { dryRun?: boolean } = {},
+): TagResult {
+  if (!version) return { tagged: false, reason: "无版本" };
+  if (opts.dryRun) return { tagged: false, reason: "dry-run" };
+  const tag = `v${version}`;
+  const exists = spawnSync("git", ["rev-parse", "-q", "--verify", `refs/tags/${tag}`], {
+    cwd,
+    encoding: "utf8",
+  });
+  if (exists.status === 0) return { tagged: false, reason: `tag ${tag} 已存在（前一端已发布）` };
+  const r = spawnSync("git", ["tag", tag], { cwd, encoding: "utf8" });
+  if (r.status !== 0) return { tagged: false, reason: `tag ${tag} 创建失败：${r.stderr.trim()}` };
+  return { tagged: true };
+}

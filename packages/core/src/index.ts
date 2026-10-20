@@ -17,8 +17,10 @@ export { AgcHarmonyChannel, getHarmonyAppId } from "./channels/agc-harmony.js";
 export { AscChannel } from "./channels/asc.js";
 export { GooglePlayChannel } from "./channels/googleplay.js";
 export * from "./pipeline.js";
+export * from "./update.js";
 export * from "./plugin.js";
 export * from "./framework.js";
+export * from "./plugins/frameworks.js";
 export * from "./listing.js";
 export * from "./history.js";
 

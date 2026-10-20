@@ -45,16 +45,30 @@ export function setProjectProfile(
   saveProjectProfileMap(map, filePath);
 }
 
+/** 生效 profile 的来源（诊断展示用；--profile 旗标在调用方，最高优先级，不经此函数） */
+export type ProfileSource = "applift use（个人）" | "项目配置 profile（团队默认）" | "默认 default";
+
 /**
- * 解析项目生效 profile：projects.json 个人选择 > 项目配置 profile（团队默认）> 'default' 全局默认。
- * CLI 的 --profile 旗标在调用方以 `opts.profile ?? resolveProfileFor(...)` 再盖一层（最高优先级）。
+ * 解析项目生效 profile 及其来源：projects.json 个人选择 > 项目配置 profile（团队默认）> 'default'。
+ * CLI 的 --profile 旗标在调用方以 `opts.profile ?? ...` 再盖一层（最高优先级，来源即"旗标"）。
  */
+export function resolveProfileSource(
+  cwd: string,
+  projectCfgProfile?: string,
+  filePath = PROJECTS_MAP_PATH,
+): { profile: string; source: ProfileSource } {
+  const mapped = loadProjectProfileMap(filePath)[path.resolve(cwd)];
+  if (mapped) return { profile: mapped, source: "applift use（个人）" };
+  if (projectCfgProfile)
+    return { profile: projectCfgProfile, source: "项目配置 profile（团队默认）" };
+  return { profile: "default", source: "默认 default" };
+}
+
+/** 解析项目生效 profile（只取名不问来源；来源用 resolveProfileSource） */
 export function resolveProfileFor(
   cwd: string,
   projectCfgProfile?: string,
   filePath = PROJECTS_MAP_PATH,
 ): string {
-  const mapped = loadProjectProfileMap(filePath)[path.resolve(cwd)];
-  if (mapped) return mapped;
-  return projectCfgProfile || "default";
+  return resolveProfileSource(cwd, projectCfgProfile, filePath).profile;
 }

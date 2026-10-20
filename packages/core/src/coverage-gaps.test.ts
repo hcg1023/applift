@@ -15,7 +15,8 @@ import { commitsSince, latestSemverTag, looseSemver } from "./version/git.js";
 import { renderChangelogSection, toChangelogEntries } from "./version/changelog.js";
 import { readArtifactVersion } from "./version/artifact.js";
 import { evalVersionCodeFormula } from "./version/version-code.js";
-import { detectBundleIds, detectFramework } from "./framework.js";
+import { detectBundleIds } from "./framework.js";
+import { suggestFramework } from "./plugins/frameworks.js";
 
 let dir: string;
 beforeEach(() => {
@@ -73,7 +74,7 @@ describe("version-code 一元负号深分支", () => {
 
 describe("framework detect 否定路径与 bundle 推导", () => {
   it("空目录：全部框架不命中，bundleIds 全空", () => {
-    expect(detectFramework(dir)).toBeNull();
+    expect(suggestFramework(dir)).toBeNull();
     expect(detectBundleIds(dir)).toEqual({
       android: undefined,
       harmony: undefined,
@@ -120,7 +121,7 @@ describe("planBump 组合分支（platforms/字段缺失/公式限定）", () =>
     rnDir();
     const plan = planBump({
       cwd: dir,
-      framework: detectFramework(dir, []) ?? null,
+      framework: null,
       level: "minor",
       platforms: ["android"],
     });
@@ -136,7 +137,7 @@ describe("planBump 组合分支（platforms/字段缺失/公式限定）", () =>
     );
     const plan = planBump({
       cwd: dir,
-      framework: detectFramework(dir, []) ?? null,
+      framework: null,
       level: "patch",
     });
     const ios = plan.writes.find((w) => w.platform === "ios");
@@ -145,7 +146,7 @@ describe("planBump 组合分支（platforms/字段缺失/公式限定）", () =>
 
   it("公式 platforms 不含该端 → 该端走 +1；非 git 目录无锚点无推断", () => {
     rnDir();
-    const framework = detectFramework(dir, []) ?? null;
+    const framework = null;
     const plan = planBump({
       cwd: dir,
       framework,

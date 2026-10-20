@@ -7,6 +7,7 @@ import {
   saveProjectProfileMap,
   setProjectProfile,
   resolveProfileFor,
+  resolveProfileSource,
   PROJECTS_MAP_PATH,
 } from "./profile-map.js";
 
@@ -35,6 +36,30 @@ describe("resolveProfileFor 优先级链", () => {
   it("项目配置也缺省（undefined/空串）→ 全局默认 default", () => {
     expect(resolveProfileFor("/proj/none", undefined, tmpMap("d1"))).toBe("default");
     expect(resolveProfileFor("/proj/none", "", tmpMap("d2"))).toBe("default");
+  });
+});
+
+describe("resolveProfileSource（profile 来源诊断）", () => {
+  it("projects.json 命中 → applift use（个人）", () => {
+    const map = tmpMap("src-use");
+    saveProjectProfileMap({ [path.resolve("/proj/a")]: "personal" }, map);
+    expect(resolveProfileSource("/proj/a", "company", map)).toEqual({
+      profile: "personal",
+      source: "applift use（个人）",
+    });
+  });
+
+  it("映射未命中但有项目配置 → 项目配置 profile（团队默认）", () => {
+    expect(resolveProfileSource("/proj/none", "company-b", tmpMap("src-team"))).toEqual({
+      profile: "company-b",
+      source: "项目配置 profile（团队默认）",
+    });
+  });
+
+  it("两级都缺 → 默认 default；resolveProfileFor 与其取值一致", () => {
+    const r = resolveProfileSource("/proj/x", undefined, tmpMap("src-def"));
+    expect(r).toEqual({ profile: "default", source: "默认 default" });
+    expect(resolveProfileFor("/proj/x", undefined, tmpMap("src-def"))).toBe("default");
   });
 });
 

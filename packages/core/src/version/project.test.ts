@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { readProjectVersions, writeProjectVersions } from "./project.js";
-import { rnAdapter } from "../framework.js";
+import { rnAdapter } from "../plugins/frameworks.js";
 
 let dir: string;
 beforeEach(() => {

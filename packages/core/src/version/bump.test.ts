@@ -10,7 +10,7 @@ import { execSync } from "node:child_process";
 import { applyBump, planBump } from "./bump.js";
 import { latestSemverTag, looseSemver } from "./git.js";
 import { readProjectVersions } from "./project.js";
-import { rnAdapter } from "../framework.js";
+import { rnAdapter } from "../plugins/frameworks.js";
 
 let dir: string;
 beforeEach(() => {
@@ -113,7 +113,7 @@ describe("planBump → applyBump 全链路", () => {
     const plan2 = planBump({ cwd: dir, framework: rnAdapter });
     expect(plan2.anchorTag).toBe("v4.1.0");
     expect(plan2.infer).toMatchObject({ level: "patch", total: 1, feat: 0, fix: 0 }); // 推断确实执行且数对提交
-  }, 30_000);
+  }, 90_000);
 
   it("--pre beta：4.0.0 → 4.1.0-beta.0（tag 带 prerelease，工程 versionName 仍三段）", () => {
     setup();

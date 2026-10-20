@@ -82,7 +82,13 @@ export async function runStage(input: PipelineInput): Promise<PipelineSummary> {
         await plugins.broadcast(
           "stage:after",
           { channel: channel.id, cwd: input.cwd },
-          { channel: channel.id, ok: r.ok, ref: r.ref, error: r.error },
+          {
+            channel: channel.id,
+            ok: r.ok,
+            ref: r.ref,
+            error: r.error,
+            artifactPath: effectiveCtx.artifactPath,
+          },
         );
       const plan = await safePlan(channel, effectiveCtx);
       summary.push({
@@ -200,6 +206,18 @@ export async function runSubmit(
           artifactVersion:
             plans.find((p) => p.channel === channel.id)?.artifactVersion || undefined,
         });
+        // --submit 一体路径的 stage 同样广播 stage:after（与 runStage 对称；否则基线上传类插件在该路径静默失效）
+        if (plugins)
+          await plugins.broadcast(
+            "stage:after",
+            { channel: channel.id, cwd: input.cwd },
+            {
+              channel: channel.id,
+              ok: true,
+              ref: stageResult.ref,
+              artifactPath: effectiveCtx.artifactPath,
+            },
+          );
       }
       const r = await channel.submit(effectiveCtx, stagedRef);
       summary.push({

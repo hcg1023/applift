@@ -37,11 +37,14 @@ function setupRn(withConfig = false) {
     path.join(dir, "android", "app", "build.gradle"),
     `android { defaultConfig { versionCode 4000; versionName "4.0.0" } }\n`,
   );
-  fs.writeFileSync(path.join(dir, "package.json"), `{"name":"a","version":"4.0.0"}\n`);
+  fs.writeFileSync(
+    path.join(dir, "package.json"),
+    `{"name":"a","version":"4.0.0","dependencies":{"react-native":"0.84.0"}}\n`,
+  );
   if (withConfig) {
     fs.writeFileSync(
       path.join(dir, "applift.config.ts"),
-      `import { defineConfig } from "@applift/core";\nexport default defineConfig({});\n`,
+      `import { defineConfig, rnFramework } from "@applift/core";\nexport default defineConfig({ plugins: [rnFramework()] });\n`,
     );
   }
   spawnSync("git", ["init", "-q"], { cwd: dir });
@@ -90,21 +93,6 @@ describe("CLI version show/bump 编排（spawn 级）", () => {
     }).stdout.trim();
     expect(last).toBe("feat: init"); // 未产生 chore(release) commit
   });
-
-  it("beta --no-bump 且无 beta 段配置：引导报错（编排否定路径）", () => {
-    setupRn(true);
-    // 最小凭据:无凭据时 creds 解析先于 beta 段引导报错(与 commands.test 同法)
-    fs.mkdirSync(path.join(dir, ".applift"), { recursive: true });
-    fs.writeFileSync(path.join(dir, ".applift", "credentials.json"), `{"profiles":{"default":{}}}`);
-    const r = cli(["beta", "--no-bump"]);
-    expect(r.code).not.toBe(0);
-    expect(r.out).toContain("beta 段");
-    // --no-bump 语义锁定：bump 闭环完全未发生（无 tag / 版本未写 / 无 CHANGELOG）
-    const tags = spawnSync("git", ["tag", "-l"], { cwd: dir, encoding: "utf8" }).stdout.trim();
-    expect(tags).toBe("");
-    expect(fs.readFileSync(path.join(dir, "package.json"), "utf8")).toContain('"version":"4.0.0"');
-    expect(fs.existsSync(path.join(dir, "CHANGELOG.md"))).toBe(false);
-  });
 });
 
 describe("bump 非交互门控（spawn 级，非 TTY）", () => {
@@ -125,24 +113,5 @@ describe("bump 非交互门控（spawn 级，非 TTY）", () => {
     const r = cli(["version", "bump"]);
     expect(r.code).toBe(0);
     expect(r.out).toContain("git tag: v4.0.1");
-  });
-});
-
-describe("config.build 构建命令覆盖（spawn 级）", () => {
-  it("beta android --bump：config.build.android 覆盖命令生效（优先于框架内置）", () => {
-    setupRn();
-    fs.writeFileSync(
-      path.join(dir, "applift.config.ts"),
-      `import { defineConfig } from "@applift/core";\nexport default defineConfig({ build: { android: "touch built-marker.txt" } });\n`,
-    );
-    // 最小凭据（default 空 profile）：bump+构建先于渠道流程，产物缺失在后续报错（本用例只验构建覆盖）
-    fs.mkdirSync(path.join(dir, ".applift"), { recursive: true });
-    fs.writeFileSync(path.join(dir, ".applift", "credentials.json"), `{"profiles":{"default":{}}}`);
-    // 新写文件先入 git：bump 代 commit 有「计划外未提交变更」护栏
-    spawnSync("git", ["add", "-A"], { cwd: dir });
-    spawnSync("git", ["commit", "-qm", "chore: test config"], { cwd: dir });
-    const r = cli(["beta", "android", "--bump", "--yes"]);
-    expect(r.out).toContain("▶ 构建 android: touch built-marker.txt");
-    expect(fs.existsSync(path.join(dir, "built-marker.txt"))).toBe(true);
   });
 });

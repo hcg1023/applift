@@ -20,6 +20,11 @@ let proj: string; // 假项目
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-home-"));
   proj = fs.mkdtempSync(path.join(os.tmpdir(), "applift-proj-"));
+  // RN 工程痕迹：声明式 framework 守卫的 detect 校验需要（发布命令统一要求插件声明）
+  fs.writeFileSync(
+    path.join(proj, "package.json"),
+    JSON.stringify({ name: "smoke", dependencies: { "react-native": "0.84.0" } }),
+  );
 });
 afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
@@ -147,6 +152,10 @@ describe("全命令冒烟（非交互路径）", () => {
   });
 
   it("release android --dry-run：无凭据产物也出计划（json）", () => {
+    fs.writeFileSync(
+      path.join(proj, "applift.config.ts"),
+      `import { defineConfig, rnFramework } from "@applift/core";\nexport default defineConfig({ plugins: [rnFramework()] });\n`,
+    );
     const r = cli(["release", "android", "--stores", "huawei", "--dry-run", "--json"]);
     expect(r.code).toBe(0);
     const plan = JSON.parse(r.out) as { dryRun?: boolean };
@@ -154,6 +163,10 @@ describe("全命令冒烟（非交互路径）", () => {
   });
 
   it("beta android：缺凭据/产物 → 人话引导", () => {
+    fs.writeFileSync(
+      path.join(proj, "applift.config.ts"),
+      `import { defineConfig, rnFramework } from "@applift/core";\nexport default defineConfig({ plugins: [rnFramework()] });\n`,
+    );
     const r = cli(["beta", "android"]);
     expect(r.out).toMatch(/凭据|产物|构建/);
   });
@@ -170,9 +183,15 @@ describe("全命令冒烟（非交互路径）", () => {
   });
 
   it("version：空目录 → 未识别框架兜底提示", () => {
-    const r = cli(["version"]);
-    expect(r.code).toBe(1); // 空目录无版本文件 = 明确失败（引导），不是静默成功
-    expect(r.out).toMatch(/版本文件/);
+    // beforeEach 给 proj 放了 RN 痕迹（守卫校验用）；空目录语义用独立子目录验证
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), "applift-empty-"));
+    try {
+      const r = cli(["version"], empty);
+      expect(r.code).toBe(1); // 空目录无版本文件 = 明确失败（引导），不是静默成功
+      expect(r.out).toMatch(/版本文件/);
+    } finally {
+      fs.rmSync(empty, { recursive: true, force: true });
+    }
   });
 });
 
@@ -190,6 +209,10 @@ describe("业务流程：护栏②同渠道同版本重复提交警告（真触�
     fs.mkdirSync(path.join(dir, ".applift"), { recursive: true });
     fs.writeFileSync(path.join(dir, ".applift", "credentials.json"), `{"profiles":{"default":{}}}`);
     // history：agc 渠道已成功发过同版本
+    fs.writeFileSync(
+      path.join(proj, "applift.config.ts"),
+      `import { defineConfig, rnFramework } from "@applift/core";\nexport default defineConfig({ plugins: [rnFramework()] });\n`,
+    );
     fs.writeFileSync(
       path.join(dir, ".applift", "history.jsonl"),
       `${JSON.stringify({ ts: 1, channel: "agc", action: "submit", artifactSha256: "x", ok: true, cwd: proj, artifactVersion: "4.1.0" })}\n`,
@@ -210,115 +233,43 @@ describe("业务流程：护栏②同渠道同版本重复提交警告（真触�
     expect(r2.out).not.toContain("已提交过版本");
   });
 });
-describe("业务流程：beta --bump 一条龙编排（bump → 构建 → 产物探测 → 渠道发布尝试）", () => {
-  it("假构建命令串通全管道：版本写回、tag、构建产物生成、渠道因缺凭据止步", () => {
-    // 伪 RN 工程：build:test 脚本“构建”= 落一个 apk 文件
+describe("业务流程：外部构建产物 → beta 发版（applift 不接管构建）", () => {
+  it("外部构建产物就位 → beta 直接发版：产物探测 + 渠道止步于凭据（applift 不接管构建）", () => {
+    // 项目已自行构建（产物落盘）；applift beta 只做：探测产物 → 渠道发布尝试（无凭据止步）
     const apkDir = path.join(proj, "android", "app", "build", "outputs", "apk", "release");
-    fs.mkdirSync(path.join(proj, "android", "app"), { recursive: true });
-    fs.writeFileSync(
-      path.join(proj, "android", "app", "build.gradle"),
-      `defaultConfig { versionCode 4000; versionName "4.0.0" }\n`,
-    );
+    fs.mkdirSync(apkDir, { recursive: true });
+    fs.writeFileSync(path.join(apkDir, "app-release.apk"), "fake-apk");
     fs.writeFileSync(
       path.join(proj, "package.json"),
       JSON.stringify({
-        name: "e2e",
+        name: "ext-build",
         version: "4.0.0",
         dependencies: { "react-native": "0.76.0" },
-        scripts: {
-          "build:test": `node -e "require('fs').mkdirSync('${apkDir}',{recursive:true});require('fs').writeFileSync('${apkDir}/app-release.apk','fake')" --`,
-        },
       }),
     );
     fs.writeFileSync(
       path.join(proj, "applift.config.ts"),
-      `import { defineConfig } from "@applift/core";\nexport default defineConfig({ beta: { pgyer: { platforms: ["android"] } } });\n`,
+      `import { defineConfig, rnFramework } from "@applift/core";\nexport default defineConfig({ plugins: [rnFramework()], beta: { pgyer: { platforms: ["android"] } } });\n`,
     );
-    const g = (cmd: string) => spawnSync("sh", ["-c", cmd], { cwd: proj, encoding: "utf8" });
-    g("git init -q && git config user.email t@t && git config user.name t");
-    g("git add -A && git commit -qm 'feat: 初始功能'");
-
-    const r = cli(["beta", "--bump", "--yes"]);
-
-    // 编排顺序全验证：① 版本写回（推断 feat → minor）
-    expect(fs.readFileSync(path.join(proj, "package.json"), "utf8")).toContain(
-      '"version": "4.0.1"',
-    );
-    expect(fs.readFileSync(path.join(proj, "android", "app", "build.gradle"), "utf8")).toContain(
-      'versionName "4.0.1"',
-    );
-    // ② commit + tag
-    expect(g("git tag -l").stdout).toContain("v4.0.1");
-    expect(g("git log --format=%s -1").stdout).toContain("chore(release): 4.0.1");
-    // ③ 构建已触发（产物由 build:test 脚本生成）
-    expect(fs.existsSync(path.join(apkDir, "app-release.apk"))).toBe(true);
-    // ④ CHANGELOG
-    expect(fs.readFileSync(path.join(proj, "CHANGELOG.md"), "utf8")).toContain("## [4.0.1]");
-    // ⑤ 渠道止步于凭据（隔离 HOME 无 credentials.json），编排不静默吞错
-    expect(r.out).toMatch(/pgyer\(android\)|凭据/);
+    const r = cli(["beta", "--yes"]);
+    expect(r.out).toMatch(/pgyer\(android\)|凭据/); // 探测到产物并进入渠道流程
   }, 120_000);
 
-  it("构建失败 → 中止且不进发布（版本已 bump + tag 已打，渠道零调用）", () => {
-    fs.mkdirSync(path.join(proj, "android", "app"), { recursive: true });
-    fs.writeFileSync(
-      path.join(proj, "android", "app", "build.gradle"),
-      `defaultConfig { versionCode 4000; versionName "4.0.0" }\n`,
-    );
+  it("无产物 → beta 引导先构建（外部构建模型的缺产物路径）", () => {
     fs.writeFileSync(
       path.join(proj, "package.json"),
       JSON.stringify({
-        name: "e2e-fail",
+        name: "no-art",
         version: "4.0.0",
         dependencies: { "react-native": "0.76.0" },
-        scripts: { "build:test": `node -e "process.exit(1)" --` },
       }),
     );
     fs.writeFileSync(
       path.join(proj, "applift.config.ts"),
-      `import { defineConfig } from "@applift/core";\nexport default defineConfig({ beta: { pgyer: { platforms: ["android"] } } });\n`,
+      `import { defineConfig, rnFramework } from "@applift/core";\nexport default defineConfig({ plugins: [rnFramework()], beta: { pgyer: { platforms: ["android"] } } });\n`,
     );
-    const g = (cmd: string) => spawnSync("sh", ["-c", cmd], { cwd: proj, encoding: "utf8" });
-    g("git init -q && git config user.email t@t && git config user.name t");
-    g("git add -A && git commit -qm 'chore: init'");
-
-    const r = cli(["beta", "--bump", "--yes"]);
+    const r = cli(["beta", "--yes"]);
     expect(r.code).not.toBe(0);
-    expect(r.out).toMatch(/构建失败/);
-    expect(r.out).not.toContain("内测多渠道并行发布"); // 构建失败即中止，渠道零触达
-    expect(g("git tag -l").stdout).toContain("v4.0.1"); // bump 先行已完成（记录尝试）
-  }, 120_000);
-
-  it("config beta.bump:true 默认开启：无 --bump 旗标同样走 bump 闭环", () => {
-    const apkDir = path.join(proj, "android", "app", "build", "outputs", "apk", "release");
-    fs.mkdirSync(path.join(proj, "android", "app"), { recursive: true });
-    fs.writeFileSync(
-      path.join(proj, "android", "app", "build.gradle"),
-      `defaultConfig { versionCode 4000; versionName "4.0.0" }\n`,
-    );
-    fs.writeFileSync(
-      path.join(proj, "package.json"),
-      JSON.stringify({
-        name: "e2e-cfg",
-        version: "4.0.0",
-        dependencies: { "react-native": "0.76.0" },
-        scripts: {
-          "build:test": `node -e "require('fs').mkdirSync('${apkDir}',{recursive:true});require('fs').writeFileSync('${apkDir}/app-release.apk','fake')" --`,
-        },
-      }),
-    );
-    fs.writeFileSync(
-      path.join(proj, "applift.config.ts"),
-      `import { defineConfig } from "@applift/core";\nexport default defineConfig({ beta: { bump: true, pgyer: { platforms: ["android"] } } });\n`,
-    );
-    const g = (cmd: string) => spawnSync("sh", ["-c", cmd], { cwd: proj, encoding: "utf8" });
-    g("git init -q && git config user.email t@t && git config user.name t");
-    g("git add -A && git commit -qm 'feat: x'");
-
-    const r = cli(["beta", "--yes"]); // 无 --bump 旗标：config 默认开
-    expect(fs.readFileSync(path.join(proj, "package.json"), "utf8")).toContain(
-      '"version": "4.0.1"',
-    );
-    expect(g("git tag -l").stdout).toContain("v4.0.1");
-    expect(r.out).toMatch(/pgyer|凭据/); // 编排走到渠道
+    expect(r.out).toMatch(/凭据|产物|构建/); // 外部模型否定路径：凭据/产物缺失均给出明确引导
   }, 120_000);
 });

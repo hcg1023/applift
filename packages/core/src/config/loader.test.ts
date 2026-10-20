@@ -81,6 +81,47 @@ describe("resolveProfile", () => {
   });
 });
 
+describe("resolveProfile env 覆盖（优先级公理的 env 层）", () => {
+  it("APPLIFT_* 前缀 > profile 文件值；裸 knownKey 次之；未知裸键不捡", () => {
+    const file = tmpFile("env-override");
+    saveCredentials(
+      { profiles: { default: { PGYER_API_KEY: "file-key", AGC_CLIENT_ID: "file-agc" } } },
+      file,
+    );
+    const saved = { ...process.env };
+    process.env.APPLIFT_PGYER_API_KEY = "env-applift";
+    process.env.AGC_CLIENT_ID = "env-bare";
+    process.env.SOME_RANDOM_SECRET = "noise";
+    try {
+      const merged = resolveProfile(loadCredentials(file), "default", [
+        "PGYER_API_KEY",
+        "AGC_CLIENT_ID",
+      ]);
+      expect(merged.PGYER_API_KEY).toBe("env-applift"); // APPLIFT_* 最高
+      expect(merged.AGC_CLIENT_ID).toBe("env-bare"); // 裸键在 knownKeys 内 → 覆盖
+      expect(merged.SOME_RANDOM_SECRET).toBeUndefined(); // 未知裸键不误吸
+    } finally {
+      for (const k of ["APPLIFT_PGYER_API_KEY", "AGC_CLIENT_ID", "SOME_RANDOM_SECRET"])
+        delete process.env[k];
+      Object.assign(process.env, saved);
+      fs.unlinkSync(file);
+    }
+  });
+
+  it("未提供 knownKeys 时裸键不认，仅 APPLIFT_* 生效（避免误吸无关变量）", () => {
+    const file = tmpFile("env-nokeys");
+    saveCredentials({ profiles: { default: { PGYER_API_KEY: "file-key" } } }, file);
+    process.env.PGYER_API_KEY = "env-bare";
+    try {
+      const merged = resolveProfile(loadCredentials(file), "default");
+      expect(merged.PGYER_API_KEY).toBe("file-key");
+    } finally {
+      delete process.env.PGYER_API_KEY;
+      fs.unlinkSync(file);
+    }
+  });
+});
+
 describe("loadGlobalConfig", () => {
   it("文件不存在 → 全默认值，无警告", () => {
     const { config: cfg, warning } = loadGlobalConfig(tmpFile("nonexist"));

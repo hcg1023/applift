@@ -21,6 +21,7 @@ import type { PipelineSummary } from "./pipeline.js";
 import type { ProjectConfig, GlobalConfig } from "./config/schema.js";
 import type { ChannelRegistry } from "./channel.js";
 import type { FrameworkAdapter } from "./framework.js";
+import type { UpdateProvider } from "./update.js";
 
 export interface HookContext {
   /** 触发钩子的渠道 id（channel 级钩子才有） */
@@ -36,8 +37,10 @@ export interface AppliftPlugin {
     ctx: HookContext,
   ): Promise<ProjectConfig | void> | ProjectConfig | void;
   "channel:register"?(registry: ChannelRegistry, ctx: HookContext): Promise<void> | void;
-  /** 注册自定义框架适配器（detect/artifactPatterns/buildCommand——扩展新框架的入口，与渠道扩展对称） */
+  /** 注册自定义框架适配器（detect/artifactPatterns——扩展新框架的入口，与渠道扩展对称） */
   "framework:register"?(adapters: FrameworkAdapter[], ctx: HookContext): Promise<void> | void;
+  /** 注册热更能力 provider（beta/release 投递路由的消费方，与框架/渠道扩展对称） */
+  "update:register"?(providers: UpdateProvider[], ctx: HookContext): Promise<void> | void;
   "plan:before"?(
     plans: ReleasePlanEntry[],
     ctx: HookContext,
@@ -47,7 +50,7 @@ export interface AppliftPlugin {
     ctx: HookContext,
   ): Promise<ChannelContext | false | void> | ChannelContext | false | void;
   "stage:after"?(
-    result: { channel: string; ok: boolean; ref?: string; error?: string },
+    result: { channel: string; ok: boolean; ref?: string; error?: string; artifactPath?: string },
     ctx: HookContext,
   ): Promise<void> | void;
   "submit:before"?(

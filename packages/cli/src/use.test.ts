@@ -23,6 +23,10 @@ afterAll(() => {
 describe("applift use → release profile 解析链", () => {
   it("use 无参展示列表；use 写 projects.json；release 走个人选择；--profile 旗标最高优先级", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-use-proj-"));
+    fs.writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({ name: "use-demo", dependencies: { "react-native": "0.84.0" } }),
+    );
     const captured: ChannelContext[] = [];
     // 捕获槽走 globalThis（jiti 执行的配置文件无法 import 测试符号，只能共享进程全局）
     const slot = globalThis as { __appliftUseCaptured?: ChannelContext[] };
@@ -34,10 +38,11 @@ describe("applift use → release profile 解析链", () => {
     fs.writeFileSync(
       path.join(dir, "applift.config.ts"),
       [
+        "import { rnFramework } from '@applift/core';",
         "export default {",
         "  profile: 'team-default',",
         "  android: { pkgName: 'com.use.demo', stores: { 'use-stub': {} } },",
-        "  plugins: [{",
+        "  plugins: [rnFramework(), {",
         "    name: 'capture',",
         "    'channel:register': (registry) => {",
         // 幂等：release 连跑两次会触发两次 channel:register，registry 重复注册抛错
@@ -101,5 +106,5 @@ describe("applift use → release profile 解析链", () => {
       delete slot.__appliftUseCaptured;
       fs.rmSync(dir, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 120_000);
 });

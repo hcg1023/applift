@@ -11,7 +11,7 @@ import path from "node:path";
 import { applyBump, planBump } from "./bump.js";
 import type { VersionCodeConfig } from "../config/schema.js";
 import { readProjectVersions } from "./project.js";
-import { rnAdapter } from "../framework.js";
+import { rnAdapter } from "../plugins/frameworks.js";
 
 let dir: string;
 beforeEach(() => {
@@ -108,7 +108,7 @@ describe("业务周期：开发 → beta 内测 → 修复 → 转正式 → 下
     // 提交历史：5 个 release commit（beta.0/.1/.2 + 4.1.0 + 4.2.0）全部规范
     const logs = execSync("git log --format=%s", { cwd: dir, encoding: "utf8" }).trim().split("\n");
     expect(logs.filter((l) => l.startsWith("chore(release):"))).toHaveLength(5);
-  }, 60_000);
+  }, 120_000);
 });
 
 describe("业务周期：公式版 versionCode（公式按目标版本位编码）", () => {

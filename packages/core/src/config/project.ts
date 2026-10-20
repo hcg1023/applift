@@ -25,7 +25,25 @@ function appliftAlias(): Record<string, string> {
       ? distEntry
       : path.join(path.dirname(path.dirname(distEntry)), "src", "index.ts");
     if (!fs.existsSync(coreEntry)) return {};
-    return { "@applift/core": coreEntry, "@applift/cli": coreEntry };
+    const alias: Record<string, string> = {
+      "@applift/core": coreEntry,
+      "@applift/cli": coreEntry,
+    };
+    // 子路径导出（@applift/core/plugins）需显式映射：jiti 的包名别名不展开子路径
+    // （会拼到入口文件后成 dist/index.mjs/plugins，模块找不到）
+    try {
+      const distPlugins = fileURLToPath(import.meta.resolve("@applift/core/plugins"));
+      const pluginsEntry = fs.existsSync(distPlugins)
+        ? distPlugins
+        : path.join(path.dirname(coreEntry), "plugins", "index.ts");
+      if (fs.existsSync(pluginsEntry)) {
+        alias["@applift/core/plugins"] = pluginsEntry;
+        alias["@applift/cli/plugins"] = pluginsEntry;
+      }
+    } catch {
+      // 无 plugins 子路径导出（老版本布局）——仅主路径别名
+    }
+    return alias;
   } catch {
     return {}; // 解析失败（非预期布局）时退回目标工程自然解析
   }
@@ -82,5 +100,25 @@ export async function loadProjectConfig(cwd: string): Promise<LoadedProjectConfi
     throw new Error(`applift.config.ts 字段校验失败 → ${details}`);
   }
   const config = parsed.data;
+  // 已删除配置键的迁移警告：zod 默认剥离未知键，不警告会静默失效（bump 不再执行/构建命令被忽略）
+  const raw = result.config ?? {};
+  const rawRec = raw as Record<string, unknown>;
+  const deprecated: Array<{ key: string; hint: string }> = [];
+  if ("build" in rawRec)
+    deprecated.push({ key: "build", hint: "构建已回归项目自身（applift 不接管构建），请删除该键" });
+  if ("bump" in ((rawRec.beta as Record<string, unknown>) ?? {}))
+    deprecated.push({
+      key: "beta.bump",
+      hint: "改用 applift version bump 显式升版本（applift 不再代构建）",
+    });
+  if ("release" in rawRec && "bump" in ((rawRec.release as Record<string, unknown>) ?? {}))
+    deprecated.push({
+      key: "release.bump",
+      hint: "改用 applift version bump 显式升版本（applift 不再代构建）",
+    });
+  if (deprecated.length > 0) {
+    const lines = deprecated.map((d) => `  - ${d.key}: ${d.hint}`).join("\n");
+    process.stderr.write(`⚠ applift.config.ts 含已废弃配置键（将被忽略）：\n${lines}\n`);
+  }
   return { config, raw: result.config ?? {}, cwd: result.cwd ?? cwd };
 }

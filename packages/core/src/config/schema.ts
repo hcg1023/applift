@@ -73,8 +73,6 @@ export type Stores = z.infer<typeof StoresSchema>;
  * - testflight: App Store Connect 上传（ipa 进 TestFlight）
  */
 export const BetaConfigSchema = z.object({
-  /** 自动 version：true(走推断)| major/minor/patch/prerelease | <semver>；CLI --bump/--no-bump 覆盖 */
-  bump: z.union([z.boolean(), z.string()]).optional(),
   pgyer: z
     .object({
       platforms: z.array(z.enum(["android", "harmony", "ios"])).default(["android"]),
@@ -115,11 +113,6 @@ export const VersionConfigSchema = z.object({
 });
 export type VersionConfig = z.infer<typeof VersionConfigSchema>;
 
-/** 正式发版段的自动 version 开关（语义同 beta.bump） */
-export const ReleaseConfigSchema = z.object({
-  bump: z.union([z.boolean(), z.string()]).optional(),
-});
-export type ReleaseConfig = z.infer<typeof ReleaseConfigSchema>;
 export const ProjectConfigSchema = z.object({
   /** 项目显示名 */
   name: z.string().optional(),
@@ -149,15 +142,6 @@ export const ProjectConfigSchema = z.object({
       bundleId: z.string().optional(),
     })
     .optional(),
-  /** 构建命令（缺省用项目自带 npm scripts，见 pipeline 约定） */
-  build: z
-    .object({
-      android: z.string().optional(),
-      harmony: z.string().optional(),
-      harmonyApp: z.string().optional(),
-      ios: z.string().optional(),
-    })
-    .optional(),
   /** 产物目录覆盖（非标准工程）：每平台 glob 数组，优先于框架内置 pattern（桌面平台 + 插件自报平台经 catchall 收） */
   artifacts: z
     .object({
@@ -172,8 +156,6 @@ export const ProjectConfigSchema = z.object({
     .optional(),
   /** 版本管理（versionCode 策略等） */
   version: VersionConfigSchema.optional(),
-  /** 正式发版自动 version 开关 */
-  release: ReleaseConfigSchema.optional(),
   /** 内测分发（beta 无平台参数时的多渠道并行配置） */
   beta: BetaConfigSchema.optional(),
 });

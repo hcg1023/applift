@@ -139,3 +139,47 @@ describe("loadProjectConfig", () => {
     await expect(loadProjectConfig(dir)).rejects.toThrow(/字段校验失败.*android\.pkgName/);
   });
 });
+
+describe("已删除配置键的迁移警告", () => {
+  it("beta.bump / release.bump / build → stderr 警告且配置仍可加载（键被剥离）", async () => {
+    const dir = tmpProject((d) => {
+      fs.writeFileSync(
+        path.join(d, "applift.config.ts"),
+        [
+          "export default {",
+          "  build: { harmony: 'hvigorw' },",
+          "  beta: { bump: true },",
+          "  release: { bump: 'patch' },",
+          "};",
+        ].join("\n"),
+      );
+    });
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const { config } = await loadProjectConfig(dir);
+      expect(config.profile).toBe("default"); // 配置本体不受影响
+      const out = errSpy.mock.calls.flat().join(" ");
+      expect(out).toContain("beta.bump");
+      expect(out).toContain("release.bump");
+      expect(out).toContain("build");
+      expect(out).toContain("version bump");
+    } finally {
+      errSpy.mockRestore();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("无废弃键 → 无警告", async () => {
+    const dir = tmpProject((d) => {
+      fs.writeFileSync(path.join(d, "applift.config.ts"), "export default { name: 'x' };");
+    });
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await loadProjectConfig(dir);
+      expect(errSpy.mock.calls.flat().join(" ")).not.toContain("废弃");
+    } finally {
+      errSpy.mockRestore();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

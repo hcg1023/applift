@@ -9,7 +9,7 @@ import path from "node:path";
 import { execSync } from "node:child_process";
 import { applyBump, planBump } from "./bump.js";
 import { readProjectVersions, writeProjectVersions } from "./project.js";
-import { rnAdapter } from "../framework.js";
+import { rnAdapter } from "../plugins/frameworks.js";
 
 let dir: string;
 beforeEach(() => {

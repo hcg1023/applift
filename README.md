@@ -47,7 +47,7 @@ applift history                   # 谁在何时发了什么
 applift version                          # 各端版本实况(versionName/versionCode + 锚点 tag)
 applift version bump patch               # 写工程文件 + CHANGELOG + 代 commit + 代 tag v4.0.1
 applift version bump minor --pre beta    # 进入 prerelease:tag v4.1.0-beta.0,商店 versionName 仍 4.1.0
-applift beta --bump                      # 自动 version(git 推断)→ 重新构建 → 多渠道内测一条命令
+applift beta --yes                      # 多渠道内测一条命令（构建由项目完成，读最新产物 → 校验 → 分发）
 ````
 
 - 版本决定链:显式指定 > git conventional commits 推断(BREAKING/feat/fix)> patch 兜底;结果展示确认,不静默
@@ -56,6 +56,8 @@ applift beta --bump                      # 自动 version(git 推断)→ 重新�
 - push 永不代做,收尾提示 `git push --follow-tags`
 
 ## 配置
+
+**优先级公理（所有配置键同一条链，高 → 低）**：CLI flag > `APPLIFT_*` env > 个人（`applift use`）> 项目（`.applift/` + `applift.config.ts`）> 全局（`~/.applift/`）。`applift doctor` 会打印每个生效值来自哪一层。
 
 **凭据**（`~/.applift/credentials.json`，0600；项目 `.applift/` 同名文件逐键优先，私有仓可提交进仓库）：
 
@@ -70,14 +72,16 @@ applift beta --bump                      # 自动 version(git 推断)→ 重新�
 }
 ```
 
-**项目**（`applift.config.ts`，可全空——包名/框架自动推导）：
+**项目**（`applift.config.ts`，凭据/渠道可全空；**发布命令（beta/release）必须声明 framework 插件**，未声明会直接报错——版本读写等只读命令仍可自动探测）：
 
 ```ts
 import { defineConfig } from "@applift/core";
+import { rnFramework } from "@applift/core/plugins";
+
 export default defineConfig({
+  plugins: [rnFramework()], // 框架声明是发布的前提（rn/flutter/native-android/native-ios/native-harmony/electron/tauri）
   android: { stores: ["huawei", { yyb: "appId值" }] }, // 简写：数组/字符串/对象三种
   // artifacts: { ios: ['非标准/产物/路径/*.ipa'] },      // 仅非标工程需要
-  // plugins: [...],                                      // 见下
 });
 ```
 
@@ -98,7 +102,11 @@ profile 切换：`applift use <name>`（本机个人选择）或 `--profile`（�
 ## 插件（vite 风格）
 
 ```ts
+import { rnFramework, rnUpdate } from "@applift/core/plugins";
+
 plugins: [
+  rnFramework(), // 框架适配器（发布必声明；detect + 产物 pattern，不含构建命令——构建由项目负责）
+  rnUpdate({ harmony: 34166 }), // 热更：配置了 appId 的平台启用 OTA 路由与原生基线上传
   dingtalkNotify({ webhook: "..." }), // 官方：钉钉通知
   {
     name: "no-friday",
@@ -109,12 +117,25 @@ plugins: [
 ];
 ```
 
-8 个生命周期钩子（plan/stage/submit 前后可拦截可修改）。两个扩展点对称：
+10 个生命周期钩子（config:resolved / 三个 register / plan·stage·submit 前后可拦截可修改 / notify）。三个扩展点对称：
 
-| 扩展     | 接口                                               | 注册钩子               | 样板                           |
-| -------- | -------------------------------------------------- | ---------------------- | ------------------------------ |
-| 发布渠道 | `Channel`（5 方法+能力声明+错误码表）              | `'channel:register'`   | `examples/plugin-oss`          |
-| 项目框架 | `FrameworkAdapter`（detect/产物 pattern/构建命令） | `'framework:register'` | `examples/plugin-framework-qt` |
+| 扩展     | 接口                                                  | 注册钩子               | 样板                                     |
+| -------- | ----------------------------------------------------- | ---------------------- | ---------------------------------------- |
+| 发布渠道 | `Channel`（5 方法+能力声明+错误码表）                 | `'channel:register'`   | `examples/plugin-oss`                    |
+| 项目框架 | `FrameworkAdapter`（detect/产物 pattern）                  | `'framework:register'` | `examples/plugin-framework-qt`           |
+| 热更     | `UpdateProvider`（judge/publishToTest/promoteToProd） | `'update:register'`    | `packages/core/src/plugins/rn-update.ts` |
+
+### 热更（react-native-update / pushy）
+
+配置 `rnUpdate({ harmony: <appId> })` 后，`beta/release <platform>` 会先判定本次改动能否走热更（原生目录/原生依赖/补丁/构建配置 → 原生包；纯 JS → 热更；灰区 → uncertain），展示逐文件证据后由你拍板：
+
+```bash
+applift beta harmony --delivery ota        # 热更发测试通道（版本名 {ver}-patch.N，绑定测试包 major+1000）
+applift release harmony --delivery ota --rollout 20   # 测试通道最新热更 promote 到正式（重绑正式原生版本+灰度）
+```
+
+- 非交互（`--yes`/`--json`/无 TTY）用推荐值，uncertain 必须显式 `--delivery`
+- 原生发版时自动把产物上传为 pushy 基线（失败仅提醒，不阻断发布）
 
 平台枚举开放（含 windows/macos/linux），桌面商店（winget/Homebrew 等）与游戏商店均为纯插件扩展。
 

@@ -11,7 +11,7 @@ import {
   loadProjectProfileMap,
   resolveProfileFor,
   setProjectProfile,
-  detectFramework,
+  suggestFramework,
   detectBundleIds,
   readEntries,
   loadCredentialsLayered,
@@ -88,7 +88,7 @@ export function registerLifecycleCommands(
       p.intro(pc.bgCyan(pc.black(" applift init ")));
 
       // 1) 框架探测
-      const framework = detectFramework(cwd);
+      const framework = suggestFramework(cwd);
       if (framework) p.log.success(`框架识别: ${pc.bold(framework.label)}`);
       else p.log.warn("未识别框架（可继续，产物路径用 --artifact 指定）");
 

@@ -12,7 +12,7 @@ import {
   nativeIosAdapter,
   rnAdapter,
   tauriAdapter,
-} from "../framework.js";
+} from "../plugins/frameworks.js";
 import { readProjectVersions, writeProjectVersions } from "./project.js";
 let dir: string;
 beforeEach(() => {

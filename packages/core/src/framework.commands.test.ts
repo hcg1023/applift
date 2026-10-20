@@ -1,31 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
-  rnAdapter,
+  electronAdapter,
   flutterAdapter,
   nativeAndroidAdapter,
-  nativeIosAdapter,
   nativeHarmonyAdapter,
-} from "./framework.js";
+  nativeIosAdapter,
+  rnAdapter,
+  tauriAdapter,
+} from "./plugins/frameworks.js";
 
-describe("各适配器 buildCommand / artifactPatterns 全平台", () => {
-  it("rn：安卓/鸿蒙有构建命令，ipa 走导出流程（null）", () => {
-    expect(rnAdapter.buildCommand("android")).toEqual([
-      "npm",
-      "run",
-      "build:test",
-      "--",
-      "--platform",
-      "android",
-    ]);
-    expect(rnAdapter.buildCommand("harmony")).toEqual([
-      "npm",
-      "run",
-      "build:test",
-      "--",
-      "--platform",
-      "harmony",
-    ]);
-    expect(rnAdapter.buildCommand("ios")).toBeNull();
+describe("内置框架产物 pattern（构建命令只走 config.build，adapter 不携带）", () => {
+  it("rn：产物 pattern 按 RN 惯例（无内置构建命令，项目特化经 config.build）", () => {
     expect(rnAdapter.artifactPatterns("android")).toContain(
       "android/app/build/outputs/apk/release/*-release.apk",
     );
@@ -33,20 +18,7 @@ describe("各适配器 buildCommand / artifactPatterns 全平台", () => {
     expect(rnAdapter.artifactPatterns("harmony")[0]).toContain("entry-*-signed.hap");
   });
 
-  it("flutter：三平台 flutter build 命令与产物路径", () => {
-    expect(flutterAdapter.buildCommand("android")).toEqual([
-      "flutter",
-      "build",
-      "apk",
-      "--release",
-    ]);
-    expect(flutterAdapter.buildCommand("ios")).toEqual(["flutter", "build", "ipa", "--release"]);
-    expect(flutterAdapter.buildCommand("harmony")).toEqual([
-      "flutter",
-      "build",
-      "hap",
-      "--release",
-    ]);
+  it("flutter：三平台产物路径", () => {
     expect(flutterAdapter.artifactPatterns("android")).toEqual([
       "build/app/outputs/flutter-apk/app-release.apk",
     ]);
@@ -57,34 +29,19 @@ describe("各适配器 buildCommand / artifactPatterns 全平台", () => {
     ); // flutter_flutter_ohos 工程结构
   });
 
-  it("native-android：gradlew assembleRelease", () => {
-    expect(nativeAndroidAdapter.buildCommand("android")).toEqual(["./gradlew", "assembleRelease"]);
-    expect(nativeAndroidAdapter.artifactPatterns("ios")).toEqual([
+  it("native-android：apk 产物路径", () => {
+    expect(nativeAndroidAdapter.artifactPatterns("android")).toEqual([
       "app/build/outputs/apk/release/*-release.apk",
     ]);
   });
 
-  it("native-ios：构建命令 null（由项目配置指定）", () => {
-    expect(nativeIosAdapter.buildCommand("ios")).toBeNull();
-  });
-
-  it("native-harmony：hvigorw assembleHap 全参数", () => {
-    expect(nativeHarmonyAdapter.buildCommand("harmony")).toEqual([
-      "hvigorw",
-      "--mode",
-      "module",
-      "-p",
-      "module=entry@default",
-      "-p",
-      "product=default",
-      "-p",
-      "buildMode=release",
-      "assembleHap",
-      "--no-daemon",
-    ]);
+  it("native-harmony：signed hap/app 产物路径", () => {
     expect(
-      nativeHarmonyAdapter.artifactPatterns("android").some((p) => p.includes("signed.hap")),
+      nativeHarmonyAdapter.artifactPatterns("harmony").some((p) => p.includes("signed.hap")),
     ).toBe(true);
+    expect(nativeHarmonyAdapter.artifactPatterns("harmony").some((p) => p.endsWith(".app"))).toBe(
+      true,
+    );
   });
 });
 
@@ -104,8 +61,8 @@ describe("适配器探测边界", () => {
 });
 
 describe("桌面适配器（Electron/Tauri）全平台", () => {
-  it("electron detect + 三平台 patterns + buildCommand", async () => {
-    const electron = (await import("./framework.js")).electronAdapter;
+  it("electron：三桌面平台 patterns，移动平台为空", async () => {
+    const electron = electronAdapter;
     // detect 走 deps（非 electron 项目 false）
     expect(electron.detect("/")).toBe(false);
     expect(electron.artifactPatterns("windows")).toEqual([
@@ -116,19 +73,10 @@ describe("桌面适配器（Electron/Tauri）全平台", () => {
     expect(electron.artifactPatterns("macos")).toContain("dist/*.dmg");
     expect(electron.artifactPatterns("linux")).toContain("dist/*.AppImage");
     expect(electron.artifactPatterns("android")).toEqual([]);
-    expect(electron.buildCommand("windows")).toEqual([
-      "npx",
-      "electron-forge",
-      "make",
-      "--platform",
-      "win32",
-    ]);
-    expect(electron.buildCommand("macos")).toContain("darwin");
-    expect(electron.buildCommand("linux")).toContain("linux");
   });
 
   it("tauri detect（无 src-tauri 且无依赖 false）+ 三平台 patterns", async () => {
-    const tauri = (await import("./framework.js")).tauriAdapter;
+    const tauri = tauriAdapter;
     expect(tauri.detect("/")).toBe(false);
     expect(tauri.artifactPatterns("windows")).toContain(
       "src-tauri/target/release/bundle/nsis/*.exe",
@@ -136,11 +84,9 @@ describe("桌面适配器（Electron/Tauri）全平台", () => {
     expect(tauri.artifactPatterns("macos")).toContain("src-tauri/target/release/bundle/dmg/*.dmg");
     expect(tauri.artifactPatterns("linux")).toContain("src-tauri/target/release/bundle/deb/*.deb");
     expect(tauri.artifactPatterns("ios")).toEqual([]);
-    expect(tauri.buildCommand("macos")).toEqual(["npx", "tauri", "build"]);
   });
 
-  it("expoAwareLabel：非 Expo 项目返回 React Native", async () => {
-    const { rnAdapter } = await import("./framework.js");
+  it("expoAwareLabel：非 Expo 项目返回 React Native", () => {
     expect(rnAdapter.expoAwareLabel?.("/tmp")).toBe("React Native");
   });
 });

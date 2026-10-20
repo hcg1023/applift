@@ -37,14 +37,16 @@
 
 ## 配置模型
 
-- 凭据查找链：项目 `.applift/credentials.json`（逐层向上、逐键优先）→ `~/.applift/credentials.json`（profiles 组织）→ `APPLIFT_*` env；profile 切换 `applift use` / `--profile`（最高）
-- 项目：`applift.config.ts`（逐层向上查找；stores 支持 ['oppo'] 数组 / {huawei:'appId'} 字符串 / 对象三种写法；包名/框架自动推导，配置可全空；artifacts 仅非标工程需要；plugins 插件）
-- 插件：vite 风格钩子（plan:before/stage:before/submit:before 可拦截可修改；channel:register 注册自定义渠道）
+- 优先级公理（所有键同链，高→低）：CLI flag > `APPLIFT_*` env > 个人（applift use → ~/.applift/projects.json）> 项目（.applift/ + applift.config.ts）> 全局（~/.applift）；`applift doctor` 打印生效值与来源
+- 凭据：两处 credentials.json 同形状 `{ profiles: { <名>: { KEY: 值 } } }`；项目逐键覆盖全局同名 profile；env 取值链 APPLIFT_<KEY> > 裸 KEY（仅 knownKeys 内）> 文件
+- 项目：`applift.config.ts`（逐层向上查找；stores 支持 ['oppo'] 数组 / {huawei:'appId'} 字符串 / 对象三种写法；包名自动推导，artifacts 仅非标工程需要；plugins 插件）。发布命令（beta/release）必须声明 framework 插件（rnFramework 等，import 自 @applift/core/plugins）；只读命令未声明时按全部标准位置探测
+- 插件：vite 风格钩子（plan:before/stage:before/submit:before 可拦截可修改；channel:register/framework:register/update:register 分别注册渠道/框架/热更 provider）
 
 ## 扩展点
 
 - 新商店：实现 `Channel` 接口（见 @applift/core channel.ts）+ 插件注册
-- 新框架：`FrameworkAdapter`（detect/artifactPatterns/buildCommand）注入 detectFramework
+- 新框架：实现 `FrameworkAdapter` 经 `'framework:register'` 注册；内置七框架工厂（rnFramework 等）在 @applift/core/plugins
+- 新热更服务：实现 `UpdateProvider`（judge 判定 + publishToTest + promoteToProd）经 `'update:register'` 注册（样板 rn-update.ts，pushy CLI 封装 pushy-cli.ts）
 - 通知：`dingtalkNotify` 插件（@applift/core/plugins）
 
 ## 上游文档
