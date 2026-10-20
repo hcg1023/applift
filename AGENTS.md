@@ -70,5 +70,4 @@ applift：多框架 App 发版工具。**只管发版（产物 → 校验 → �
 - rn-update 插件：判定引擎（五形态+依赖信号+缺失 uncertain）、pushy CLI 封装（spawnPushy + runner 注入）、publishToTest（服务端取号 patch.N + 偏移绑定）、promoteToProd（重绑+rollout）、`stage:after` 自动基线
 - tag 后移：release 全成功补 `v{产物版本}`（幂等：内容一致「无需重复上传」）
 - qy-driver 侧：config 已声明双插件、hook `usePatchVersionSuffix` 已接关于页
-- 运行时定稿（2026-10-20）：Node ≥20 唯一承诺；bun 基本兼容（CLI 基本命令 mac/ubuntu CI 通过，配置装载 ubuntu+bun 失败未根因，读配置命令不承诺 bun）；CLI 版本读取改 JSON import 内联（消运行时文件读取）；`bun build --compile` 二进制评估后**否决**（行为分裂实证）；CI runtime-bun job 收缩为基本命令冒烟
-- 未做：热更发布本地 git tag（`v4.0.0-patch.N`，服务端已有 commit 记录）；偏移测试包自动构建
+- 消费方类型链路修复（2026-10-20）：`@applift/cli` build 加 `--dts` 且 exports 补 types 条件；新增 `./plugins` 子导出（re-export core/plugins）——applift.config.ts 只依赖 @applift/cli 即有完整类型，无需 @ts-expect-error；promote 灰度内置默认 100（全量，`--rollout` > `rnUpdate({ defaultRollout })` > 默认）

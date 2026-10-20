@@ -23,7 +23,8 @@ export interface RnUpdateOptions {
   ios?: number;
   /** 补丁目录（patch-package 约定默认 patches/，项目可覆盖） */
   patchDir?: string;
-  /** 正式发布默认灰度比例 */
+  /** 正式发布默认灰度比例（缺省 100 全量——promote 语义是"验证后发正式"，灰度是显式选择；
+   *  优先级：--rollout 旗标 > 此配置 > 内置默认） */
   defaultRollout?: number;
 }
 
@@ -219,6 +220,10 @@ export function judgeDelivery(
 /** pushy 官方测试包约定：与正式同源码、仅版本号偏移（major+1000，如 1.6.0→1001.6.0） */
 const TEST_VERSION_OFFSET = 1000;
 
+/** 正式 promote 的内置默认灰度比例（100 = 全量）。promote 语义是"测试通道已验证、发正式"，
+ *  全量是常态、灰度是显式选择（--rollout 或 rnUpdate({ defaultRollout })），不藏在配置后面 */
+const DEFAULT_ROLLOUT = 100;
+
 /** 生成测试包偏移版本号（major+1000）；非数字开头版本号无法偏移，显式报错 */
 export function testPackageVersion(versionName: string): string {
   const m = /^(\d+)(\..+)?$/.exec(versionName);
@@ -318,7 +323,8 @@ export function makeRnUpdateProvider(
           }：先 applift beta 发布测试热更并验证`,
         );
       }
-      const rollout = ctx.rollout ?? opts.defaultRollout;
+      // 灰度比例优先级：--rollout 旗标 > rnUpdate({ defaultRollout }) > 内置默认 100（全量）
+      const rollout = ctx.rollout ?? opts.defaultRollout ?? DEFAULT_ROLLOUT;
       await cli.rebind({ appId, versionId: latest.id, packageVersion: versionName, rollout });
       return { versionName: latest.name, ...(rollout !== undefined ? { rollout } : {}) };
     },

@@ -283,6 +283,19 @@ describe("publishToTest / promoteToProd（pushy CLI 组装：取号 + 测试版�
     expect(rebindArgs).toContain("--rollout 10");
   });
 
+  it("promoteToProd：未配置 defaultRollout → 内置默认 100（全量）", async () => {
+    const dir = rnProject();
+    const { cli, calls } = mkCli((args) => {
+      if (args[0] === "versions")
+        return { code: 0, stdout: "303353) Qn19JhbA 4.0.0-patch.5 no package\n", stderr: "" };
+      return { code: 0, stdout: "操作完成\n", stderr: "" };
+    });
+    const provider = makeRnUpdateProvider({ harmony: 34166 }, cli);
+    const r = await provider.promoteToProd({ cwd: dir, framework: rn, platform: "harmony" });
+    expect(r).toEqual({ versionName: "4.0.0-patch.5", rollout: 100 });
+    expect(calls.find((c) => c[0] === "update")!.join(" ")).toContain("--rollout 100");
+  });
+
   it("promoteToProd：只认当前 versionName 的 patch（跨版本不串台），全局更大 N 不越权", async () => {
     const dir = rnProject();
     const { cli, calls } = mkCli((args) => {

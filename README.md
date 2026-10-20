@@ -56,8 +56,8 @@ applift beta --yes                      # 多渠道内测一条命令（构建�
 
 - 版本决定链:显式指定 > git conventional commits 推断(BREAKING/feat/fix)> patch 兜底;结果展示确认,不静默
 - versionCode 单调策略 max(公式值, 现值+1):config `version: { versionCode: { formula: "major*1000000+minor*1000+patch", platforms: ["harmony"] } }`,默认递增 +1;beta.1→beta.2→正式全程单调,AGC 同版本不能覆盖升级的墙由此规避
-- 自动 version 常开:config `beta: { bump: true }`(或 `release: { bump: true }`),`--no-bump` 临时关
-- push 永不代做,收尾提示 `git push --follow-tags`
+- 升版本显式化(构建/bump 解耦):beta/release 不再代 bump;`applift version bump` 单独升版本后重新构建,再跑发布命令
+- 热更正式默认全量:promote 灰度比例内置默认 100,`--rollout N` 或 `rnUpdate({ defaultRollout: N })` 显式灰度
 
 ## 配置
 
@@ -79,8 +79,8 @@ applift beta --yes                      # 多渠道内测一条命令（构建�
 **项目**（`applift.config.ts`，凭据/渠道可全空；**发布命令（beta/release）必须声明 framework 插件**，未声明会直接报错——版本读写等只读命令仍可自动探测）：
 
 ```ts
-import { defineConfig } from "@applift/core";
-import { rnFramework } from "@applift/core/plugins";
+import { defineConfig } from "@applift/cli";
+import { rnFramework } from "@applift/cli/plugins";
 
 export default defineConfig({
   plugins: [rnFramework()], // 框架声明是发布的前提（rn/flutter/native-android/native-ios/native-harmony/electron/tauri）
@@ -106,7 +106,7 @@ profile 切换：`applift use <name>`（本机个人选择）或 `--profile`（�
 ## 插件（vite 风格）
 
 ```ts
-import { rnFramework, rnUpdate } from "@applift/core/plugins";
+import { rnFramework, rnUpdate } from "@applift/cli/plugins";
 
 plugins: [
   rnFramework(), // 框架适配器（发布必声明；detect + 产物 pattern，不含构建命令——构建由项目负责）
@@ -131,7 +131,7 @@ plugins: [
 
 ### 热更（react-native-update / pushy）
 
-配置 `rnUpdate({ harmony: <appId> })` 后，`beta/release <platform>` 会先判定本次改动能否走热更（原生目录/原生依赖/补丁/构建配置 → 原生包；纯 JS → 热更；灰区 → uncertain），展示逐文件证据后由你拍板：
+配置 `rnUpdate({ harmony: <appId> })` 后（导入自 `@applift/cli/plugins`——消费方只依赖 @applift/cli 即有完整类型；`@applift/core/plugins` 等价），`beta/release <platform>` 会先判定本次改动能否走热更（原生目录/原生依赖/补丁/构建配置 → 原生包；纯 JS → 热更；灰区 → uncertain），展示逐文件证据后由你拍板：
 
 ```bash
 applift beta harmony --delivery ota        # 热更发测试通道（版本名 {ver}-patch.N，绑定测试包 major+1000）

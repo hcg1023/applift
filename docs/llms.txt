@@ -39,7 +39,7 @@
 
 - 优先级公理（所有键同链，高→低）：CLI flag > `APPLIFT_*` env > 个人（applift use → ~/.applift/projects.json）> 项目（.applift/ + applift.config.ts）> 全局（~/.applift）；`applift doctor` 打印生效值与来源
 - 凭据：两处 credentials.json 同形状 `{ profiles: { <名>: { KEY: 值 } } }`；项目逐键覆盖全局同名 profile；env 取值链 APPLIFT_<KEY> > 裸 KEY（仅 knownKeys 内）> 文件
-- 项目：`applift.config.ts`（逐层向上查找；stores 支持 ['oppo'] 数组 / {huawei:'appId'} 字符串 / 对象三种写法；包名自动推导，artifacts 仅非标工程需要；plugins 插件）。发布命令（beta/release）必须声明 framework 插件（rnFramework 等，import 自 @applift/core/plugins）；只读命令未声明时按全部标准位置探测
+- 项目：`applift.config.ts`（逐层向上查找；stores 支持 ['oppo'] 数组 / {huawei:'appId'} 字符串 / 对象三种写法；包名自动推导，artifacts 仅非标工程需要；plugins 插件，导入自 `@applift/cli/plugins` 或 `@applift/core/plugins`，均带完整类型）。发布命令（beta/release）必须声明 framework 插件（rnFramework 等）；只读命令未声明时按全部标准位置探测
 - 插件：vite 风格钩子（plan:before/stage:before/submit:before 可拦截可修改；channel:register/framework:register/update:register 分别注册渠道/框架/热更 provider）
 
 ## 扩展点
