@@ -14,13 +14,20 @@
   ],
   "type": "module",
   "exports": {
-    ".": "./dist/index.mjs"
+    ".": {
+      "import": "./dist/index.mjs",
+      "types": "./dist/index.d.mts"
+    },
+    "./plugins": {
+      "import": "./dist/plugins.mjs",
+      "types": "./dist/plugins.d.mts"
+    }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/bin.ts src/index.ts --format esm --clean",
+    "build": "tsdown src/bin.ts src/index.ts src/plugins.ts --format esm --dts --clean",
     "typecheck": "tsc --noEmit",
     "dev": "tsx src/bin.ts"
   },
