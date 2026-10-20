@@ -8,7 +8,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { judgeDelivery, makeRnUpdateProvider, rnUpdate } from "./rn-update.js";
+import { judgeDelivery, makeRnUpdateProvider, rnUpdate, testPackageVersion } from "./rn-update.js";
+import type { UpdateProvider } from "../update.js";
 import { createPushyCli, type CliResult, type CliRunner, type PushyCli } from "./pushy-cli.js";
 import type { FrameworkAdapter } from "../framework.js";
 
@@ -189,6 +190,26 @@ describe("judgeDelivery（依赖变更：锚点对比 + node_modules 原生信�
     expect(r.recommendation).toBe("uncertain");
     expect(r.confidence).toBe("medium");
     expect(r.evidence.find((e) => e.path === "package.json")?.note).toContain("some-native-lib");
+  });
+  it("依赖删除（锚点有、当前无）也进 changedPackages → 判定走依赖分析", () => {
+    const dir = withDeps(
+      { lodash: "^4.0.0", dayjs: "^1.0.0" },
+      { dayjs: "^1.0.0" },
+      {
+        dayjs: { name: "dayjs", version: "1.0.0" },
+      },
+    );
+    const r = judgeDelivery(["package.json"], ctx(dir, "v1"), {});
+    expect(r.evidence.find((e) => e.path === "package.json")?.note).toContain("lodash");
+  });
+
+  it("当前 package.json 坏 JSON → readDeps 容错为 {}，锚点依赖全部视为变更（含删除语义）", () => {
+    const dir = withDeps({ lodash: "^4.0.0" }, {}, {});
+    fs.writeFileSync(path.join(dir, "package.json"), "{broken json"); // 当前工作区坏 JSON
+    const r = judgeDelivery(["package.json"], ctx(dir, "v1"), {});
+    // cur={} → lodash 判"删除"进 changed → node_modules 无信号 → uncertain 且 evidence 含包名
+    expect(r.recommendation).toBe("uncertain");
+    expect(r.evidence.find((e) => e.path === "package.json")?.note).toContain("lodash");
   });
 });
 
@@ -389,5 +410,37 @@ describe("stage:after 自动基线（原生路径发版成功后 pushy uploadApp
     const uploads = calls.filter((c) => c[0] === "uploadApp");
     expect(uploads).toHaveLength(1);
     expect(uploads[0]!.join(" ")).toContain("/tmp/agc.app");
+  });
+});
+
+describe("错误分支与工厂注册", () => {
+  it("testPackageVersion：非数字开头版本 → 显式报错；纯数字与带段版本可偏移", () => {
+    expect(() => testPackageVersion("v4.0.0")).toThrow(/非 X\.Y\.Z 形态/);
+    expect(testPackageVersion("4.a.0")).toBe("1004.a.0"); // 契约：只要求 major 数字可偏移，余段原样保留
+    expect(testPackageVersion("4")).toBe("1004");
+    expect(testPackageVersion("4.0.0")).toBe("1004.0.0");
+  });
+
+  it("publishToTest：工程无该平台版本文件 → 明确报错（不是静默空版本）", async () => {
+    const dir = tmpProject(() => {}); // 空工程：readProjectVersions 读不到 harmony 版本
+    const provider = makeRnUpdateProvider(
+      { harmony: 1 },
+      createPushyCli(async () => ({ code: 0, stdout: "", stderr: "" })),
+    );
+    await expect(
+      provider.publishToTest({ cwd: dir, framework: rn, platform: "harmony" }),
+    ).rejects.toThrow(/未读到平台 harmony 的 versionName/);
+  });
+
+  it("rnUpdate 工厂：update:register 注册完整 provider（platforms = 已配置 appId 的平台）", async () => {
+    const plugin = rnUpdate(
+      { harmony: 34166 },
+      createPushyCli(async () => ({ code: 0, stdout: "", stderr: "" })),
+    );
+    const providers: UpdateProvider[] = [];
+    plugin["update:register"]!(providers, { cwd: "/tmp" });
+    expect(providers).toHaveLength(1);
+    expect(providers[0]!.id).toBe("rn-update");
+    expect(providers[0]!.platforms).toEqual(["harmony"]); // android/ios 未配 appId 不在列
   });
 });

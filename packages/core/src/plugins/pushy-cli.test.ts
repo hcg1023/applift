@@ -3,7 +3,10 @@
  * runner 可注入（测试与将来自建服务端换调用方式）。
  */
 import { describe, expect, it } from "vitest";
-import { createPushyCli, type CliRunner, type CliResult } from "./pushy-cli.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createPushyCli, spawnPushy, type CliRunner, type CliResult } from "./pushy-cli.js";
 
 function mkRunner(reply: (args: string[]) => CliResult): { runner: CliRunner; calls: string[][] } {
   const calls: string[][] = [];
@@ -64,6 +67,57 @@ describe("pushy CLI 封装（参数拼装 + 输出解析）", () => {
     ).rejects.toThrow(/原生包 4.0.0/);
   });
 
+  it("publish/rebind：可选参数缺省不拼进命令行（最小参数面）", async () => {
+    const { runner, calls } = mkRunner(() => ok("已成功上传新热更包（id: 9）"));
+    const cli = createPushyCli(runner);
+    await cli.publish({
+      appId: 1,
+      ppk: "a.ppk",
+      platform: "harmony",
+      name: "n",
+      packageVersion: "4.0.0",
+    });
+    const pub = calls[0]!.join(" ");
+    expect(pub).not.toContain("--description");
+    expect(pub).not.toContain("--rollout");
+    await cli.rebind({ appId: 1, versionId: 9, packageVersion: "4.0.0" });
+    expect(calls[1]!.join(" ")).not.toContain("--rollout");
+  });
+
+  it("bundle：输出不含 ppk 路径 → 显式抛错（CLI 升级改文案时防线）", async () => {
+    const { runner } = mkRunner(() => ok("Bundle complete."));
+    const cli = createPushyCli(runner);
+    await expect(cli.bundle("harmony")).rejects.toThrow(/未含 ppk 路径/);
+  });
+
+  it("publish：exit 0 但输出不含版本 id → 抛错（文案漂移防线）", async () => {
+    const { runner } = mkRunner(() => ok("上传成功"));
+    const cli = createPushyCli(runner);
+    await expect(
+      cli.publish({
+        appId: 1,
+        ppk: "a.ppk",
+        platform: "harmony",
+        name: "n",
+        packageVersion: "1.0.0",
+      }),
+    ).rejects.toThrow(/未含版本 id/);
+  });
+
+  it("rebind：非零退出码 → 抛含命令名的错误", async () => {
+    const { runner } = mkRunner(() => ({ code: 1, stdout: "", stderr: "版本不存在" }));
+    const cli = createPushyCli(runner);
+    await expect(cli.rebind({ appId: 1, versionId: 9, packageVersion: "4.0.0" })).rejects.toThrow(
+      /pushy update 失败[\s\S]*版本不存在/,
+    );
+  });
+
+  it("versions：非零退出码 → 抛错", async () => {
+    const { runner } = mkRunner(() => ({ code: 1, stdout: "", stderr: "尚未登录" }));
+    const cli = createPushyCli(runner);
+    await expect(cli.versions(1)).rejects.toThrow(/尚未登录/);
+  });
+
   it("uploadApp：解析原生包 id 与版本；输出不含预期串时抛错", async () => {
     const fresh = mkRunner(() =>
       ok("已成功上传app原生包（id: 100263, version: 4.0.0, buildTime: 1792376104143）"),
@@ -98,5 +152,67 @@ describe("pushy CLI 封装（参数拼装 + 输出解析）", () => {
       { id: 303339, hash: "qm5Xb8bG", name: "4.0.0-patch.4" },
       { id: 303353, hash: "Qn19JhbA", name: "4.0.0-patch.5" },
     ]);
+  });
+});
+
+describe("spawnPushy 默认 runner（PATH 注入桩 pushy：CliResult 组装契约，CI 无真 pushy 也可移植）", () => {
+  function fakePushyDir(script: string): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-fakepushy-"));
+    const bin = path.join(dir, "pushy");
+    fs.writeFileSync(bin, `#!/bin/sh\n${script}\n`);
+    fs.chmodSync(bin, 0o755);
+    return dir;
+  }
+  const withPath = <T>(dir: string, fn: () => Promise<T>): Promise<T> => {
+    const old = process.env.PATH;
+    process.env.PATH = `${dir}${path.delimiter}${old ?? ""}`;
+    return fn().finally(() => {
+      process.env.PATH = old;
+    });
+  };
+
+  it("成功：stdout/stderr 分别汇聚，exit 0 透传", async () => {
+    const dir = fakePushyDir('echo "out-line1"; echo "err-line1" >&2; exit 0');
+    try {
+      const r = await withPath(dir, () => spawnPushy(["--no-interactive"], { cwd: "/tmp" }));
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain("out-line1");
+      expect(r.stderr).toContain("err-line1");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("非零退出码透传（close 而非 error）", async () => {
+    const dir = fakePushyDir("exit 3");
+    try {
+      const r = await withPath(dir, () => spawnPushy([]));
+      expect(r.code).toBe(3);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("命令不存在 → reject 并给出安装提示（ENOENT 走 error 而非 close）", async () => {
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), "applift-nopath-"));
+    const old = process.env.PATH;
+    process.env.PATH = empty; // 完全替换：前置拼接仍会从原 PATH 找到真 pushy
+    try {
+      await expect(spawnPushy([])).rejects.toThrow(/pushy 命令不可用/);
+    } finally {
+      process.env.PATH = old;
+      fs.rmSync(empty, { recursive: true, force: true });
+    }
+  });
+
+  it("cwd 透传（脚本按 cwd 输出 pwd）", async () => {
+    const dir = fakePushyDir("pwd");
+    try {
+      const r = await withPath(dir, () => spawnPushy([], { cwd: dir }));
+      // macOS /tmp ↔ /private/tmp 符号链接：双向 realpath 同一化后比对
+      expect(fs.realpathSync(r.stdout.trim())).toBe(fs.realpathSync(dir));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

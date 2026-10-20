@@ -35,8 +35,4 @@ export const qtAdapter: FrameworkAdapter = {
     if (platform === "linux") return ["build/*.AppImage", "packages/*.AppImage", "packages/*.deb"];
     return [];
   },
-  buildCommand(): string[] | null {
-    // Qt 构建系统因工程而异（qmake/cmake+ninja），不建议缺省命令——项目配置 build 段按工程指定
-    return null;
-  },
 };

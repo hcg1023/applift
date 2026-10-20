@@ -12,7 +12,7 @@ import type {
   PublishContext,
   UpdateProvider,
 } from "../update.js";
-import type { AppliftPlugin, ChannelContext } from "../plugin.js";
+import type { AppliftPlugin } from "../plugin.js";
 import type { PushyCli } from "./pushy-cli.js";
 import { createPushyCli } from "./pushy-cli.js";
 
