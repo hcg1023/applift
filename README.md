@@ -122,7 +122,7 @@ plugins: [
 | 扩展     | 接口                                                  | 注册钩子               | 样板                                     |
 | -------- | ----------------------------------------------------- | ---------------------- | ---------------------------------------- |
 | 发布渠道 | `Channel`（5 方法+能力声明+错误码表）                 | `'channel:register'`   | `examples/plugin-oss`                    |
-| 项目框架 | `FrameworkAdapter`（detect/产物 pattern）                  | `'framework:register'` | `examples/plugin-framework-qt`           |
+| 项目框架 | `FrameworkAdapter`（detect/产物 pattern）             | `'framework:register'` | `examples/plugin-framework-qt`           |
 | 热更     | `UpdateProvider`（judge/publishToTest/promoteToProd） | `'update:register'`    | `packages/core/src/plugins/rn-update.ts` |
 
 ### 热更（react-native-update / pushy）

@@ -84,9 +84,10 @@ export function createPushyCli(runner: CliRunner = spawnPushy): PushyCli {
         String(input.appId),
         "--name",
         input.name,
+        "--packageVersion",
+        input.packageVersion,
       ];
       if (input.description) args.push("--description", input.description);
-      if (input.packageVersion) args.push("--packageVersion", input.packageVersion);
       if (input.rollout !== undefined) args.push("--rollout", String(input.rollout));
       args.push("--no-interactive");
       const r = await runner(args);
