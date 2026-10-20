@@ -18,7 +18,7 @@ applift：多框架 App 发版工具。**只管发版（产物 → 校验 → �
 4. **零侵入**：不声明插件时所有命令行为与无插件完全一致；新增钩子必须保持此性质（现有测试全绿是 gate）。
 5. **判定是推荐不是决定**：judge 输出推荐 + 逐文件证据，确认界面可改选；CI（`--yes`）用推荐值，uncertain 必须显式 `--delivery ota|native`。
 6. **热更是第三维能力**（framework × channel × update），与渠道/框架扩展接口对称，不做特殊通路。
-7. **双运行时（bun + nodejs，仅 dist 直跑形态）**：CLI 必须同时支持 Node.js（≥20，npm dist 分发）与 Bun（`bun packages/cli/dist/bin.mjs` 直跑 dist）两种运行平台——bun 分支只在 jiti 注入 `Bun.Transpiler` 兜底一处（core/src/config/project.ts），无独立代码路径。**明确不做 `bun build --compile` 单文件二进制分发**（2026-10-20 定稿）：applift 的配置（applift.config.ts 类型提示）与插件生态深耦合工程 node_modules，用户群必装 npm 包，"免 Node"卖点不成立；而编译形态与 dist 行为全面分裂（`import.meta.resolve` 失效、`$bunfs` 对 node:fs 不可见、jiti 的 babel.cjs 不可达——均实证），桥接成本与 bun 版本漂移风险高于收益，勿回退此决策。约束：禁止引入仅单运行时可用的 API；运行时读自身包文件走 import 内联（版本号即此写法）。
+7. **运行时：Node ≥20 唯一承诺；bun 仅基本兼容，不承诺**：npm dist 分发按 Node ≥20 门禁（CI runtime-node20 强制）。bun 直跑 dist 的基本命令（`--version` / `channels` 等）验证通过（macOS 本地 + ubuntu CI），但**配置装载（c12/jiti 执行 applift.config.ts）在 ubuntu + bun 下读不到配置**（2026-10-20 CI 实证未根因：前三步命令全过、doctor 输出无渠道）——CI runtime-bun job 只做基本命令冒烟，不做配置装载断言；发版操作（doctor/beta/release 等读配置命令）一律用 Node。**明确不做 `bun build --compile` 单文件二进制分发**（2026-10-20 否决）：配置与插件深耦合工程 node_modules，"免 Node"卖点不成立；且编译形态与 dist 行为全面分裂（`import.meta.resolve` 失效 / `$bunfs` 对 node:fs 不可见 / jiti babel.cjs 不可达——均实证），勿回退此决策。约束：禁止引入仅单运行时可用的 API；运行时读自身包文件走 import 内联（版本号即此写法）。
 
 ## 发版模型（终态）
 
@@ -61,7 +61,7 @@ applift：多框架 App 发版工具。**只管发版（产物 → 校验 → �
 - 测试写法沿用现有风格：桩渠道进程内 / 临时目录 + 真 git / mock CliRunner；断言在导出接口（seam），不测内部实现
 - 负载型 git 测试（bump 全链路/e2e 周期）限时已放宽（90s/120s），全量并行偶发超时单独重跑确认即可
 - 改 core 契约（AppliftPlugin/UpdateProvider/DeliveryJudgement）必须同步 plugin.test/update.test
-- 触碰 CLI 入口/配置加载/进程 spawn 相关代码后，除 vitest 外必须补跑双运行时冒烟：`pnpm run smoke`（node）+ `bun packages/cli/dist/bin.mjs channels --json`（bun，含裸工程 `applift.config.ts` 的 doctor 配置装载）；CI 的 `runtime-bun` job 是强制门禁
+- 触碰 CLI 入口/配置加载相关代码后跑 `pnpm run smoke`（node）即可；bun 不作为验证义务（基本兼容，见不变量 7），CI 的 runtime-bun 基本冒烟自动覆盖
 - 提交用 conventional commits；**禁跑真实 pushy 网络命令**（bundle/publish/uploadApp）于开发验证——用 mock CliRunner
 
 ## 当前状态（2026-10-19）
@@ -70,5 +70,5 @@ applift：多框架 App 发版工具。**只管发版（产物 → 校验 → �
 - rn-update 插件：判定引擎（五形态+依赖信号+缺失 uncertain）、pushy CLI 封装（spawnPushy + runner 注入）、publishToTest（服务端取号 patch.N + 偏移绑定）、promoteToProd（重绑+rollout）、`stage:after` 自动基线
 - tag 后移：release 全成功补 `v{产物版本}`（幂等：内容一致「无需重复上传」）
 - qy-driver 侧：config 已声明双插件、hook `usePatchVersionSuffix` 已接关于页
-- 双运行时定稿（2026-10-20）：bun + node 双运行时，均为直跑 dist 形态（bun 仅 jiti Bun.Transpiler 一处差异）；CLI 版本读取改 JSON import 内联（消运行时文件读取）；`bun build --compile` 单文件二进制评估后**否决**（配置/插件耦合工程 node_modules + 编译态与 dist 行为分裂实证），相关桥代码与产物链路已撤；CI 增 runtime-bun 门禁 job（bun dist 冒烟 + 裸工程配置装载）
+- 运行时定稿（2026-10-20）：Node ≥20 唯一承诺；bun 基本兼容（CLI 基本命令 mac/ubuntu CI 通过，配置装载 ubuntu+bun 失败未根因，读配置命令不承诺 bun）；CLI 版本读取改 JSON import 内联（消运行时文件读取）；`bun build --compile` 二进制评估后**否决**（行为分裂实证）；CI runtime-bun job 收缩为基本命令冒烟
 - 未做：热更发布本地 git tag（`v4.0.0-patch.N`，服务端已有 commit 记录）；偏移测试包自动构建
