@@ -12,8 +12,9 @@ pnpm add -D @applift/cli
 npm i -g @applift/cli
 ```
 
-Node ≥20 与 Bun 双运行时支持（bun 直跑 dist 同一行为）；不做 bun --compile 单文件二进制分发——
-配置与插件深耦合工程 node_modules（`applift.config.ts` 的类型提示也需要工程内装包），裸机场景不存在。
+要求 Node ≥20（CI 强制 runtime-node20 门禁）。bun 直跑 dist 仅基本兼容（`--version`/`channels`
+等基本命令验证通过；配置装载在 linux bun 下未通过，读配置命令请用 Node）；不做 bun --compile
+单文件二进制分发——配置与插件深耦合工程 node_modules，裸机场景不存在。
 
 ## 5 分钟上手
 
