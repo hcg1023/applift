@@ -152,9 +152,9 @@ async function resolveDeliveryMode(
 
 const program = new Command("applift");
 
-const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
-  version: string;
-};
+// JSON import 由打包器内联（tsdown / bun build 均支持），不做运行时文件读取——
+// bun --compile 单文件二进制里 import.meta.url 指向 $bunfs 虚拟路径，readFileSync 会 ENOENT
+import pkg from "../package.json" with { type: "json" };
 
 program
   .name("applift")
