@@ -995,19 +995,39 @@ program
     if (opts.rollout !== undefined && decision?.mode !== "ota" && !opts.dryRun)
       p.log.warn("--rollout 仅热更发布（--delivery ota）生效，本次发布不会灰度，参数已忽略");
 
-    // 产物解析：--artifact > 框架 pattern 自动探测（最新 mtime）
+    /** 上架（release）各平台产物扩展名约束：agc 只收 .app 整包、国内安卓商店 apk、googleplay aab、asc ipa */
+    const RELEASE_ARTIFACT_EXTS: Record<string, string[]> = {
+      harmony: [".app"],
+      android: [".apk", ".aab"],
+      ios: [".ipa"],
+    };
+
+    // 产物解析：--artifact > 框架 pattern 自动探测（按渠道接受的扩展名过滤后取 mtime 最新）
+    // 上架场景的扩展名约束（与 beta 分流同源）：防双产物工程（internaltesting .hap + release .app）
+    // 因 mtime 排序误选测试签名包——渠道层仍有终验（agc-harmony 只收 .app），此处让探测先选对
     let artifactPath: string | undefined = opts.artifact ? path.resolve(opts.artifact) : undefined;
     if (!artifactPath) {
       // 优先项目配置 artifacts 覆盖（非标准工程目录），其次框架内置 pattern
       const patterns = config.artifacts?.[platform] ?? framework?.artifactPatterns(platform) ?? [];
       const found = findArtifacts(opts.cwd, patterns);
-      artifactPath = found[0];
+      const exts = RELEASE_ARTIFACT_EXTS[platform] ?? [];
+      artifactPath = exts.length
+        ? found.find((f) => exts.includes(path.extname(f).toLowerCase()))
+        : found[0];
       if (artifactPath && !isJson) {
         const via = config.artifacts?.[platform]
           ? "项目配置 artifacts"
           : `${framework?.label} 内置 pattern`;
         p.log.info(
-          `自动探测产物（${via}）: ${pc.bold(path.basename(artifactPath))} ${pc.dim(artifactPath)}`,
+          `自动探测产物（${via}${exts.length ? `，扩展名 ${exts.join("/")}` : ""}）: ${pc.bold(path.basename(artifactPath))} ${pc.dim(artifactPath)}`,
+        );
+      }
+      if (!artifactPath && found.length > 0 && exts.length) {
+        throw new Error(
+          `探测到产物但无 ${platform} 上架可接受的扩展名（需 ${exts.join("/")}，现存 ${found
+            .map((f) => path.basename(f))
+            .slice(0, 3)
+            .join(", ")}）——测试签名包不能上架，请构建正式产物或用 --artifact 指定`,
         );
       }
     }

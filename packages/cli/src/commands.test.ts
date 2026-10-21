@@ -182,6 +182,27 @@ describe("全命令冒烟（非交互路径）", () => {
     expect(cli(["release", "--help"]).code).toBe(0);
   });
 
+  it("release harmony --dry-run：双产物工程探测必选 .app（扩展名过滤，不选 mtime 更新的 internaltesting .hap）", () => {
+    fs.writeFileSync(
+      path.join(proj, "applift.config.ts"),
+      `import { defineConfig, rnFramework } from "@applift/core";\nexport default defineConfig({\n  plugins: [rnFramework()],\n  artifacts: {\n    harmony: [\n      'harmony/entry/build/default/outputs/**/entry-default-signed.internaltesting.hap',\n      'harmony/build/outputs/**/*-signed.app',\n    ],\n  },\n});\n`,
+    );
+    const hapDir = path.join(proj, "harmony", "entry", "build", "default", "outputs", "default");
+    const appDir = path.join(proj, "harmony", "build", "outputs", "default");
+    fs.mkdirSync(hapDir, { recursive: true });
+    fs.mkdirSync(appDir, { recursive: true });
+    const hap = path.join(hapDir, "entry-default-signed.internaltesting.hap");
+    const app = path.join(appDir, "harmony-default-signed.app");
+    // .hap mtime 更新（模拟刚跑过蒲公英测试轮）：旧过滤逻辑会误选它上架
+    fs.writeFileSync(app, "app-bytes");
+    fs.writeFileSync(hap, "hap-bytes");
+    const past = new Date(Date.now() - 3_600_000);
+    fs.utimesSync(app, past, past);
+    const r = cli(["release", "harmony", "--dry-run", "--delivery", "native"]);
+    expect(r.out).toContain("harmony-default-signed.app");
+    expect(r.out).not.toContain("internaltesting.hap");
+  });
+
   it("version：空目录 → 未识别框架兜底提示", () => {
     // beforeEach 给 proj 放了 RN 痕迹（守卫校验用）；空目录语义用独立子目录验证
     const empty = fs.mkdtempSync(path.join(os.tmpdir(), "applift-empty-"));
