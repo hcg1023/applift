@@ -771,10 +771,17 @@ program
         const target = resolveChannelTarget("agc", projCfg, detected);
         warnDuplicateVersion("agc", artifactPath);
         s.start(`AGC 测试发布 ${path.basename(artifactPath)}`);
+        const agcCfg = projCfg.beta?.agc;
         const ctx = makeContext(
           agc,
           creds,
-          { ...target, releaseType: "6" },
+          {
+            ...target,
+            releaseType: "6",
+            ...(agcCfg?.submit ? { submitTest: "true" } : {}),
+            ...(agcCfg?.group ? { testGroup: agcCfg.group } : {}),
+            testType: String(agcCfg?.testType ?? 3),
+          },
           artifactPath,
           cmdOpts.note,
         );
@@ -786,7 +793,9 @@ program
         });
         if (r.ok) {
           s.stop(
-            `AGC 测试版本已就绪 ${pc.green("✓")}（未提交审核），到控制台「测试」提交并指定测试群组`,
+            agcCfg?.submit
+              ? `AGC 测试版本已提交审核 ✓（versionId: ${r.ref ?? "?"}，群组: ${agcCfg.group ?? "默认"}）`
+              : `AGC 测试版本已就绪 ${pc.green("✓")}（未提交审核），到控制台「测试」提交并指定测试群组`,
           );
         } else {
           s.stop(`AGC 测试发布失败: ${redactText(r.error ?? "")}`);

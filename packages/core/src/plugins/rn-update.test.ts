@@ -6,6 +6,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { judgeDelivery, makeRnUpdateProvider, rnUpdate, betaPackageVersion } from "./rn-update.js";
@@ -516,7 +517,7 @@ describe("stage:after 自动基线（原生路径发版成功后 pushy uploadApp
       { channel: "agc", ok: true, artifactPath: artifact },
       { cwd: "/tmp", channel: "agc" },
     );
-    expect(calls.uploadApp).toHaveBeenCalledWith(34166, artifact, "4.0.0");
+    expect(calls.uploadApp).toHaveBeenCalledWith(34166, artifact, "4.0.0", {});
   });
 
   it("产物读不出版本号（无 pack.info 的 .app）→ 不上传，stderr 提醒人工补传", async () => {
@@ -542,12 +543,20 @@ describe("stage:after 自动基线（原生路径发版成功后 pushy uploadApp
 
   it("默认路径：hookCtx.credentials 带 token → 构造 API 客户端上传（x-api-token 透传）", async () => {
     const artifact = appArtifact();
+    // 直传走 node:http(s) 原生（不经 fetch）：起一次性本地 server 承接（返回 204）
+    const srv = http.createServer((req, res) => {
+      req.resume();
+      res.statusCode = 204;
+      res.end();
+    });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    const port = (srv.address() as { port: number }).port;
     const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
       fetchCalls.push({ url: String(url), init });
       if (String(url).endsWith("/upload"))
         return Response.json({
-          url: "https://oss.example.com/bucket",
+          url: `http://127.0.0.1:${port}/bucket`,
           formData: { key: "pkgKey" },
         });
       return Response.json({ id: 100266 });
@@ -560,6 +569,7 @@ describe("stage:after 自动基线（原生路径发版成功后 pushy uploadApp
       );
     } finally {
       fetchSpy.mockRestore();
+      srv.close();
     }
     const upload = fetchCalls.find((c) => c.url.endsWith("/upload"));
     expect(upload?.init?.headers).toMatchObject({ "x-api-token": "tok-1" });

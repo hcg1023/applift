@@ -17,6 +17,9 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import nodeHttp from "node:http";
+import nodeHttps from "node:https";
+import { spawnSync } from "node:child_process";
 
 /**
  * pushy 服务端操作契约（全 OpenAPI 实现；注入点：测试 mock）。
@@ -24,7 +27,11 @@ import path from "node:path";
  * 见 rn-update.ts）——applift 不 spawn 构建命令（架构不变量 1）。
  */
 export interface PushyCli {
-  /** 发布热更版本（version/create + 绑定目标原生版本），返回版本 id */
+  /** 发布热更版本（version/create + 绑定目标原生版本），返回版本 id。
+   *  deps 为服务端强校验所需（2026-09-17 后创建的应用要求 deps 里有 react-native-update
+   *  >= 10.53.1——实测缺省被 400 拒绝），由调用方用 readDepVersions 从工程读取。
+   *  不上报 commit：实测带 commit（官方 getCommitInfo 同构形态）被 version/create 以
+   *  「上传凭据无效」拒绝（2026-10-21 实证，去 commit 即过）；溯源走本地 history.jsonl */
   publish(input: {
     appId: number;
     ppk: string;
@@ -33,12 +40,14 @@ export interface PushyCli {
     description?: string;
     packageVersion: string;
     rollout?: number;
+    deps: Record<string, string>;
   }): Promise<{ versionId: number }>;
-  /** 上传原生基线（versionName 由调用方从产物读取后显式传入） */
+  /** 上传原生基线（versionName 由调用方从产物读取后显式传入；deps 同 publish） */
   uploadApp(
     appId: number,
     appFile: string,
     versionName: string,
+    deps: Record<string, string>,
   ): Promise<{ packageId: number; version: string }>;
   /** 版本重绑（promote 语义：测试通道版本重绑正式原生版本 + 灰度） */
   rebind(input: {
@@ -66,6 +75,8 @@ export interface PushyApiOptions {
   token: string;
   /** 注入点：测试 mock（缺省 globalThis.fetch） */
   fetchImpl?: FetchImpl;
+  /** 直传实现注入（缺省 node:http(s) 原生；测试 mock） */
+  httpUpload?: HttpUploadImpl;
 }
 
 interface UploadInstruction {
@@ -79,7 +90,10 @@ interface UploadInstruction {
 
 /** 分页硬顶（×limit=100/页）：服务端异常恒返整页时的死循环防线（官方 findVersion 同款硬顶） */
 const PAGES_HARD_CAP = 100;
-const UA = "applift/pushy-openapi";
+// UA 必须精确为官方形态单 token：服务端按 `react-native-update-cli/<版本>` 做版本门禁
+// （2026-09-17 后创建的应用要求 >=2.22.9；附加标识如 "2.29.3 applift" 会被当版本号解析而拒绝——
+// 实测 applift 自有 UA → 400「请升级 cli」，官方 UA → 200）。版本号 = 载荷反推基准的参考实现版本。
+const UA = "react-native-update-cli/2.29.3";
 
 async function query<T>(
   f: FetchImpl,
@@ -121,7 +135,7 @@ async function query<T>(
         : `pushy API ${api} 失败（HTTP ${res.status}）：${msg}`,
     );
   }
-  return json as T;
+  return (json ?? {}) as T;
 }
 
 /** 文件 part 的 Content-Type（对照官方 fileContentType 的扩展名表；未列出走 octet-stream） */
@@ -151,22 +165,26 @@ async function uploadFile(
   token: string,
   appId: number,
   file: string,
+  upload?: HttpUploadImpl,
 ): Promise<string> {
   if (!fs.existsSync(file)) throw new Error(`pushy 上传文件不存在：${file}`);
   const size = fs.statSync(file).size;
   const instr = await query<UploadInstruction>(f, baseUrl, token, "/upload", {
     method: "POST",
-    body: JSON.stringify({ ext: path.extname(file), appId, size }),
+    // chunked: true 与官方恒同（响应仍为整文件表单形态——chunked 指令是 GCS 后端特性）
+    body: JSON.stringify({ ext: path.extname(file), appId, chunked: true, size }),
   });
+  const httpUpload = upload ?? nodeHttpUpload;
   if (instr.method === "PUT") {
     // 自托管节点（rnu-node）预签名 PUT：字节直达用户对象存储
-    const res = await f(instr.url, {
-      method: "PUT",
-      body: fs.readFileSync(file),
-      headers: { "content-length": String(size), ...(instr.headers ?? {}) },
-    });
-    if (!res.ok)
-      throw new Error(`pushy 基线直传失败（HTTP ${res.status}）：${res.statusText || instr.url}`);
+    const putBody = fs.readFileSync(file);
+    const res = await httpUpload(
+      "PUT",
+      instr.url,
+      { "content-length": String(size), ...(instr.headers ?? {}) },
+      putBody,
+    );
+    if (res.status > 299) throw new Error(`pushy 基线直传失败（HTTP ${res.status}）：${instr.url}`);
     return instr.key!;
   }
   // 标准对象存储 multipart：官方契约 = formData 字段在前、file part 在后（名称固定 "file"）
@@ -186,16 +204,47 @@ async function uploadFile(
     fs.readFileSync(file),
     Buffer.from(`\r\n--${boundary}--\r\n`),
   ]);
-  const res = await f(instr.url, {
-    method: "POST",
+  const res = await httpUpload(
+    "POST",
+    instr.url,
+    {
+      accept: "*/*",
+      "user-agent": UA,
+      "content-type": `multipart/form-data;boundary=${boundary}`,
+      "content-length": String(body.length),
+    },
     body,
-    headers: { "content-type": `multipart/form-data;boundary=${boundary}` },
-  });
-  if (!res.ok)
-    throw new Error(`pushy 文件直传失败（HTTP ${res.status}）：${res.statusText || instr.url}`);
+  );
+  if (res.status > 299) throw new Error(`pushy 文件直传失败（HTTP ${res.status}）：${instr.url}`);
   const key = fields.find(([name]) => name === "key")?.[1];
   if (!key) throw new Error(`pushy /upload 指令缺 formData.key（服务端响应异常）：${instr.url}`);
   return key;
+}
+
+/** 直传实现（node:http(s) 原生；测试注入 mock） */
+export type HttpUploadImpl = (
+  method: "POST" | "PUT",
+  url: string,
+  headers: Record<string, string>,
+  body: Buffer,
+) => Promise<{ status: number }>;
+
+export async function nodeHttpUpload(
+  method: "POST" | "PUT",
+  url: string,
+  headers: Record<string, string>,
+  body: Buffer,
+): Promise<{ status: number }> {
+  const mod = url.startsWith("https:") ? nodeHttps : nodeHttp;
+  return new Promise((resolve, reject) => {
+    const req = mod.request(url, { method, headers });
+    req.on("response", (res) => {
+      res.resume();
+      resolve({ status: res.statusCode ?? 0 });
+    });
+    req.on("error", (e) => reject(new Error(`pushy 直传网络错误：${url}——${e.message}`)));
+    req.end(body);
+  });
 }
 
 /** packageVersion → packageId 精确匹配（对照 CLI update：pkg.name === packageVersion） */
@@ -236,6 +285,43 @@ async function listAllPackages(
   return out;
 }
 
+/** 项目直接依赖（dependencies+devDependencies）的实装版本映射（逐级向上找 node_modules，键排序）。
+ *  对照官方 dep-versions.js 同构：服务端按 deps["react-native-update"] 做热更兼容门禁与变更提示 */
+export function readDepVersions(cwd: string): Record<string, string> {
+  let pkg: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+  try {
+    pkg = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8"));
+  } catch {
+    return {};
+  }
+  const versions: Record<string, string> = {};
+  for (const dep of new Set([
+    ...Object.keys(pkg.dependencies ?? {}),
+    ...Object.keys(pkg.devDependencies ?? {}),
+  ])) {
+    let dir = path.resolve(cwd);
+    for (;;) {
+      try {
+        const installed = JSON.parse(
+          fs.readFileSync(path.join(dir, "node_modules", dep, "package.json"), "utf8"),
+        ) as { version?: string };
+        if (typeof installed.version === "string") versions[dep] = installed.version;
+        break;
+      } catch {
+        // 该层级未安装，向上找
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  return Object.fromEntries(
+    Object.keys(versions)
+      .sort()
+      .map((k) => [k, versions[k]!]),
+  );
+}
+
 /** OpenAPI 实现 PushyCli 的服务端操作（ppk 由调用方产出，见 PushyCli 契约注释） */
 export function createPushyApi(opts: PushyApiOptions): PushyCli {
   const baseUrl = opts.baseUrl ?? PUSHY_DEFAULT_BASE_URL;
@@ -245,7 +331,14 @@ export function createPushyApi(opts: PushyApiOptions): PushyCli {
 
   return {
     async publish(input) {
-      const hash = await uploadFile(f, baseUrl, opts.token, input.appId, input.ppk);
+      const hash = await uploadFile(
+        f,
+        baseUrl,
+        opts.token,
+        input.appId,
+        input.ppk,
+        opts.httpUpload,
+      );
       const { id } = await q<{ id: number }>(`/app/${input.appId}/version/create`, {
         method: "POST",
         body: JSON.stringify({
@@ -253,6 +346,7 @@ export function createPushyApi(opts: PushyApiOptions): PushyCli {
           hash,
           description: input.description ?? "",
           metaInfo: "",
+          deps: input.deps,
         }),
       });
       // packageVersion + rollout = 绑定目标原生版本（对照 CLI publish --packageVersion 的隐式 update）
@@ -260,11 +354,16 @@ export function createPushyApi(opts: PushyApiOptions): PushyCli {
       return { versionId: id };
     },
 
-    async uploadApp(appId, appFile, versionName) {
-      const hash = await uploadFile(f, baseUrl, opts.token, appId, appFile);
+    async uploadApp(appId, appFile, versionName, deps) {
+      const hash = await uploadFile(f, baseUrl, opts.token, appId, appFile, opts.httpUpload);
       const { id } = await q<{ id: number }>(`/app/${appId}/package/create`, {
         method: "POST",
-        body: JSON.stringify({ name: versionName, hash, buildTime: String(Date.now()) }),
+        body: JSON.stringify({
+          name: versionName,
+          hash,
+          buildTime: String(Date.now()),
+          deps,
+        }),
       });
       return { packageId: id, version: versionName };
     },

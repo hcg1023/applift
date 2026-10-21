@@ -28,9 +28,12 @@ export {
 } from "./rn-update.js";
 export {
   createPushyApi,
+  nodeHttpUpload,
+  readDepVersions,
   PUSHY_DEFAULT_BASE_URL,
   PUSHY_TOKEN_KEY,
   type FetchImpl,
+  type HttpUploadImpl,
   type PushyApiOptions,
   type PushyCli,
 } from "./pushy-api.js";

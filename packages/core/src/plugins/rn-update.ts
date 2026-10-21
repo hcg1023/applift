@@ -19,7 +19,7 @@ import type {
 } from "../update.js";
 import type { AppliftPlugin, HookContext } from "../plugin.js";
 import type { PushyCli } from "./pushy-api.js";
-import { createPushyApi, PUSHY_TOKEN_KEY } from "./pushy-api.js";
+import { createPushyApi, readDepVersions, PUSHY_TOKEN_KEY } from "./pushy-api.js";
 
 export interface RnUpdateOptions {
   /** 各平台的 app 记录号（如 harmony: 34166）；未声明的平台不启用热更 */
@@ -388,6 +388,7 @@ export function makeRnUpdateProvider(opts: RnUpdateOptions, cli?: PushyCli): Upd
         description: ctx.note,
         // 测试通道绑定偏移版本（major+1000）——只有装着测试包的设备能收到
         packageVersion: betaPackageVersion(versionName),
+        deps: readDepVersions(ctx.cwd),
       });
       return { versionName: name, versionId: r.versionId };
     },
@@ -404,6 +405,7 @@ export function makeRnUpdateProvider(opts: RnUpdateOptions, cli?: PushyCli): Upd
         // 直接发正式：绑当前工程版本（正式原生线，非偏移测试线）
         packageVersion: versionName,
         rollout,
+        deps: readDepVersions(ctx.cwd),
       });
       return {
         versionName: name,
@@ -470,6 +472,7 @@ export function rnUpdate(opts: RnUpdateOptions = {}, cli?: PushyCli): AppliftPlu
           appId,
           result.artifactPath,
           versionName,
+          readDepVersions(hookCtx.cwd),
         );
       } catch (e) {
         // 基线上传失败不阻断发布主流程（发版已成功）；提示人工补传
