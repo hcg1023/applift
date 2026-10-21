@@ -240,7 +240,7 @@ describe("beta/release 热更路由集成（判定 → 推荐 → 热更执行�
         "    'update:register': (providers) => providers.push({",
         "      id: 'stub-update', frameworks: ['rn'],",
         `      judge: () => ({ recommendation: '${recommendation}', confidence: 'high', evidence: [{ path: 'src/a.ts', rule: 'JS 层', note: '' }] }),`,
-        "      publishToTest: async (ctx) => { (globalThis.__otaCaptured ??= []).push({ kind: 'publishToTest', platform: ctx.platform }); return { versionName: '4.0.0-ota.1', versionId: 1 }; },",
+        "      publishToBeta: async (ctx) => { (globalThis.__otaCaptured ??= []).push({ kind: 'publishToBeta', platform: ctx.platform }); return { versionName: '4.0.0-ota.1', versionId: 1 }; },",
         "      promoteToProd: async (ctx) => { (globalThis.__otaCaptured ??= []).push({ kind: 'promoteToProd', platform: ctx.platform }); return { versionName: '4.0.0-ota.1' }; },",
         "    }),",
         "  }],",
@@ -250,7 +250,7 @@ describe("beta/release 热更路由集成（判定 → 推荐 → 热更执行�
     return dir;
   }
 
-  it("beta 判定 ota + --yes → 走热更（publishToTest），不进原生管线", async () => {
+  it("beta 判定 ota + --yes → 走热更（publishToBeta），不进原生管线", async () => {
     const dir = otaProviderProject("ota");
     const slot = globalThis as { __otaCaptured?: Array<{ kind: string; platform: string }> };
     slot.__otaCaptured = [];
@@ -258,7 +258,7 @@ describe("beta/release 热更路由集成（判定 → 推荐 → 热更执行�
       await program.parseAsync(["beta", "harmony", "--cwd", dir, "--yes"], {
         from: "user",
       });
-      expect(slot.__otaCaptured).toEqual([{ kind: "publishToTest", platform: "harmony" }]);
+      expect(slot.__otaCaptured).toEqual([{ kind: "publishToBeta", platform: "harmony" }]);
     } finally {
       delete slot.__otaCaptured;
       fs.rmSync(dir, { recursive: true, force: true });
@@ -316,7 +316,7 @@ describe("beta/release 热更路由集成（判定 → 推荐 → 热更执行�
       await program.parseAsync(["beta", "harmony", "--cwd", dir, "--delivery", "ota"], {
         from: "user",
       });
-      expect(slot.__otaCaptured).toEqual([{ kind: "publishToTest", platform: "harmony" }]);
+      expect(slot.__otaCaptured).toEqual([{ kind: "publishToBeta", platform: "harmony" }]);
     } finally {
       delete slot.__otaCaptured;
       fs.rmSync(dir, { recursive: true, force: true });
@@ -404,7 +404,7 @@ describe("beta/release 热更路由集成（判定 → 推荐 → 热更执行�
 });
 
 describe("未接入热更的平台走原生（provider.platforms 过滤）", () => {
-  it("provider 只支持 harmony 时，beta android 不被判定劫持（不调 publishToTest，进原生管线）", async () => {
+  it("provider 只支持 harmony 时，beta android 不被判定劫持（不调 publishToBeta，进原生管线）", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-plat-"));
     fs.writeFileSync(
       path.join(dir, "package.json"),
@@ -420,7 +420,7 @@ describe("未接入热更的平台走原生（provider.platforms 过滤）", () 
         "    'update:register': (providers) => providers.push({",
         "      id: 'scoped-update', frameworks: ['rn'], platforms: ['harmony'],",
         "      judge: () => ({ recommendation: 'ota', confidence: 'high', evidence: [] }),",
-        "      publishToTest: async () => { (globalThis.__platCaptured ??= []).push('publishToTest'); return { versionName: 'x', versionId: 1 }; },",
+        "      publishToBeta: async () => { (globalThis.__platCaptured ??= []).push('publishToBeta'); return { versionName: 'x', versionId: 1 }; },",
         "      promoteToProd: async () => ({ versionName: 'x' }),",
         "    }),",
         "  }],",
@@ -488,7 +488,7 @@ describe("未接入热更的平台走原生（provider.platforms 过滤）", () 
         "    'update:register': (providers) => providers.push({",
         "      id: 'stub-update', frameworks: ['rn'],",
         "      judge: () => ({ recommendation: 'native', confidence: 'high', evidence: [{ path: 'harmony/x', rule: '原生目录', note: '' }] }),",
-        "      publishToTest: async () => { throw new Error('不应走热更'); },",
+        "      publishToBeta: async () => { throw new Error('不应走热更'); },",
         "      promoteToProd: async () => ({ versionName: 'x' }),",
         "    }),",
         "  }],",

@@ -120,7 +120,8 @@ describe("update:register（UpdateProvider 注册）", () => {
         confidence: "high",
         evidence: [],
       }),
-      publishToTest: async () => ({ versionName: "", versionId: 0 }),
+      publishToProd: async () => ({ versionName: "", versionId: 0 }),
+      publishToBeta: async () => ({ versionName: "", versionId: 0 }),
       promoteToProd: async () => ({ versionName: "" }),
     };
     const host = new PluginHost([

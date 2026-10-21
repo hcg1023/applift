@@ -28,6 +28,8 @@ export interface HookContext {
   channel?: string;
   /** 项目根目录 */
   cwd: string;
+  /** 该渠道已解析的 profile 凭据（stage/submit 级钩子才有；供基线上传类插件读服务端 token） */
+  credentials?: Readonly<Record<string, string>>;
 }
 
 export interface AppliftPlugin {

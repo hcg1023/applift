@@ -488,6 +488,21 @@ program
         config: projCfg,
       } = await loadPluginHost(cmdOpts.cwd);
 
+      // profile 解析链：projects.json 个人选择（applift use）> 项目配置团队默认。
+      // 提到热更路由之前：OTA 路径 publishToBeta 的 ctx 也要带凭据（PUSHY_API_TOKEN）。
+      // 无凭据文件/无该 profile 时降级为空：纯热更项目可不配渠道凭据，缺键报错延迟到
+      // 消费处（OTA → PUSHY_API_TOKEN fail-fast；原生渠道 → 各渠道 required 的精确提示）
+      let creds: Record<string, string> = {};
+      try {
+        creds = resolveProfile(
+          loadCredentialsLayered(cmdOpts.cwd),
+          resolveProfileFor(cmdOpts.cwd, projCfg.profile),
+          KNOWN_CREDENTIAL_KEYS,
+        );
+      } catch {
+        // 原生路径下渠道侧会给出缺哪个键的报错；profile 名拼错可由 doctor 的 profile 来源展示定位
+      }
+
       // ---------- 热更路由（有 UpdateProvider 插件时判定推荐；--delivery 显式覆盖）----------
       // 路由在 bump 之前：热更路径不动原生版本号。无 platform（多渠道并行）时不路由（原生多渠道语义）。
       if (platform) {
@@ -503,20 +518,26 @@ program
           platform,
         );
         if (decision?.mode === "ota" && decision.provider) {
-          const r = await decision.provider.publishToTest({
+          if (!decision.provider.publishToBeta)
+            throw new Error(
+              `热更 provider「${decision.provider.id}」未提供内测发布（publishToBeta）——该 provider 仅支持正式发布，直接 applift release ${platform}`,
+            );
+          const r = await decision.provider.publishToBeta({
             cwd: cmdOpts.cwd,
             framework: fw,
             platform,
             note: cmdOpts.note,
+            credentials: creds,
+            artifact: cmdOpts.artifact ? path.resolve(cmdOpts.artifact) : undefined,
           });
           p.log.success(
-            `热更测试版本已发布：${pc.bold(r.versionName)}（测试设备将静默收到，验证后 applift release 发布正式）`,
+            `热更 beta 已发布：${pc.bold(r.versionName)}（测试设备将静默收到，验证后 applift release 发布正式）`,
           );
           // 热更同样进 history（审计断链会让 history/doctor 对热更发布失明）
           appendEntry({
             ts: Date.now(),
             cwd: path.resolve(cmdOpts.cwd), // 绝对路径：审计跨目录可读（用户传 --cwd . 时相对路径无意义）
-            artifactSha256: "", // ppk 在 provider 内部构建，无稳定工件可哈希
+            artifactSha256: "", // ppk 是先行产出的构建产物（--artifact/探测，路径在 provider 内解析），此处不重复哈希
             channel: decision.provider.id,
             action: "stage",
             ok: true,
@@ -561,12 +582,6 @@ program
         }
       }
 
-      // profile 解析链：projects.json 个人选择（applift use）> 项目配置团队默认
-      const creds = resolveProfile(
-        loadCredentialsLayered(cmdOpts.cwd),
-        resolveProfileFor(cmdOpts.cwd, projCfg.profile),
-        KNOWN_CREDENTIAL_KEYS,
-      );
       const detected = detectBundleIds(cmdOpts.cwd);
 
       /** 产物探测：--artifact 直用（渠道自行校验扩展名）；否则按平台 patterns 找最新且扩展名匹配的产物 */
@@ -900,18 +915,38 @@ program
     );
     if (decision?.mode === "ota" && decision.provider) {
       if (opts.dryRun) {
-        p.log.info(`[dry-run] 将把测试通道最新已验证热更 promote 到正式（platform=${platform}）`);
+        p.log.info(
+          `[dry-run] 热更发布正式：优先 promote 测试通道已验证热更，无则直接发布当前 ppk（platform=${platform}）`,
+        );
         return;
       }
-      const r = await decision.provider.promoteToProd({
+      // 两条腿：测试通道有已验证热更且 provider 支持 promote → 重绑正式（零构建）；
+      // 否则 publishToProd 直接发正式（ppk 产物入口）——热更不依赖 beta
+      const publishCtx = {
         cwd: opts.cwd,
         framework,
         platform,
         note: opts.note,
         rollout: opts.rollout !== undefined ? Number(opts.rollout) : undefined,
-      });
+        credentials: creds,
+        artifact: opts.artifact ? path.resolve(opts.artifact) : undefined, // 显式 ppk（与 beta 对称：跳过探测与护栏）
+      };
+      let r: { versionName: string; rollout?: number };
+      let via: "promote" | "publish";
+      const promoted = decision.provider.promoteToProd
+        ? await decision.provider.promoteToProd(publishCtx)
+        : null;
+      if (promoted) {
+        r = promoted;
+        via = "promote";
+      } else {
+        if (decision.provider.promoteToProd)
+          p.log.info("测试通道无可 promote 热更，改为直接发正式热更（ppk 产物入口）");
+        r = await decision.provider.publishToProd(publishCtx);
+        via = "publish";
+      }
       p.log.success(
-        `热更已发布正式：${pc.bold(r.versionName)}${r.rollout ? pc.dim(`（灰度 ${r.rollout}%）`) : ""}`,
+        `热更已发布正式${pc.dim(`（${via === "promote" ? "promote 测试热更" : "直接发布"}）`)}：${pc.bold(r.versionName)}${r.rollout ? pc.dim(`（灰度 ${r.rollout}%）`) : ""}`,
       );
       appendEntry({
         ts: Date.now(),

@@ -1,20 +1,25 @@
 /**
  * rn-update 插件：react-native-update（pushy/cresc/自建服务端）的 applift UpdateProvider 实现。
- * 判定引擎为纯函数（五形态完备性见测试头注释）；发布链路 = ppk 构建 / 测试通道 / promote / 原生基线。
+ * 判定引擎为纯函数（五形态完备性见测试头注释）；发布链路 = ppk 产物入口 / 测试通道 / promote / 原生基线。
+ * ppk 是构建产物（pushy bundle = metro + hermesc，完整构建链）：由项目先行产出
+ * （npm script / CI），applift 只探测/接收——不 spawn 构建命令（架构不变量 1）。
  */
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { readProjectVersions } from "../version/project.js";
+import { readArtifactVersion } from "../version/artifact.js";
+import { collectReleaseDiff } from "../update.js";
+import { findArtifacts } from "../framework.js";
 import type {
   DeliveryJudgement,
   FrameworkContext,
   PublishContext,
   UpdateProvider,
 } from "../update.js";
-import type { AppliftPlugin } from "../plugin.js";
-import type { PushyCli } from "./pushy-cli.js";
-import { createPushyCli } from "./pushy-cli.js";
+import type { AppliftPlugin, HookContext } from "../plugin.js";
+import type { PushyCli } from "./pushy-api.js";
+import { createPushyApi, PUSHY_TOKEN_KEY } from "./pushy-api.js";
 
 export interface RnUpdateOptions {
   /** 各平台的 app 记录号（如 harmony: 34166）；未声明的平台不启用热更 */
@@ -26,7 +31,20 @@ export interface RnUpdateOptions {
   /** 正式发布默认灰度比例（缺省 100 全量——promote 语义是"验证后发正式"，灰度是显式选择；
    *  优先级：--rollout 旗标 > 此配置 > 内置默认） */
   defaultRollout?: number;
+  /** pushy/cresc 服务端 API 根（自建 cresc 传入，如 https://cresc.example.com/api）；缺省 pushy 官方 */
+  serverUrl?: string;
+  /** 各平台 ppk 产物探测 pattern（相对项目根，glob）；缺省 pushy 官方输出约定
+   *  .pushy/output/{platform}.*.ppk。探测取 mtime 最新；--artifact 显式指定时跳过探测与护栏 */
+  ppkPatterns?: Partial<Record<"harmony" | "android" | "ios", string[]>>;
 }
+
+/** ppk 探测内置默认：pushy CLI 官方输出约定（tempDir .pushy + output/{platform}.${time}.ppk；
+ *  cresc 同构，仅目录 .cresc.temp 不同——用 cresc 的项目在 ppkPatterns 覆盖） */
+const DEFAULT_PPK_PATTERNS: Record<"harmony" | "android" | "ios", string[]> = {
+  harmony: [".pushy/output/harmony.*.ppk"],
+  android: [".pushy/output/android.*.ppk"],
+  ios: [".pushy/output/ios.*.ppk"],
+};
 
 /** 项目原生目录：任一命中即必须原生发版 */
 const NATIVE_DIRS = ["harmony/", "ios/", "android/"];
@@ -218,21 +236,21 @@ export function judgeDelivery(
 }
 
 /** pushy 官方测试包约定：与正式同源码、仅版本号偏移（major+1000，如 1.6.0→1001.6.0） */
-const TEST_VERSION_OFFSET = 1000;
+const BETA_VERSION_OFFSET = 1000;
 
 /** 正式 promote 的内置默认灰度比例（100 = 全量）。promote 语义是"测试通道已验证、发正式"，
  *  全量是常态、灰度是显式选择（--rollout 或 rnUpdate({ defaultRollout })），不藏在配置后面 */
 const DEFAULT_ROLLOUT = 100;
 
 /** 生成测试包偏移版本号（major+1000）；非数字开头版本号无法偏移，显式报错 */
-export function testPackageVersion(versionName: string): string {
+export function betaPackageVersion(versionName: string): string {
   const m = /^(\d+)(\..+)?$/.exec(versionName);
   if (!m) {
     throw new Error(
-      `versionName「${versionName}」非 X.Y.Z 形态，无法按 major+${TEST_VERSION_OFFSET} 生成测试包偏移版本`,
+      `versionName「${versionName}」非 X.Y.Z 形态，无法按 major+${BETA_VERSION_OFFSET} 生成测试包偏移版本`,
     );
   }
-  return `${Number(m[1]!) + TEST_VERSION_OFFSET}${m[2] ?? ""}`;
+  return `${Number(m[1]!) + BETA_VERSION_OFFSET}${m[2] ?? ""}`;
 }
 
 function platformAppId(opts: RnUpdateOptions, platform: string): number {
@@ -268,38 +286,136 @@ function nextPatchNumber(names: Array<{ name: string }>, versionName: string): n
   return max + 1;
 }
 
-/** provider 构造（cli 注入点：测试 mock / 将来直连 API） */
-export function makeRnUpdateProvider(
+/**
+ * 客户端解析：注入了 cli（测试 mock / 特殊 transport）则直用；缺省按凭据构造 OpenAPI 客户端
+ * （token 来自 PUSHY_API_TOKEN，bundle 始终走本地 pushy CLI）。
+ * fail-fast：token 缺失在本地 bundle 之前报错（不打无谓的 metro 包）。
+ */
+function resolvePushyClient(
   opts: RnUpdateOptions,
-  cli: PushyCli = createPushyCli(),
-): UpdateProvider {
+  cli: PushyCli | undefined,
+  credentials: Readonly<Record<string, string>> | undefined,
+): PushyCli {
+  if (cli) return cli;
+  const token = credentials?.[PUSHY_TOKEN_KEY];
+  if (!token)
+    throw new Error(
+      `pushy 热更缺少凭据 ${PUSHY_TOKEN_KEY}：在 ~/.applift/credentials.json 对应 profile 配置` +
+        `（pushy 网页控制台 → API Token 页创建；CI 可用同名环境变量覆盖）`,
+    );
+  return createPushyApi({ baseUrl: opts.serverUrl, token });
+}
+
+/**
+ * ppk 产物入口：--artifact 显式 > ppkPatterns 探测（mtime 最新）。
+ * 探测路径强制新鲜度护栏；显式 --artifact 是用户声明「我知道我在发什么」，跳过护栏
+ * （与 --delivery ota 的显式覆盖语义一致，同原生 --artifact 不校验产物新旧）。
+ */
+export async function resolvePpk(opts: RnUpdateOptions, ctx: PublishContext): Promise<string> {
+  if (ctx.artifact) return ctx.artifact;
+  // provider.platforms 已过滤为配置过 appId 的三端，窄化安全
+  const platform = ctx.platform as "harmony" | "android" | "ios";
+  const patterns = opts.ppkPatterns?.[platform] ?? DEFAULT_PPK_PATTERNS[platform];
+  const ppk = findArtifacts(ctx.cwd, patterns)[0];
+  if (!ppk)
+    throw new Error(
+      `未探测到 ${platform} 的 ppk 热更包（${patterns.join(", ")}）——ppk 是构建产物，` +
+        `请先产出（如 npm run ppk:${platform} = pushy bundle --platform ${platform} --no-interactive）再 applift beta，` +
+        `或用 --artifact 显式指定 ppk 路径`,
+    );
+  await assertPpkFresh(ctx.cwd, ppk);
+  return ppk;
+}
+
+/**
+ * 新鲜度护栏：工作区未发布改动（锚点..当前，与判定同口径 collectReleaseDiff）的最新文件
+ * mtime 晚于 ppk → 报错——防止忘重新 bundle 把旧 JS 发给测试设备。
+ * 无锚点/无 diff/文件已删除（无 mtime 可比）不拦。
+ */
+async function assertPpkFresh(cwd: string, ppk: string): Promise<void> {
+  const diff = await collectReleaseDiff(cwd);
+  if (!diff) return;
+  let newest = 0;
+  let newestFile = "";
+  for (const f of diff) {
+    try {
+      const m = fs.statSync(path.join(cwd, f)).mtimeMs;
+      if (m > newest) {
+        newest = m;
+        newestFile = f;
+      }
+    } catch {
+      // 已删除/改名：无 mtime 可比，跳过
+    }
+  }
+  if (newest > 0 && fs.statSync(ppk).mtimeMs < newest) {
+    throw new Error(
+      `ppk（${path.basename(ppk)}）早于最新代码改动（${newestFile}）——疑似忘重新 bundle，` +
+        `请重新产出 ppk 后再发；确认无误可 --artifact 显式指定跳过此护栏`,
+    );
+  }
+}
+/** 发布新热更的公共骨架：客户端/appId/版本号/ppk 探测 + 服务端取号（publishToBeta/publishToProd 共用） */
+async function preparePublish(
+  opts: RnUpdateOptions,
+  cli: PushyCli | undefined,
+  ctx: PublishContext,
+): Promise<{ client: PushyCli; appId: number; versionName: string; ppk: string; name: string }> {
+  const client = resolvePushyClient(opts, cli, ctx.credentials);
+  const appId = platformAppId(opts, ctx.platform);
+  const versionName = currentVersionName(ctx);
+  const ppk = await resolvePpk(opts, ctx);
+  const existing = await client.versions(appId);
+  const name = `${versionName}-patch.${nextPatchNumber(existing, versionName)}`;
+  return { client, appId, versionName, ppk, name };
+}
+
+/** provider 构造（cli 注入点见 resolvePushyClient） */
+export function makeRnUpdateProvider(opts: RnUpdateOptions, cli?: PushyCli): UpdateProvider {
   return {
     id: "rn-update",
     frameworks: ["rn"],
     // 已配置 app 记录号的平台即已接入热更；其余平台路由直接走原生
     platforms: (["harmony", "android", "ios"] as const).filter((k) => typeof opts[k] === "number"),
     judge: (diff: string[], ctx: FrameworkContext) => judgeDelivery(diff, ctx, opts),
-    async publishToTest(ctx: PublishContext) {
-      const appId = platformAppId(opts, ctx.platform);
-      const versionName = currentVersionName(ctx);
-      const existing = await cli.versions(appId);
-      const name = `${versionName}-patch.${nextPatchNumber(existing, versionName)}`;
-      const ppk = await cli.bundle(ctx.platform, ctx.cwd);
-      const r = await cli.publish({
+    async publishToBeta(ctx: PublishContext) {
+      const { client, appId, versionName, ppk, name } = await preparePublish(opts, cli, ctx);
+      const r = await client.publish({
         appId,
         ppk,
         platform: ctx.platform,
         name,
         description: ctx.note,
         // 测试通道绑定偏移版本（major+1000）——只有装着测试包的设备能收到
-        packageVersion: testPackageVersion(versionName),
+        packageVersion: betaPackageVersion(versionName),
       });
       return { versionName: name, versionId: r.versionId };
     },
+    async publishToProd(ctx: PublishContext) {
+      const { client, appId, versionName, ppk, name } = await preparePublish(opts, cli, ctx);
+      // 灰度比例优先级：--rollout 旗标 > rnUpdate({ defaultRollout }) > 内置默认 100（全量）
+      const rollout = ctx.rollout ?? opts.defaultRollout ?? DEFAULT_ROLLOUT;
+      const r = await client.publish({
+        appId,
+        ppk,
+        platform: ctx.platform,
+        name,
+        description: ctx.note,
+        // 直接发正式：绑当前工程版本（正式原生线，非偏移测试线）
+        packageVersion: versionName,
+        rollout,
+      });
+      return {
+        versionName: name,
+        versionId: r.versionId,
+        ...(rollout !== undefined ? { rollout } : {}),
+      };
+    },
     async promoteToProd(ctx: PublishContext) {
+      const client = resolvePushyClient(opts, cli, ctx.credentials);
       const appId = platformAppId(opts, ctx.platform);
       const versionName = currentVersionName(ctx);
-      const existing = await cli.versions(appId);
+      const existing = await client.versions(appId);
       const candidates = existing
         .map((v) => {
           const m = v.name.match(
@@ -310,22 +426,11 @@ export function makeRnUpdateProvider(
         .filter((x): x is { id: number; hash: string; name: string; n: number } => x !== null)
         .sort((a, b) => b.n - a.n);
       const latest = candidates[0];
-      if (!latest) {
-        const patchNames = existing
-          .map((v) => v.name)
-          .filter((n) => /-patch\.\d+$/.test(n))
-          .slice(0, 5);
-        throw new Error(
-          `测试通道没有 ${versionName}-patch.N 热更版本可供 promote${
-            patchNames.length > 0
-              ? `（现存：${patchNames.join(", ")}${existing.length > 5 ? " …" : ""}）`
-              : ""
-          }：先 applift beta 发布测试热更并验证`,
-        );
-      }
+      // 无可 promote 返回 null（契约语义）：调用方转 publishToProd 直接发正式
+      if (!latest) return null;
       // 灰度比例优先级：--rollout 旗标 > rnUpdate({ defaultRollout }) > 内置默认 100（全量）
       const rollout = ctx.rollout ?? opts.defaultRollout ?? DEFAULT_ROLLOUT;
-      await cli.rebind({ appId, versionId: latest.id, packageVersion: versionName, rollout });
+      await client.rebind({ appId, versionId: latest.id, packageVersion: versionName, rollout });
       return { versionName: latest.name, ...(rollout !== undefined ? { rollout } : {}) };
     },
   };
@@ -336,12 +441,9 @@ const CHANNEL_PLATFORM: Record<string, string> = {
   agc: "harmony",
 };
 
-/** rnUpdate 插件工厂：注册完整 provider（判定 + 测试发布 + promote）+ 原生发版自动基线。
- *  cli 注入点：测试 mock / 将来进程内直连 API。 */
-export function rnUpdate(
-  opts: RnUpdateOptions = {},
-  cli: PushyCli = createPushyCli(),
-): AppliftPlugin {
+/** rnUpdate 插件工厂：注册完整 provider（判定 + beta 发布 + promote）+ 原生发版自动基线。
+ *  cli 注入点：测试 mock / 特殊 transport；缺省 OpenAPI 客户端（token 来自 ctx.credentials）。 */
+export function rnUpdate(opts: RnUpdateOptions = {}, cli?: PushyCli): AppliftPlugin {
   const provider = makeRnUpdateProvider(opts, cli);
   return {
     name: "rn-update",
@@ -349,13 +451,26 @@ export function rnUpdate(
       providers.push(provider);
     },
     // stage:after 的 result 自带 artifactPath（core 补齐的接口字段），无插件级状态、并发天然安全
-    async "stage:after"(result: { channel: string; ok: boolean; artifactPath?: string }) {
+    async "stage:after"(
+      result: { channel: string; ok: boolean; artifactPath?: string },
+      hookCtx: HookContext,
+    ) {
       const platform = CHANNEL_PLATFORM[result.channel];
       if (!result.ok || !platform || !result.artifactPath) return;
       const appId = (opts as Record<string, unknown>)[platform];
       if (typeof appId !== "number") return; // 平台未配置热更，不上传
       try {
-        await cli.uploadApp(appId, result.artifactPath);
+        // 基线版本号从产物读取（旧链路服务端从包内解析，API 化后由调用方显式传入）
+        const versionName = readArtifactVersion(result.artifactPath)?.versionName;
+        if (!versionName)
+          throw new Error(
+            `未能从产物读出 versionName：${result.artifactPath}（readArtifactVersion 不支持该格式？）`,
+          );
+        await resolvePushyClient(opts, cli, hookCtx.credentials).uploadApp(
+          appId,
+          result.artifactPath,
+          versionName,
+        );
       } catch (e) {
         // 基线上传失败不阻断发布主流程（发版已成功）；提示人工补传
         process.stderr.write(`⚠ pushy 基线上传失败（请人工补传）：${(e as Error).message}\n`);

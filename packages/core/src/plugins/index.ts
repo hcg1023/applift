@@ -27,9 +27,10 @@ export {
   type RnUpdateOptions,
 } from "./rn-update.js";
 export {
-  createPushyCli,
-  spawnPushy,
-  type CliResult,
-  type CliRunner,
+  createPushyApi,
+  PUSHY_DEFAULT_BASE_URL,
+  PUSHY_TOKEN_KEY,
+  type FetchImpl,
+  type PushyApiOptions,
   type PushyCli,
-} from "./pushy-cli.js";
+} from "./pushy-api.js";
