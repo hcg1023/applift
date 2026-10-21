@@ -59,7 +59,6 @@ import {
   type VersionCodeConfig,
   type FrameworkAdapter,
 } from "@applift/core";
-import { betaPackageVersion } from "@applift/core/plugins";
 import { discoverXiaomiIcon, resolveChannelTarget } from "./target.js";
 
 /** 发布链路守卫：framework 必须来自插件声明，未声明直接报错（不静默兜底） */
@@ -181,7 +180,12 @@ function expectedArtifactVersion(
     : undefined;
   if (!versionName) return undefined;
   if (mode === "release") return versionName;
-  return hotPlatforms.has(platform) ? betaPackageVersion(versionName) : undefined;
+  // 偏移算法内联（major+1000）：与 rn-update 的 betaPackageVersion 同构。
+  // 不从 @applift/core/plugins 静态 import——其 chunk 链上具名 re-export 会被 ESM
+  // 链接期校验拒绝（实测 betaPackageVersion 动态可见、静态 import 报 does not provide）
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(versionName);
+  if (!m) return undefined;
+  return hotPlatforms.has(platform) ? `${Number(m[1]) + 1000}.${m[2]}.${m[3]}` : undefined;
 }
 
 /**
@@ -655,7 +659,7 @@ program
               .slice(0, 3)
               .join(
                 ", ",
-              )}）——测试设备需装偏移包才能收到测试热更，用 npm run build:test:${plat} -- --offset 构建或 --artifact 显式指定`,
+              )}）——测试分发的包全为偏移版本（major+1000），请构建偏移测试包后再发，或 --artifact 显式指定`,
           );
         return picked.artifact;
       };
@@ -839,7 +843,7 @@ program
               .slice(0, 3)
               .join(
                 ", ",
-              )}）——测试设备需装偏移包才能收到测试热更，用 npm run build:test:${platform} -- --offset 构建或 --artifact 显式指定`,
+              )}）——测试分发的包全为偏移版本（major+1000），请构建偏移测试包后再发，或 --artifact 显式指定`,
           );
         artifactPath = picked.artifact;
       }
