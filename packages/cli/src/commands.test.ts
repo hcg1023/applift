@@ -245,7 +245,7 @@ describe("全命令冒烟（非交互路径）", () => {
       JSON.stringify({ summary: { app: { version: { name: "4.0.0", code: 4000000 } } } }),
     );
     const r = cli(["beta", "harmony", "--delivery", "native", "--yes"]);
-    expect(r.out).toMatch(/未探测到偏移测试包 1004\.0\.0[\s\S]*--offset/);
+    expect(r.out).toMatch(/未探测到偏移测试包 1004\.0\.0[\s\S]*偏移版本（major\+1000）/);
   });
 
   it("version：空目录 → 未识别框架兜底提示", () => {
