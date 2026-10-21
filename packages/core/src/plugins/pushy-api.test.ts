@@ -268,6 +268,58 @@ describe("错误语义与配置", () => {
     expect(calls).toBe(2);
   });
 
+  it("非 200 且响应体非 JSON → 退回 statusText 报错（json.parse 容错分支）", async () => {
+    const fetchImpl: FetchImpl = async () =>
+      new Response("<html>Bad Gateway</html>", { status: 502, statusText: "Bad Gateway" });
+    const cli = createPushyApi({ token: "t", fetchImpl });
+    await expect(cli.versions(1)).rejects.toThrow(/HTTP 502[\s\S]*Bad Gateway/);
+  });
+
+  it("预签名 PUT 直传透传服务端下发的额外 headers（自建节点鉴权头）", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-pushyapi-put-"));
+    const file = path.join(dir, "x.hap");
+    fs.writeFileSync(file, "hap-bytes");
+    const seen: Record<string, string> = {};
+    const { fetchImpl } = mockFetch(
+      {
+        "/upload": {
+          method: "PUT",
+          url: "https://s3.example.com/presigned",
+          key: "s3Key",
+          headers: { "x-amz-server-side-encryption": "AES256" },
+        },
+        "/app/1/package/create": { id: 5 },
+      },
+      (req) => {
+        if (req.url.startsWith("https://s3.example.com")) {
+          Object.assign(seen, req.headers);
+          return new Response(null, { status: 200 });
+        }
+        return undefined;
+      },
+    );
+    const cli = createPushyApi({ token: "t", fetchImpl });
+    await cli.uploadApp(1, file, "4.0.0");
+    expect(seen["x-amz-server-side-encryption"]).toBe("AES256");
+    expect(seen["content-length"]).toBe("9");
+  });
+
+  it("文件 part 的 Content-Type：.map → application/json（sourcemap 类扩展名分支）", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-pushyapi-map-"));
+    const file = path.join(dir, "bundle.map");
+    fs.writeFileSync(file, "{}");
+    const { fetchImpl, calls } = mockFetch(
+      { "/upload": UPLOAD_ROUTE, "/app/1/package/create": { id: 6 } },
+      () => new Response(null, { status: 204 }),
+    );
+    const cli = createPushyApi({ token: "t", fetchImpl });
+    await cli.uploadApp(1, file, "4.0.0");
+    const oss = calls.find((c) => c.url.startsWith("https://oss.example.com"))!;
+    expect(Buffer.from(oss.body as Uint8Array).toString()).toContain(
+      "Content-Type: application/json",
+    );
+  });
+
   it("401 → 提示更新 PUSHY_API_TOKEN", async () => {
     const fetchImpl: FetchImpl = async () =>
       Response.json({ message: "invalid token" }, { status: 401 });
