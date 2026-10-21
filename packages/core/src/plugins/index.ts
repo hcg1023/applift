@@ -21,6 +21,7 @@ export {
   tauriAdapter,
 } from "./frameworks.js";
 export {
+  betaPackageVersion,
   judgeDelivery,
   makeRnUpdateProvider,
   rnUpdate,
