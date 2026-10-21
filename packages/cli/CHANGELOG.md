@@ -1,5 +1,12 @@
 # @applift/cli
 
+## 0.8.1
+
+### Patch Changes
+
+- Updated dependencies [7da28ed]
+  - @applift/core@0.8.2
+
 ## 0.8.0
 
 ### Minor Changes
