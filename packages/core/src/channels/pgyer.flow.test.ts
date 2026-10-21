@@ -69,7 +69,7 @@ describe("pgyer flow: stage 全流程（1247 → ok）出短链，无 submit", (
             code: 0,
             data: {
               endpoint: "https://cos-pgyer.example.com/put",
-              buildKey: BUILD_KEY,
+              key: BUILD_KEY,
               params: {
                 signature: "sig-flow",
                 "x-cos-security-token": "cos-tok-flow",
@@ -162,7 +162,7 @@ describe("pgyer flow: stage 全流程（1247 → ok）出短链，无 submit", (
             code: 0,
             data: {
               endpoint: "https://cos-pgyer.example.com/put",
-              buildKey: BUILD_KEY,
+              key: BUILD_KEY,
               params: { signature: "s", "x-cos-security-token": "t", key: "k.apk" },
             },
           },

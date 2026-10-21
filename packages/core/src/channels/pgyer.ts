@@ -65,7 +65,9 @@ interface CosTokenResp {
   message?: string;
   data?: {
     endpoint: string;
-    buildKey: string;
+    /** 上传文件存储唯一 key——即 buildInfo 轮询要的 buildKey（官方响应无独立 buildKey 字段；
+     *  2026-10-20 实证：解构 data.buildKey 得 undefined，轮询永远 1247 直到超时，上传实际已成功） */
+    key: string;
     params: { signature: string; "x-cos-security-token": string; key: string };
   };
 }
@@ -136,7 +138,7 @@ export class PgyerChannel implements Channel {
       }
     }
     if (!token?.data) throw lastErr instanceof Error ? lastErr : new Error("蒲公英凭证获取失败");
-    const { endpoint, params, buildKey } = token.data;
+    const { endpoint, params, key: buildKey } = token.data;
 
     ctx.emit({
       type: "phase",

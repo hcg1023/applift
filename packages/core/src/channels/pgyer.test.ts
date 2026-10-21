@@ -11,7 +11,8 @@ const COS_TOKEN_OK = {
   code: 0,
   data: {
     endpoint: "https://bucket.cos.ap-shanghai.myqcloud.com/",
-    buildKey: "bk-123",
+    // 官方契约：buildKey 即 data.key（无独立 buildKey 字段），对拍 2026-10-20 线上实测
+    key: "bk-123",
     params: { signature: "sig==", "x-cos-security-token": "cos-tok", key: "dir/app.apk" },
   },
 };
