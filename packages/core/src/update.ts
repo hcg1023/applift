@@ -32,10 +32,19 @@ export interface UpdateProvider {
   platforms?: string[];
   /** 判定本次 diff 能否走热更（diff = 上个发版锚点到工作区的文件列表，含未提交与未跟踪） */
   judge(diff: string[], ctx: FrameworkContext): Promise<DeliveryJudgement> | DeliveryJudgement;
-  /** beta 热更路径：构建热更包并发到测试通道（测试设备验证用） */
-  publishToTest(ctx: PublishContext): Promise<{ versionName: string; versionId: number }>;
-  /** release 热更路径：测试通道最新已验证热更 promote 到正式（重绑正式原生版本 + 灰度） */
-  promoteToProd(ctx: PublishContext): Promise<{ versionName: string; rollout?: number }>;
+  /** release 热更路径（必选）：直接发热更正式——ppk 产物入口（--artifact/探测）→ 发布绑正式原生版本 + 灰度。
+   *  无内测流程的 provider 只实现此方法即可独立完成正式热更发布（热更不依赖 beta） */
+  publishToProd(ctx: PublishContext): Promise<{
+    versionName: string;
+    versionId: number;
+    rollout?: number;
+  }>;
+  /** beta 热更路径（可选）：热更包发测试通道（测试设备验证用）；无内测流程的 provider 不实现
+   *  （beta 判定 ota 时报错引导直接 release） */
+  publishToBeta?(ctx: PublishContext): Promise<{ versionName: string; versionId: number }>;
+  /** release 热更路径（可选）：测试通道最新已验证热更 promote 到正式（重绑正式原生版本 + 灰度）。
+   *  返回 null = 测试通道无可 promote（调用方转 publishToProd 直接发布） */
+  promoteToProd?(ctx: PublishContext): Promise<{ versionName: string; rollout?: number } | null>;
 }
 
 export interface DeliveryRoute {
@@ -50,6 +59,10 @@ export interface PublishContext extends FrameworkContext {
   note?: string;
   /** release 热更的灰度比例（CLI 确认时收集；缺省用 provider 默认） */
   rollout?: number;
+  /** 已解析 profile 凭据（热更 provider 读服务端 token，如 PUSHY_API_TOKEN；dry-run 路径缺省） */
+  credentials?: Readonly<Record<string, string>>;
+  /** 显式指定的热更 ppk（--artifact 透传；热更产物入口，与原生 --artifact 对称） */
+  artifact?: string;
 }
 
 /**

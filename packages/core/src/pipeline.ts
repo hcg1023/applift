@@ -81,7 +81,7 @@ export async function runStage(input: PipelineInput): Promise<PipelineSummary> {
       if (plugins)
         await plugins.broadcast(
           "stage:after",
-          { channel: channel.id, cwd: input.cwd },
+          { channel: channel.id, cwd: input.cwd, credentials: effectiveCtx.credentials },
           {
             channel: channel.id,
             ok: r.ok,
@@ -210,7 +210,7 @@ export async function runSubmit(
         if (plugins)
           await plugins.broadcast(
             "stage:after",
-            { channel: channel.id, cwd: input.cwd },
+            { channel: channel.id, cwd: input.cwd, credentials: effectiveCtx.credentials },
             {
               channel: channel.id,
               ok: true,

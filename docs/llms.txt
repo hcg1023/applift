@@ -46,7 +46,7 @@
 
 - 新商店：实现 `Channel` 接口（见 @applift/core channel.ts）+ 插件注册
 - 新框架：实现 `FrameworkAdapter` 经 `'framework:register'` 注册；内置七框架工厂（rnFramework 等）在 @applift/core/plugins
-- 新热更服务：实现 `UpdateProvider`（judge 判定 + publishToTest + promoteToProd）经 `'update:register'` 注册（样板 rn-update.ts，pushy CLI 封装 pushy-cli.ts）
+- 新热更服务：实现 `UpdateProvider`（judge 判定 + publishToProd 直接发正式【必选】+ 可选 publishToBeta 内测 / promoteToProd promote【返回 null=无货，调用方转 publishToProd】）经 `'update:register'` 注册（样板 rn-update.ts；pushy 服务端走 OpenAPI 客户端 pushy-api.ts，token=credentials.json 的 PUSHY_API_TOKEN；ppk 是构建产物，项目先行产出，applift 按 --artifact 或 ppkPatterns 探测——不 spawn 构建；热更不依赖 beta）
 - 通知：`dingtalkNotify` 插件（@applift/core/plugins）
 
 ## 上游文档

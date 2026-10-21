@@ -15,13 +15,14 @@ export const REQUIRED_KEYS_BY_CHANNEL: Record<string, string[]> = {
   googleplay: ["GOOGLEPLAY_SA_JSON 或 GOOGLEPLAY_SA_KEY"],
 };
 
-/** 环境变量兼容的裸键名全集（渠道凭据键展开；release/status/listing/doctor 统一 resolveProfile 用） */
+/** 环境变量兼容的裸键名全集（渠道凭据键展开 + 热更 provider；release/status/listing/doctor 统一 resolveProfile 用） */
 export const KNOWN_CREDENTIAL_KEYS = [
   ...new Set(
     Object.values(REQUIRED_KEYS_BY_CHANNEL)
       .flat()
       .flatMap((k) => k.split(" 或 ")),
   ),
+  "PUSHY_API_TOKEN",
 ];
 
 export const CHANNEL_HINTS: Record<string, string> = {

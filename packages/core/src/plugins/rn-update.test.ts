@@ -8,9 +8,10 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { judgeDelivery, makeRnUpdateProvider, rnUpdate, testPackageVersion } from "./rn-update.js";
+import { judgeDelivery, makeRnUpdateProvider, rnUpdate, betaPackageVersion } from "./rn-update.js";
 import type { UpdateProvider } from "../update.js";
-import { createPushyCli, type CliResult, type CliRunner, type PushyCli } from "./pushy-cli.js";
+import type { PushyCli } from "./pushy-api.js";
+import { PUSHY_TOKEN_KEY } from "./pushy-api.js";
 import type { FrameworkAdapter } from "../framework.js";
 
 const rn: FrameworkAdapter = {
@@ -22,6 +23,35 @@ const rn: FrameworkAdapter = {
 
 function ctx(cwd: string, anchor?: string) {
   return { cwd, framework: rn, ...(anchor ? { anchor } : {}) };
+}
+
+/** PushyCli mock（vi.fn 对象注入）：调用参数类型从接口推导，over 覆盖默认行为 */
+function mkCli(over: Partial<PushyCli> = {}) {
+  const publish = vi.fn(async (_input: Parameters<PushyCli["publish"]>[0]) => ({
+    versionId: 303353,
+  }));
+  const uploadApp = vi.fn(async (_appId: number, _appFile: string, versionName: string) => ({
+    packageId: 100266,
+    version: versionName,
+  }));
+  const rebind = vi.fn(async (_input: Parameters<PushyCli["rebind"]>[0]) => {});
+  const versions = vi.fn(
+    async (_appId: number): Promise<Array<{ id: number; hash: string; name: string }>> => [],
+  );
+  const cli: PushyCli = { publish, uploadApp, rebind, versions, ...over };
+  return { cli, calls: { publish, uploadApp, rebind, versions } };
+}
+
+/** ppk 产物 fixture：.pushy/output/harmony.<time>.ppk（pushy 官方输出约定），返回绝对路径 */
+function ppkArtifact(dir: string, ageMs = 0): string {
+  fs.mkdirSync(path.join(dir, ".pushy", "output"), { recursive: true });
+  const p = path.join(dir, `.pushy`, "output", `harmony.${Date.now()}.ppk`);
+  fs.writeFileSync(p, "ppk");
+  if (ageMs > 0) {
+    const past = new Date(Date.now() - ageMs);
+    fs.utimesSync(p, past, past);
+  }
+  return p;
 }
 
 function tmpProject(setup: (dir: string) => void): string {
@@ -89,6 +119,12 @@ describe("judgeDelivery（路径规则：五形态）", () => {
   it("空 diff（无锚点或无变更）→ uncertain（不猜）", () => {
     const r = judgeDelivery([], ctx("/tmp"), {});
     expect(r.recommendation).toBe("uncertain");
+  });
+
+  it("lockfile 变更 → uncertain（依赖树内部变化，不猜）", () => {
+    const r = judgeDelivery(["package-lock.json"], ctx("/tmp"), {});
+    expect(r.recommendation).toBe("uncertain");
+    expect(r.evidence.find((e) => e.path === "package-lock.json")?.rule).toContain("lockfile");
   });
 });
 
@@ -211,9 +247,33 @@ describe("judgeDelivery（依赖变更：锚点对比 + node_modules 原生信�
     expect(r.recommendation).toBe("uncertain");
     expect(r.evidence.find((e) => e.path === "package.json")?.note).toContain("lodash");
   });
+
+  it("锚点 package.json 坏 JSON → readDepsFromGit 返回 null → uncertain（锚点侧不猜）", () => {
+    const dir = tmpProject((d) => {
+      const g = (args: string[]) => spawnSync("git", args, { cwd: d, encoding: "utf8" });
+      g(["init", "-q"]);
+      g(["config", "user.email", "t@t"]);
+      g(["config", "user.name", "t"]);
+      fs.writeFileSync(path.join(d, "package.json"), "{broken anchor"); // 锚点侧坏 JSON
+      g(["add", "-A"]);
+      g(["commit", "-qm", "init"]);
+      g(["tag", "v1"]);
+      fs.writeFileSync(
+        path.join(d, "package.json"),
+        JSON.stringify({ name: "p", dependencies: { dayjs: "^1.0.0" } }),
+      );
+      fs.mkdirSync(path.join(d, "node_modules", "dayjs"), { recursive: true });
+      fs.writeFileSync(
+        path.join(d, "node_modules", "dayjs", "package.json"),
+        JSON.stringify({ name: "dayjs", version: "1.0.0" }),
+      );
+    });
+    const r = judgeDelivery(["package.json", "src/a.ts"], ctx(dir, "v1"), {});
+    expect(r.recommendation).toBe("uncertain");
+  });
 });
 
-describe("publishToTest / promoteToProd（pushy CLI 组装：取号 + 测试版本偏移 + promote 重绑）", () => {
+describe("publishToBeta / promoteToProd（OpenAPI 客户端组装：取号 + 测试版本偏移 + promote 重绑）", () => {
   function rnProject(): string {
     return tmpProject((d) => {
       fs.mkdirSync(path.join(d, "harmony", "AppScope"), { recursive: true });
@@ -224,159 +284,294 @@ describe("publishToTest / promoteToProd（pushy CLI 组装：取号 + 测试版�
     });
   }
 
-  function mkCli(reply: (args: string[]) => CliResult): { cli: PushyCli; calls: string[][] } {
-    const calls: string[][] = [];
-    const runner: CliRunner = async (args) => {
-      calls.push(args);
-      return reply(args);
-    };
-    return { cli: createPushyCli(runner), calls };
-  }
-
-  it("publishToTest：读 versionName → 服务端取号（已有 patch.4 → patch.5）→ bundle → publish 绑 major+1000 偏移测试版本", async () => {
+  it("publishToBeta：读 versionName → 探测 ppk 产物（mtime 最新）→ 服务端取号 → publish 绑 major+1000 偏移测试版本", async () => {
     const dir = rnProject();
-    const { cli, calls } = mkCli((args) => {
-      if (args[0] === "versions")
-        return { code: 0, stdout: "303339) qm5Xb8bG 4.0.0-patch.4 no package\n", stderr: "" };
-      if (args[0] === "bundle")
-        return { code: 0, stdout: "已生成 .pushy/output/harmony.123.ppk\n", stderr: "" };
-      if (args[0] === "publish")
-        return { code: 0, stdout: "已成功上传新热更包（id: 303353）\n", stderr: "" };
-      return { code: 0, stdout: "", stderr: "" };
+    ppkArtifact(dir, 60_000); // 旧 ppk：mtime 排序应被新者胜出
+    const fresh = ppkArtifact(dir);
+    const { cli, calls } = mkCli({
+      versions: async () => [{ id: 303339, hash: "qm5Xb8bG", name: "4.0.0-patch.4" }],
     });
     const provider = makeRnUpdateProvider({ harmony: 34166 }, cli);
-    const r = await provider.publishToTest({
+    const r = await provider.publishToBeta!({
       cwd: dir,
       framework: rn,
       platform: "harmony",
       note: "修复登录",
     });
     expect(r).toEqual({ versionName: "4.0.0-patch.5", versionId: 303353 });
-    const publishArgs = calls.find((c) => c[0] === "publish")!.join(" ");
-    expect(publishArgs).toContain("--name 4.0.0-patch.5");
-    expect(publishArgs).toContain("--packageVersion 1004.0.0");
-    expect(publishArgs).toContain("--description 修复登录");
+    expect(calls.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appId: 34166,
+        ppk: fresh,
+        name: "4.0.0-patch.5",
+        packageVersion: "1004.0.0",
+        description: "修复登录",
+      }),
+    );
+  });
+
+  it("publishToBeta：无 ppk → 报错引导先产出（产物入口语义）", async () => {
+    const dir = rnProject(); // 无 .pushy/output
+    const { cli } = mkCli();
+    const provider = makeRnUpdateProvider({ harmony: 34166 }, cli);
+    await expect(
+      provider.publishToBeta!({ cwd: dir, framework: rn, platform: "harmony" }),
+    ).rejects.toThrow(/未探测到 harmony 的 ppk[\s\S]*pushy bundle/);
+  });
+
+  it("publishToBeta：--artifact 显式指定 ppk → 跳过探测与新鲜度护栏（显式意图语义）", async () => {
+    const dir = rnProject();
+    const stale = ppkArtifact(dir, 3_600_000); // 一小时前的旧包
+    const { cli, calls } = mkCli();
+    const provider = makeRnUpdateProvider({ harmony: 34166 }, cli);
+    await provider.publishToBeta!({
+      cwd: dir,
+      framework: rn,
+      platform: "harmony",
+      artifact: stale,
+    });
+    expect(calls.publish).toHaveBeenCalledWith(expect.objectContaining({ ppk: stale }));
+  });
+
+  it("publishToBeta：ppk 早于最新代码改动 → 新鲜度护栏报错（旧包防呆）", async () => {
+    const dir = tmpProject((d) => {
+      const g = (args: string[]) => spawnSync("git", args, { cwd: d, encoding: "utf8" });
+      g(["init", "-q"]);
+      g(["config", "user.email", "t@t"]);
+      g(["config", "user.name", "t"]);
+      fs.mkdirSync(path.join(d, "harmony", "AppScope"), { recursive: true });
+      fs.writeFileSync(
+        path.join(d, "harmony", "AppScope", "app.json5"),
+        '{ "versionName": "4.0.0", "versionCode": 4000000 }',
+      );
+      fs.mkdirSync(path.join(d, "src"), { recursive: true });
+      fs.writeFileSync(path.join(d, "src", "a.ts"), "1");
+      g(["add", "-A"]);
+      g(["commit", "-qm", "init"]);
+      g(["tag", "v1.0.0"]); // 锚点须三段 semver（latestSemverTag 契约），v1 不识别
+      // 锚点之后的新改动（mtime = 现在）：ppk 必须新于它
+      fs.writeFileSync(path.join(d, "src", "b.ts"), "2");
+    });
+    ppkArtifact(dir, 60_000); // ppk 比 b.ts 旧
+    const { cli } = mkCli();
+    const provider = makeRnUpdateProvider({ harmony: 34166 }, cli);
+    await expect(
+      provider.publishToBeta!({ cwd: dir, framework: rn, platform: "harmony" }),
+    ).rejects.toThrow(/早于最新代码改动/);
+  });
+
+  it("publishToBeta：ppkPatterns 覆盖默认探测目录（自定义 bundle 输出位置）", async () => {
+    const dir = rnProject();
+    fs.mkdirSync(path.join(dir, "dist", "hot"), { recursive: true });
+    const custom = path.join(dir, "dist", "hot", "custom.ppk");
+    fs.writeFileSync(custom, "ppk");
+    const { cli, calls } = mkCli();
+    const provider = makeRnUpdateProvider(
+      { harmony: 34166, ppkPatterns: { harmony: ["dist/hot/*.ppk"] } },
+      cli,
+    );
+    await provider.publishToBeta!({ cwd: dir, framework: rn, platform: "harmony" });
+    expect(calls.publish).toHaveBeenCalledWith(expect.objectContaining({ ppk: custom }));
   });
 
   it("promoteToProd：取测试通道最新热更 → rebind 正式版本 + 灰度比例", async () => {
     const dir = rnProject();
-    const { cli, calls } = mkCli((args) => {
-      if (args[0] === "versions")
-        return {
-          code: 0,
-          stdout:
-            "303339) qm5Xb8bG 4.0.0-patch.4 no package\n303353) Qn19JhbA 4.0.0-patch.5 no package\n",
-          stderr: "",
-        };
-      return { code: 0, stdout: "操作完成，共已绑定 1 个原生版本\n", stderr: "" };
+    const { cli, calls } = mkCli({
+      versions: async () => [
+        { id: 303339, hash: "qm5Xb8bG", name: "4.0.0-patch.4" },
+        { id: 303353, hash: "Qn19JhbA", name: "4.0.0-patch.5" },
+      ],
     });
     const provider = makeRnUpdateProvider({ harmony: 34166, defaultRollout: 10 }, cli);
-    const r = await provider.promoteToProd({
+    const r = await provider.promoteToProd!({
       cwd: dir,
       framework: rn,
       platform: "harmony",
     });
     expect(r).toEqual({ versionName: "4.0.0-patch.5", rollout: 10 });
-    const rebindArgs = calls.find((c) => c[0] === "update")!.join(" ");
-    expect(rebindArgs).toContain("--versionId 303353");
-    expect(rebindArgs).toContain("--packageVersion 4.0.0");
-    expect(rebindArgs).toContain("--rollout 10");
+    expect(calls.rebind).toHaveBeenCalledWith({
+      appId: 34166,
+      versionId: 303353,
+      packageVersion: "4.0.0",
+      rollout: 10,
+    });
   });
 
   it("promoteToProd：未配置 defaultRollout → 内置默认 100（全量）", async () => {
     const dir = rnProject();
-    const { cli, calls } = mkCli((args) => {
-      if (args[0] === "versions")
-        return { code: 0, stdout: "303353) Qn19JhbA 4.0.0-patch.5 no package\n", stderr: "" };
-      return { code: 0, stdout: "操作完成\n", stderr: "" };
+    const { cli, calls } = mkCli({
+      versions: async () => [{ id: 303353, hash: "Qn19JhbA", name: "4.0.0-patch.5" }],
     });
     const provider = makeRnUpdateProvider({ harmony: 34166 }, cli);
-    const r = await provider.promoteToProd({ cwd: dir, framework: rn, platform: "harmony" });
+    const r = await provider.promoteToProd!({ cwd: dir, framework: rn, platform: "harmony" });
     expect(r).toEqual({ versionName: "4.0.0-patch.5", rollout: 100 });
-    expect(calls.find((c) => c[0] === "update")!.join(" ")).toContain("--rollout 100");
+    expect(calls.rebind).toHaveBeenCalledWith(
+      expect.objectContaining({ versionId: 303353, rollout: 100 }),
+    );
   });
 
   it("promoteToProd：只认当前 versionName 的 patch（跨版本不串台），全局更大 N 不越权", async () => {
     const dir = rnProject();
-    const { cli, calls } = mkCli((args) => {
-      if (args[0] === "versions")
-        return {
-          code: 0,
-          stdout:
-            "303340) aaa 3.9.9-patch.9 no package\n303353) Qn19JhbA 4.0.0-patch.2 no package\n",
-          stderr: "",
-        };
-      return { code: 0, stdout: "操作完成\n", stderr: "" };
+    const { cli, calls } = mkCli({
+      versions: async () => [
+        { id: 303340, hash: "aaa", name: "3.9.9-patch.9" },
+        { id: 303353, hash: "Qn19JhbA", name: "4.0.0-patch.2" },
+      ],
     });
     const provider = makeRnUpdateProvider({ harmony: 34166 }, cli);
-    const r = await provider.promoteToProd({ cwd: dir, framework: rn, platform: "harmony" });
-    expect(r.versionName).toBe("4.0.0-patch.2");
-    expect(calls.find((c) => c[0] === "update")!.join(" ")).toContain("--versionId 303353");
+    const r = await provider.promoteToProd!({ cwd: dir, framework: rn, platform: "harmony" });
+    expect(r!.versionName).toBe("4.0.0-patch.2");
+    expect(calls.rebind).toHaveBeenCalledWith(
+      expect.objectContaining({ versionId: 303353, packageVersion: "4.0.0" }),
+    );
   });
 
-  it("promoteToProd：当前 versionName 无 patch 但有其他版本的 → 报错列出现存", async () => {
+  it("promoteToProd：当前 versionName 无 patch（其他版本的不串台）→ 返回 null 不误 promote", async () => {
     const dir = rnProject();
-    const { cli } = mkCli((args) => {
-      if (args[0] === "versions")
-        return { code: 0, stdout: "1) aaa 3.9.9-patch.9 no package\n", stderr: "" };
-      return { code: 0, stdout: "", stderr: "" };
+    const { cli, calls } = mkCli({
+      versions: async () => [{ id: 1, hash: "aaa", name: "3.9.9-patch.9" }],
     });
     const provider = makeRnUpdateProvider({ harmony: 34166 }, cli);
     await expect(
-      provider.promoteToProd({ cwd: dir, framework: rn, platform: "harmony" }),
-    ).rejects.toThrow(/4\.0\.0-patch\.N[\s\S]*3\.9\.9-patch\.9/);
+      provider.promoteToProd!({ cwd: dir, framework: rn, platform: "harmony" }),
+    ).resolves.toBeNull();
+    expect(calls.rebind).not.toHaveBeenCalled();
   });
 
   it("平台未配置 app 记录 → 明确报错引导配置", async () => {
-    const { cli } = mkCli(() => ({ code: 0, stdout: "", stderr: "" }));
+    const { cli } = mkCli();
     const provider = makeRnUpdateProvider({}, cli);
     await expect(
-      provider.publishToTest({ cwd: "/tmp", framework: rn, platform: "android" }),
+      provider.publishToBeta!({ cwd: "/tmp", framework: rn, platform: "android" }),
     ).rejects.toThrow(/android[\s\S]*rnUpdate/);
   });
 
-  it("promoteToProd 无已验证热更 → 报错引导先 beta", async () => {
+  it("promoteToProd 无已验证热更 → 返回 null（契约：调用方转 publishToProd 直接发正式）", async () => {
     const dir = rnProject();
-    const { cli } = mkCli((args) => {
-      if (args[0] === "versions") return { code: 0, stdout: "偏移量 0\n", stderr: "" };
-      return { code: 0, stdout: "", stderr: "" };
-    });
+    const { cli, calls } = mkCli(); // versions 缺省返回 []
     const provider = makeRnUpdateProvider({ harmony: 34166 }, cli);
     await expect(
-      provider.promoteToProd({ cwd: dir, framework: rn, platform: "harmony" }),
-    ).rejects.toThrow(/beta/);
+      provider.promoteToProd!({ cwd: dir, framework: rn, platform: "harmony" }),
+    ).resolves.toBeNull();
+    expect(calls.rebind).not.toHaveBeenCalled();
+  });
+
+  it("publishToProd：探测 ppk → 取号 → 绑正式版本（非偏移线）+ rollout", async () => {
+    const dir = rnProject();
+    const fresh = ppkArtifact(dir);
+    const { cli, calls } = mkCli({
+      versions: async () => [{ id: 303339, hash: "qm5Xb8bG", name: "4.0.0-patch.4" }],
+    });
+    const provider = makeRnUpdateProvider({ harmony: 34166 }, cli);
+    const r = await provider.publishToProd({
+      cwd: dir,
+      framework: rn,
+      platform: "harmony",
+      note: "正式修复",
+    });
+    expect(r).toEqual({ versionName: "4.0.0-patch.5", versionId: 303353, rollout: 100 });
+    expect(calls.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appId: 34166,
+        ppk: fresh,
+        name: "4.0.0-patch.5",
+        packageVersion: "4.0.0", // 正式线（publishToBeta 是 1004.0.0 偏移线）
+        description: "正式修复",
+        rollout: 100,
+      }),
+    );
+  });
+
+  it("未注入 cli 且 ctx 无凭据 → fail-fast 报 PUSHY_API_TOKEN（本地 bundle 之前）", async () => {
+    const dir = rnProject();
+    const provider = makeRnUpdateProvider({ harmony: 34166 }); // 默认 API 客户端路径
+    await expect(
+      provider.publishToBeta!({ cwd: dir, framework: rn, platform: "harmony" }),
+    ).rejects.toThrow(/PUSHY_API_TOKEN/);
+    await expect(
+      provider.promoteToProd!({ cwd: dir, framework: rn, platform: "harmony" }),
+    ).rejects.toThrow(/PUSHY_API_TOKEN/);
   });
 });
 
 describe("stage:after 自动基线（原生路径发版成功后 pushy uploadApp）", () => {
-  it("agc 渠道 stage 成功 → 上传 .app 基线", async () => {
-    const calls: string[][] = [];
-    const runner: CliRunner = async (args) => {
-      calls.push(args);
-      if (args[0] === "uploadApp")
-        return {
-          code: 0,
-          stdout: "已成功上传app原生包（id: 100266, version: 4.0.0, buildTime: 1）",
-          stderr: "",
-        };
-      return { code: 0, stdout: "", stderr: "" };
-    };
-    const plugin = rnUpdate({ harmony: 34166 }, createPushyCli(runner));
-    const ctx = { cwd: "/tmp", channel: "agc" };
-    // stage:after 的 result 自带 artifactPath（core 接口字段），无 before 依赖、无插件状态
-    await plugin["stage:after"]!({ channel: "agc", ok: true, artifactPath: "/tmp/x.app" }, ctx);
-    expect(calls.filter((c) => c[0] === "uploadApp")).toHaveLength(1);
-    expect(calls.find((c) => c[0] === "uploadApp")!.join(" ")).toContain("--appId 34166");
+  /** 产物 fixture：空 .app 文件 + 同目录 pack.info（readArtifactVersion 回退路径读取版本） */
+  function appArtifact(): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-rnupd-art-"));
+    fs.writeFileSync(path.join(dir, "x.app"), "");
+    fs.writeFileSync(
+      path.join(dir, "pack.info"),
+      JSON.stringify({ summary: { app: { version: { name: "4.0.0", code: 4000000 } } } }),
+    );
+    return path.join(dir, "x.app");
+  }
+
+  it("agc 渠道 stage 成功 → 从产物读版本号上传基线（appId/file/versionName 齐全）", async () => {
+    const artifact = appArtifact();
+    const { plugin, calls } = (() => {
+      const m = mkCli();
+      return { plugin: rnUpdate({ harmony: 34166 }, m.cli), calls: m.calls };
+    })();
+    await plugin["stage:after"]!(
+      { channel: "agc", ok: true, artifactPath: artifact },
+      { cwd: "/tmp", channel: "agc" },
+    );
+    expect(calls.uploadApp).toHaveBeenCalledWith(34166, artifact, "4.0.0");
+  });
+
+  it("产物读不出版本号（无 pack.info 的 .app）→ 不上传，stderr 提醒人工补传", async () => {
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-rnupd-nover-"));
+    fs.writeFileSync(path.join(dir, "x.app"), ""); // 无伴生 pack.info：readArtifactVersion 返回 undefined
+    const m = mkCli();
+    const plugin = rnUpdate({ harmony: 34166 }, m.cli);
+    try {
+      await expect(
+        plugin["stage:after"]!(
+          { channel: "agc", ok: true, artifactPath: path.join(dir, "x.app") },
+          { cwd: dir, channel: "agc" },
+        ),
+      ).resolves.toBeUndefined();
+      expect(m.calls.uploadApp).not.toHaveBeenCalled();
+      expect(errSpy.mock.calls.flat().join(" ")).toContain("未能从产物读出 versionName");
+    } finally {
+      errSpy.mockRestore();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("默认路径：hookCtx.credentials 带 token → 构造 API 客户端上传（x-api-token 透传）", async () => {
+    const artifact = appArtifact();
+    const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      fetchCalls.push({ url: String(url), init });
+      if (String(url).endsWith("/upload"))
+        return Response.json({
+          url: "https://oss.example.com/bucket",
+          formData: { key: "pkgKey" },
+        });
+      return Response.json({ id: 100266 });
+    });
+    try {
+      const plugin = rnUpdate({ harmony: 34166 }); // 默认 OpenAPI 客户端路径
+      await plugin["stage:after"]!(
+        { channel: "agc", ok: true, artifactPath: artifact },
+        { cwd: "/tmp", channel: "agc", credentials: { PUSHY_API_TOKEN: "tok-1" } },
+      );
+    } finally {
+      fetchSpy.mockRestore();
+    }
+    const upload = fetchCalls.find((c) => c.url.endsWith("/upload"));
+    expect(upload?.init?.headers).toMatchObject({ "x-api-token": "tok-1" });
+    expect(fetchCalls.some((c) => c.url.includes("/app/34166/package/create"))).toBe(true);
   });
 
   it("stage 失败或未配置平台的渠道 → 不上传", async () => {
-    const calls: string[][] = [];
-    const runner: CliRunner = async (args) => {
-      calls.push(args);
-      return { code: 0, stdout: "", stderr: "" };
-    };
-    const plugin = rnUpdate({ harmony: 34166 }, createPushyCli(runner));
-    const ctx = { cwd: "/tmp" };
+    const { plugin, calls } = (() => {
+      const m = mkCli();
+      return { plugin: rnUpdate({ harmony: 34166 }, m.cli), calls: m.calls };
+    })();
+    const ctx = { cwd: "/tmp", channel: "agc" };
     await plugin["stage:after"]!(
       { channel: "agc", ok: false, error: "x", artifactPath: "/tmp/x.app" },
       ctx,
@@ -384,76 +579,79 @@ describe("stage:after 自动基线（原生路径发版成功后 pushy uploadApp
     await plugin["stage:after"]!({ channel: "pgyer", ok: true, artifactPath: "/tmp/pg.apk" }, ctx);
     // result 不带 artifactPath（旧管线/异常路径）→ 不上传防误传
     await plugin["stage:after"]!({ channel: "agc", ok: true }, ctx);
-    expect(calls.filter((c) => c[0] === "uploadApp")).toHaveLength(0);
+    expect(calls.uploadApp).not.toHaveBeenCalled();
   });
 
   it("uploadApp 失败 → 不阻断发布（stage:after 不抛），stderr 提醒人工补传", async () => {
     const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const runner: CliRunner = async () => ({ code: 1, stdout: "", stderr: "pushy down" });
-    const plugin = rnUpdate({ harmony: 34166 }, createPushyCli(runner));
-    const ctx = { cwd: "/tmp", channel: "agc" };
-    await expect(
-      plugin["stage:after"]!({ channel: "agc", ok: true, artifactPath: "/tmp/x.app" }, ctx),
-    ).resolves.toBeUndefined();
-    expect(errSpy.mock.calls.flat().join(" ")).toContain("基线上传失败");
-    errSpy.mockRestore();
+    const artifact = appArtifact();
+    const { plugin } = (() => {
+      const m = mkCli({
+        uploadApp: async () => {
+          throw new Error("pushy down");
+        },
+      });
+      return { plugin: rnUpdate({ harmony: 34166 }, m.cli) };
+    })();
+    try {
+      await expect(
+        plugin["stage:after"]!(
+          { channel: "agc", ok: true, artifactPath: artifact },
+          { cwd: "/tmp", channel: "agc" },
+        ),
+      ).resolves.toBeUndefined();
+      expect(errSpy.mock.calls.flat().join(" ")).toContain("基线上传失败");
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 
   it("并发交错无状态：两渠道 after 各自带 artifactPath，各传各的（接口数据自带 = 构造性并发安全）", async () => {
-    const calls: string[][] = [];
-    const runner: CliRunner = async (args) => {
-      calls.push(args);
-      if (args[0] === "uploadApp")
-        return {
-          code: 0,
-          stdout: "已成功上传app原生包（id: 100266, version: 4.0.0, buildTime: 1）",
-          stderr: "",
-        };
-      return { code: 0, stdout: "", stderr: "" };
-    };
-    const plugin = rnUpdate({ harmony: 34166 }, createPushyCli(runner));
+    const { plugin, calls } = (() => {
+      const m = mkCli();
+      return { plugin: rnUpdate({ harmony: 34166 }, m.cli), calls: m.calls };
+    })();
+    const artifact = appArtifact();
     // 无 before、无暂存：每个 after 只依赖自己的 result（旧闭包/Map 实现在交错下会丢或串）
     await Promise.all([
       plugin["stage:after"]!(
-        { channel: "agc", ok: true, artifactPath: "/tmp/agc.app" },
+        { channel: "agc", ok: true, artifactPath: artifact },
         { cwd: "/tmp", channel: "agc" },
       ),
       plugin["stage:after"]!({ channel: "pgyer", ok: true }, { cwd: "/tmp", channel: "pgyer" }),
     ]);
-    const uploads = calls.filter((c) => c[0] === "uploadApp");
-    expect(uploads).toHaveLength(1);
-    expect(uploads[0]!.join(" ")).toContain("/tmp/agc.app");
+    expect(calls.uploadApp).toHaveBeenCalledTimes(1);
+    expect(calls.uploadApp.mock.calls[0]![1]).toBe(artifact);
   });
 });
 
 describe("错误分支与工厂注册", () => {
-  it("testPackageVersion：非数字开头版本 → 显式报错；纯数字与带段版本可偏移", () => {
-    expect(() => testPackageVersion("v4.0.0")).toThrow(/非 X\.Y\.Z 形态/);
-    expect(testPackageVersion("4.a.0")).toBe("1004.a.0"); // 契约：只要求 major 数字可偏移，余段原样保留
-    expect(testPackageVersion("4")).toBe("1004");
-    expect(testPackageVersion("4.0.0")).toBe("1004.0.0");
+  it("betaPackageVersion：非数字开头版本 → 显式报错；纯数字与带段版本可偏移", () => {
+    expect(() => betaPackageVersion("v4.0.0")).toThrow(/非 X\.Y\.Z 形态/);
+    expect(betaPackageVersion("4.a.0")).toBe("1004.a.0"); // 契约：只要求 major 数字可偏移，余段原样保留
+    expect(betaPackageVersion("4")).toBe("1004");
+    expect(betaPackageVersion("4.0.0")).toBe("1004.0.0");
   });
 
-  it("publishToTest：工程无该平台版本文件 → 明确报错（不是静默空版本）", async () => {
+  it("publishToBeta：工程无该平台版本文件 → 明确报错（不是静默空版本）", async () => {
     const dir = tmpProject(() => {}); // 空工程：readProjectVersions 读不到 harmony 版本
-    const provider = makeRnUpdateProvider(
-      { harmony: 1 },
-      createPushyCli(async () => ({ code: 0, stdout: "", stderr: "" })),
-    );
+    const { cli } = mkCli();
+    const provider = makeRnUpdateProvider({ harmony: 1 }, cli);
     await expect(
-      provider.publishToTest({ cwd: dir, framework: rn, platform: "harmony" }),
+      provider.publishToBeta!({ cwd: dir, framework: rn, platform: "harmony" }),
     ).rejects.toThrow(/未读到平台 harmony 的 versionName/);
   });
 
   it("rnUpdate 工厂：update:register 注册完整 provider（platforms = 已配置 appId 的平台）", async () => {
-    const plugin = rnUpdate(
-      { harmony: 34166 },
-      createPushyCli(async () => ({ code: 0, stdout: "", stderr: "" })),
-    );
+    const { cli } = mkCli();
+    const plugin = rnUpdate({ harmony: 34166 }, cli);
     const providers: UpdateProvider[] = [];
     plugin["update:register"]!(providers, { cwd: "/tmp" });
     expect(providers).toHaveLength(1);
     expect(providers[0]!.id).toBe("rn-update");
     expect(providers[0]!.platforms).toEqual(["harmony"]); // android/ios 未配 appId 不在列
+    expect(providers[0]!.judge(["src/a.ts"], { cwd: "/tmp", framework: rn })).toMatchObject({
+      recommendation: "ota",
+    });
   });
 });

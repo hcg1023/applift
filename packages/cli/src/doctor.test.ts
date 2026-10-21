@@ -40,7 +40,7 @@ function writeProject(dir: string): void {
       "    'update:register': (providers) => providers.push({",
       "      id: 'stub-update', frameworks: ['rn'], platforms: ['harmony'],",
       "      judge: () => ({ recommendation: 'ota', confidence: 'high', evidence: [] }),",
-      "      publishToTest: async () => ({ versionName: 'x', versionId: 1 }),",
+      "      publishToBeta: async () => ({ versionName: 'x', versionId: 1 }),",
       "      promoteToProd: async () => ({ versionName: 'x' }),",
       "    }),",
       "  }],",

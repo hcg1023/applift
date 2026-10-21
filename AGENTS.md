@@ -35,7 +35,7 @@ applift：多框架 App 发版工具。**只管发版（产物 → 校验 → �
 | ---------- | ---------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------- |
 | 原生发版   | 三段升（`4.0.0`→`4.1.0`，versionCode 公式递增）      | `v4.1.0`（release 全渠道提审成功后补；beta 不打 tag） | `applift version bump`                       |
 | 热更发版   | **versionName 不动**                                 | `v4.0.0-patch.N`（beta 热更发布时打，进 CHANGELOG）   | pushy 服务端查询取号（多机安全，本地无状态） |
-| 偏移测试包 | major+1000（`4.0.0`→`1004.0.0`，pushy 官方测试约定） | —                                                     | publishToTest 自动                           |
+| 偏移测试包 | major+1000（`4.0.0`→`1004.0.0`，pushy 官方测试约定） | —                                                     | publishToBeta 自动                           |
 
 - 测试/正式隔离靠版本号精确绑定：偏移测试包设备收测试热更，正式设备收正式热更，互不污染
 - 热更**不参与 version bump**（不动 versionName/versionCode/bump 机制）——这是防复杂化的关键取舍，勿回退
@@ -45,7 +45,7 @@ applift：多框架 App 发版工具。**只管发版（产物 → 校验 → �
 
 - 声明 `frameworks`（框架匹配）+ `platforms`（已接入热更的平台，未接入平台路由直接走原生）
 - `judge(diff, ctx)` → `{ recommendation, confidence, evidence[] }`——推荐 + 证据，不是决定
-- `publishToTest(ctx)`（beta 热更）/ `promoteToProd(ctx)`（release promote）
+- `publishToBeta(ctx)`（beta 热更）/ `publishToProd(ctx)`（直接发正式，必选）/ `promoteToProd(ctx)`（release promote，返回 null=无货）
 - 判定引擎五形态完备性：新原生实体必现于 原生目录/依赖(原生包)/补丁/构建配置/JS 之一——前四判原生，纯 JS 判热更，包未安装→uncertain（不猜）
 
 ## 已知边界（记录在案，不视为缺陷）
@@ -62,12 +62,13 @@ applift：多框架 App 发版工具。**只管发版（产物 → 校验 → �
 - 负载型 git 测试（bump 全链路/e2e 周期）限时已放宽（90s/120s），全量并行偶发超时单独重跑确认即可
 - 改 core 契约（AppliftPlugin/UpdateProvider/DeliveryJudgement）必须同步 plugin.test/update.test
 - 触碰 CLI 入口/配置加载相关代码后跑 `pnpm run smoke`（node）即可；bun 不作为验证义务（基本兼容，见不变量 7），CI 的 runtime-bun 基本冒烟自动覆盖
+- **术语规范**（2026-10-20 定稿，防摇摆）：applift 自有命名全链路统一 **beta**（`applift beta` 命令 / config `beta:` 段 / `publishToBeta` 等方法 / `betaPackageVersion`——beta=内测发版阶段，与 release 对仗）。pushy 服务端概念的中文描述保留"测试"措辞（测试通道/测试设备/偏移测试包——锚定 pushy 上游术语），仅作解释文字不用于命名；semver prerelease 的 `-beta.N`（`--pre beta`）是版本号语义，与发版阶段无关
 - 提交用 conventional commits；**禁跑真实 pushy 网络命令**（bundle/publish/uploadApp）于开发验证——用 mock CliRunner
 
 ## 当前状态（2026-10-19）
 
 - framework 插件化：7 适配器迁 `plugins/frameworks.ts`（工厂函数），`resolveFramework` 声明式（多注册报错、detect 降级校验、内置表已删）
-- rn-update 插件：判定引擎（五形态+依赖信号+缺失 uncertain）、pushy CLI 封装（spawnPushy + runner 注入）、publishToTest（服务端取号 patch.N + 偏移绑定）、promoteToProd（重绑+rollout）、`stage:after` 自动基线
+- rn-update 插件：判定引擎（五形态+依赖信号+缺失 uncertain）、pushy OpenAPI 客户端（pushy-api.ts：x-api-token，token=credentials.json 的 PUSHY_API_TOKEN；服务端操作全 API 化）、**ppk 产物化**（2026-10-20 定稿：ppk 是构建产物，项目先行产出 pushy bundle，applift 按 `--artifact` 或 `ppkPatterns`（默认 .pushy/output/{platform}.*.ppk）探测 mtime 最新；探测路径强制新鲜度护栏=ppk 须新于未发布改动最新文件，--artifact 显式跳过；pushy-cli.ts 已删，applift 零 spawn 构建）、**publishToProd 必选契约**（2026-10-20 定稿：热更不依赖 beta——release ota 两条腿：测试通道有已验证热更且 provider 支持 → promoteToProd（返回 null=无货），否则 publishToProd 直接发正式（探 ppk + 取号 + 绑正式版本 + rollout）；publishToBeta/promoteToProd 可选，beta 遇无 publishToBeta 的 provider 报错引导 release）、publishToBeta（服务端取号 patch.N + 偏移绑定）、promoteToProd（重绑+rollout）、`stage:after` 自动基线（版本号由 readArtifactVersion 从产物读取）
 - tag 后移：release 全成功补 `v{产物版本}`（幂等：内容一致「无需重复上传」）
 - qy-driver 侧：config 已声明双插件、hook `usePatchVersionSuffix` 已接关于页
 - 消费方类型链路修复（2026-10-20）：`@applift/cli` build 加 `--dts` 且 exports 补 types 条件；新增 `./plugins` 子导出（re-export core/plugins）——applift.config.ts 只依赖 @applift/cli 即有完整类型，无需 @ts-expect-error；promote 灰度内置默认 100（全量，`--rollout` > `rnUpdate({ defaultRollout })` > 默认）
