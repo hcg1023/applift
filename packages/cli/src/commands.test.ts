@@ -203,6 +203,51 @@ describe("全命令冒烟（非交互路径）", () => {
     expect(r.out).not.toContain("internaltesting.hap");
   });
 
+  it("release harmony --dry-run：产物可读版本但非工程版本（偏移包遗留）→ 拦截并引导构建正式产物", () => {
+    fs.writeFileSync(
+      path.join(proj, "applift.config.ts"),
+      `import { defineConfig, rnFramework } from "@applift/core";\nexport default defineConfig({\n  plugins: [rnFramework()],\n  artifacts: { harmony: ['harmony/build/outputs/**/*-signed.app'] },\n});\n`,
+    );
+    const appDir = path.join(proj, "harmony", "build", "outputs", "default");
+    fs.mkdirSync(appDir, { recursive: true });
+    // 工程版本文件（release 期望版本 = 工程版 4.0.0）
+    fs.mkdirSync(path.join(proj, "harmony", "AppScope"), { recursive: true });
+    fs.writeFileSync(
+      path.join(proj, "harmony", "AppScope", "app.json5"),
+      JSON.stringify({ versionName: "4.0.0", versionCode: 4000000 }), // 顶层字段（app.json5 真实 schema）
+    );
+    fs.writeFileSync(path.join(appDir, "harmony-default-signed.app"), "fake");
+    // 伴生 pack.info：产物可读版本 1004.0.0（偏移包），工程 app.json5 是 4.0.0
+    fs.writeFileSync(
+      path.join(appDir, "pack.info"),
+      JSON.stringify({ summary: { app: { version: { name: "1004.0.0", code: 1004000000 } } } }),
+    );
+    const r = cli(["release", "harmony", "--dry-run", "--delivery", "native"]);
+    expect(r.out).toMatch(/无版本 4\.0\.0 的 \.app[\s\S]*不能正式分发/);
+  });
+
+  it("beta harmony：热更平台只探测到非偏移包 → 引导构建偏移测试包", () => {
+    fs.writeFileSync(
+      path.join(proj, "applift.config.ts"),
+      `import { defineConfig } from "@applift/cli";\nimport { rnFramework, rnUpdate } from "@applift/cli/plugins";\nexport default defineConfig({\n  plugins: [rnFramework(), rnUpdate({ harmony: 1 })],\n  artifacts: { harmony: ['harmony/build/outputs/**/*-signed.app'] },\n});\n`,
+    );
+    // 工程版本文件（beta 偏移期望 = betaPackageVersion(工程版 4.0.0) = 1004.0.0）
+    fs.mkdirSync(path.join(proj, "harmony", "AppScope"), { recursive: true });
+    fs.writeFileSync(
+      path.join(proj, "harmony", "AppScope", "app.json5"),
+      JSON.stringify({ versionName: "4.0.0", versionCode: 4000000 }),
+    );
+    const appDir = path.join(proj, "harmony", "build", "outputs", "default");
+    fs.mkdirSync(appDir, { recursive: true });
+    fs.writeFileSync(path.join(appDir, "harmony-default-signed.app"), "fake");
+    fs.writeFileSync(
+      path.join(appDir, "pack.info"),
+      JSON.stringify({ summary: { app: { version: { name: "4.0.0", code: 4000000 } } } }),
+    );
+    const r = cli(["beta", "harmony", "--delivery", "native", "--yes"]);
+    expect(r.out).toMatch(/未探测到偏移测试包 1004\.0\.0[\s\S]*--offset/);
+  });
+
   it("version：空目录 → 未识别框架兜底提示", () => {
     // beforeEach 给 proj 放了 RN 痕迹（守卫校验用）；空目录语义用独立子目录验证
     const empty = fs.mkdtempSync(path.join(os.tmpdir(), "applift-empty-"));

@@ -59,6 +59,7 @@ import {
   type VersionCodeConfig,
   type FrameworkAdapter,
 } from "@applift/core";
+import { betaPackageVersion } from "@applift/core/plugins";
 import { discoverXiaomiIcon, resolveChannelTarget } from "./target.js";
 
 /** 发布链路守卫：framework 必须来自插件声明，未声明直接报错（不静默兜底） */
@@ -161,6 +162,43 @@ program
   .description("三端 App 发版工具（内测 / 多商店提审 / 插件扩展）")
   .version(pkg.version);
 
+/**
+ * 期望产物版本号（版本语义：beta 的热更平台 = 偏移测试包，release = 工程正式版）。
+ * - beta 且平台接入热更（provider.platforms 含之）：偏移版（major+1000，如 1004.0.0）——
+ *   测试设备装偏移包才能收到测试线热更，版本号精确隔离正式用户
+ * - release：工程 versionName——测试包/偏移包不能用于正式分发
+ * 返回 undefined = 该场景不做版本校验（未接热更平台的 beta、读不到工程版本）
+ */
+function expectedArtifactVersion(
+  cwd: string,
+  framework: FrameworkAdapter | null,
+  platform: string,
+  mode: "beta" | "release",
+  hotPlatforms: ReadonlySet<string>,
+): string | undefined {
+  const versionName = framework
+    ? readProjectVersions(cwd, framework).find((v) => v.platform === platform)?.versionName
+    : undefined;
+  if (!versionName) return undefined;
+  if (mode === "release") return versionName;
+  return hotPlatforms.has(platform) ? betaPackageVersion(versionName) : undefined;
+}
+
+/**
+ * 按期望版本过滤探测结果（readArtifactVersion 读产物内嵌版本；.ipa 不支持读 → 放行不校验）。
+ * 期望 undefined 时透传最新（现状行为）。
+ */
+function pickArtifactByVersion(
+  found: string[],
+  expected: string | undefined,
+): { artifact?: string; mismatched?: string[] } {
+  if (!expected) return { artifact: found[0] };
+  const matched = found.filter((f) => readArtifactVersion(f)?.versionName === expected);
+  if (matched.length > 0) return { artifact: matched[0] };
+  // 读不出版本的产物（.ipa 等）无法校验 → 首个不可校验产物放行
+  if (found[0] && readArtifactVersion(found[0]) === undefined) return { artifact: found[0] };
+  return { mismatched: found };
+}
 export function makeContext(
   channel: Channel,
   creds: Record<string, string>,
@@ -584,18 +622,42 @@ program
 
       const detected = detectBundleIds(cmdOpts.cwd);
 
+      // 已接入热更的平台集合（provider.platforms 并集）：beta 版本感知探测用
+      const allProviders: UpdateProvider[] = [];
+      await host?.broadcast("update:register", { cwd: cmdOpts.cwd }, allProviders);
+      const hotPlatforms = new Set(allProviders.flatMap((p) => p.platforms ?? []));
+
       /** 产物探测：--artifact 直用（渠道自行校验扩展名）；否则按平台 patterns 找最新且扩展名匹配的产物 */
       const findArtifactFor = (plat: string, exts: string[]): string | undefined => {
         if (cmdOpts.artifact) {
           const explicit = path.resolve(cmdOpts.artifact);
           return exts.includes(path.extname(explicit).toLowerCase()) ? explicit : undefined;
         }
-        // 声明式守卫对 --artifact 路径同样生效（防未声明插件静默跑完发布）
+        // 声明性守卫对 --artifact 路径同样生效（防未声明插件静默跑完发布）
         const framework = requireFramework(cmdOpts.cwd, pluginFrameworks);
         const patterns = projCfg.artifacts?.[plat] ?? framework?.artifactPatterns(plat) ?? [];
-        return findArtifacts(cmdOpts.cwd, patterns).find((f) =>
+        const found = findArtifacts(cmdOpts.cwd, patterns).filter((f) =>
           exts.includes(path.extname(f).toLowerCase()),
         );
+        // 版本语义：热更平台的 beta 吃偏移测试包（快捷路径同款校验）
+        const expected = expectedArtifactVersion(
+          cmdOpts.cwd,
+          framework,
+          plat,
+          "beta",
+          hotPlatforms,
+        );
+        const picked = pickArtifactByVersion(found, expected);
+        if (expected && picked.mismatched)
+          throw new Error(
+            `未探测到 ${plat} 偏移测试包 ${expected}（现存 ${picked.mismatched
+              .map((f) => path.basename(f))
+              .slice(0, 3)
+              .join(
+                ", ",
+              )}）——测试设备需装偏移包才能收到测试热更，用 npm run build:test:${plat} -- --offset 构建或 --artifact 显式指定`,
+          );
+        return picked.artifact;
       };
 
       // ---------- 无 platform：读 config.beta 多渠道并行发布 ----------
@@ -751,13 +813,35 @@ program
         return;
       }
 
-      // ---------- 快捷路径：beta <platform>（原行为不变） ----------
+      // ---------- 快捷路径：beta <platform> ----------
       let artifactPath = cmdOpts.artifact ? path.resolve(cmdOpts.artifact) : undefined;
       if (!artifactPath) {
         const framework = requireFramework(cmdOpts.cwd, pluginFrameworks);
         const patterns =
           projCfg.artifacts?.[platform] ?? framework?.artifactPatterns(platform) ?? [];
-        artifactPath = findArtifacts(cmdOpts.cwd, patterns)[0];
+        const found = findArtifacts(cmdOpts.cwd, patterns);
+        // 版本语义：热更平台的 beta 吃偏移测试包（测试设备收测试线热更）
+        const providers: UpdateProvider[] = [];
+        await host?.broadcast("update:register", { cwd: cmdOpts.cwd }, providers);
+        const hotPlatforms = new Set(providers.flatMap((p) => p.platforms ?? []));
+        const expected = expectedArtifactVersion(
+          cmdOpts.cwd,
+          framework,
+          platform,
+          "beta",
+          hotPlatforms,
+        );
+        const picked = pickArtifactByVersion(found, expected);
+        if (expected && picked.mismatched)
+          throw new Error(
+            `未探测到偏移测试包 ${expected}（现存 ${picked.mismatched
+              .map((f) => path.basename(f))
+              .slice(0, 3)
+              .join(
+                ", ",
+              )}）——测试设备需装偏移包才能收到测试热更，用 npm run build:test:${platform} -- --offset 构建或 --artifact 显式指定`,
+          );
+        artifactPath = picked.artifact;
       }
       if (!artifactPath) throw new Error("未找到构建产物：先构建或用 --artifact 指定");
       // bump 启用时对最终发布产物终验（--artifact 显式给旧包也拦得住）
@@ -1011,23 +1095,30 @@ program
       const patterns = config.artifacts?.[platform] ?? framework?.artifactPatterns(platform) ?? [];
       const found = findArtifacts(opts.cwd, patterns);
       const exts = RELEASE_ARTIFACT_EXTS[platform] ?? [];
-      artifactPath = exts.length
-        ? found.find((f) => exts.includes(path.extname(f).toLowerCase()))
-        : found[0];
+      const byExt = exts.length
+        ? found.filter((f) => exts.includes(path.extname(f).toLowerCase()))
+        : found;
+      // 版本语义：正式分发/上架必须工程 versionName——偏移测试包（1004.x）与旧版本产物都不能出正式门
+      const expected = expectedArtifactVersion(opts.cwd, framework, platform, "release", new Set());
+      const picked = pickArtifactByVersion(byExt, expected);
+      artifactPath = picked.artifact;
       if (artifactPath && !isJson) {
         const via = config.artifacts?.[platform]
           ? "项目配置 artifacts"
           : `${framework?.label} 内置 pattern`;
         p.log.info(
-          `自动探测产物（${via}${exts.length ? `，扩展名 ${exts.join("/")}` : ""}）: ${pc.bold(path.basename(artifactPath))} ${pc.dim(artifactPath)}`,
+          `自动探测产物（${via}${exts.length ? `，扩展名 ${exts.join("/")}` : ""}${expected ? `，版本 ${expected}` : ""}）: ${pc.bold(path.basename(artifactPath))} ${pc.dim(artifactPath)}`,
         );
       }
-      if (!artifactPath && found.length > 0 && exts.length) {
+      if (!artifactPath && byExt.length > 0) {
+        const list = byExt
+          .map((f) => path.basename(f))
+          .slice(0, 3)
+          .join(", ");
         throw new Error(
-          `探测到产物但无 ${platform} 上架可接受的扩展名（需 ${exts.join("/")}，现存 ${found
-            .map((f) => path.basename(f))
-            .slice(0, 3)
-            .join(", ")}）——测试签名包不能上架，请构建正式产物或用 --artifact 指定`,
+          expected
+            ? `探测到产物但无版本 ${expected} 的 ${exts.join("/")}（现存 ${list}）——测试包/旧版本不能正式分发，请先构建 ${expected} 正式产物或用 --artifact 指定`
+            : `探测到产物但无 ${platform} 上架可接受的扩展名（需 ${exts.join("/")}，现存 ${list}）——测试签名包不能上架，请构建正式产物或用 --artifact 指定`,
         );
       }
     }
