@@ -1,5 +1,22 @@
 # @applift/core
 
+## 0.9.0
+
+### Minor Changes
+
+- b48ab7b: AGC 鸿蒙渠道 status 接入（capabilities.status=true，"v1 亦无"的结论已过时——华为已上线版本列表接口）：
+
+  - `POST /api/publish/v3/version/brief-info/list` 查商用版本列表，`state` 字段取值同 AppInfo.releaseState 全表（与华为安卓渠道同表）：0=已上架、3=待上架、4/5=审核中、1/8=审核不通过、2=已下架、7=草稿、11=撤销上架 → ReviewStatus
+  - 只取商用版本（`testType` 缺省或 1）；测试版本（3=邀请/4=公开，走 Testing API 链路）不混入 status 语义，过滤后为空返回 unknown（fail-safe 不误报）
+  - 多个商用版本取 `updateTime` 最新；认证与现有 AGC 链路同源（client_id + access_token），appId 缺省时按 bundleName 查（复用 `getHarmonyAppId`）
+  - 已知边界：商用版本的 testType=1 是基于本仓 Testing API 同枚举的推断（官方数据模型文档动态加载拿不到枚举表），真实链路首次使用时核对；若过滤漏掉商用版本表现为 unknown 而非误报
+
+- a6b8346: ASC（App Store Connect iOS）渠道三项升级：
+
+  - **stage 上传双引擎**：装了 Transporter.app（Mac App Store）时首选 `iTMSTransporter -m upload -jwt` 上传——JWT 与 ASC REST API 同源（Apple 官方建议 API 用户用同一 JWT 上传二进制），免 altool 的 private_keys 目录查找；未装时回退 `xcrun altool`（零额外安装，官方仍支持）。可选凭据 `ASC_TRANSPORTER_PATH` 显式指定 iTMSTransporter 路径。防御：ipa 复制到临时随机 ASCII 名再传（-assetFile 成功后 Apple 侧会删源文件、多字节文件名上传失败，fastlane 实证）；成败按 fastlane 语义（exit 0 且 `DBG-X: Returning 0`）。
+  - **submit 提审前预检**：目标版本的全部 appStoreVersionLocalizations 必须有商店描述（description），缺失提前报错并列出 locale，不再等 reviewSubmissions 最后一步被拒；并 emit 出口合规提示（Info.plist `ITSAppUsesNonExemptEncryption`）。
+  - **status 接入**（capabilities.status=true）：查最新 appStoreVersion 的 appVersionState（AppVersionState 15 枚举）映射 ReviewStatus——审核中/被拒（含 METADATA_REJECTED、INVALID_BINARY）/已批准未发布（PENDING_DEVELOPER_RELEASE 等）/已上架（READY_FOR_DISTRIBUTION），跳过 PREPARE_FOR_SUBMISSION 与 REPLACED_WITH_NEW_VERSION 非活跃记录。
+
 ## 0.8.2
 
 ### Patch Changes
