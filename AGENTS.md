@@ -72,3 +72,4 @@ applift：多框架 App 发版工具。**只管发版（产物 → 校验 → �
 - tag 后移：release 全成功补 `v{产物版本}`（幂等：内容一致「无需重复上传」）
 - qy-driver 侧：config 已声明双插件、hook `usePatchVersionSuffix` 已接关于页
 - 消费方类型链路修复（2026-10-20）：`@applift/cli` build 加 `--dts` 且 exports 补 types 条件；新增 `./plugins` 子导出（re-export core/plugins）——applift.config.ts 只依赖 @applift/cli 即有完整类型，无需 @ts-expect-error；promote 灰度内置默认 100（全量，`--rollout` > `rnUpdate({ defaultRollout })` > 默认）
+- ASC 渠道升级（2026-10-22，参考蒲公英 ASC CLI 文章做功能审查的产物）：① stage 上传双引擎——装 Transporter.app 时首选 `iTMSTransporter -jwt`（JWT 与 REST API 同源，Apple 官方建议；ipa 复制临时 ASCII 名防删源/多字节名失败），未装回退 altool（altool --upload-app 未被官方弃用，弃用的是其公证功能；勿再以"altool 已弃用"为由单路押注）；② submit 前预检本地化 description（Apple 硬性要求，提前暴露）+ 出口合规提示；③ status 接入（appVersionState 15 枚举 → ReviewStatus，跳过 PREPARE_FOR_SUBMISSION/REPLACED）。upload/submit 真实链路仍未经实机验证（qy-driver iOS release 首发时按"只读验证→预检→提审"顺序灰度）

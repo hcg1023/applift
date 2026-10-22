@@ -34,6 +34,6 @@ export const CHANNEL_HINTS: Record<string, string> = {
   vivo: "dev.vivo.com.cn → 应用分发 → API 传包（有沙箱环境可免费真测）",
   honor: "developer.honor.com → 设置 → API",
   yyb: "app.open.qq.com 管理中心（UserID + AccessSecret）",
-  asc: "App Store Connect → 用户和访问 → 集成 → 团队密钥；p8 放 ~/.applift/private_keys/",
+  asc: "App Store Connect → 用户和访问 → 集成 → 团队密钥；p8 放 ~/.applift/private_keys/；可选装 Transporter.app（Mac App Store）启用 iTMSTransporter 上传，缺省回退 xcrun altool",
   googleplay: "Google Cloud Console → Service Account（JSON 密钥）+ Play Console 关联",
 };
