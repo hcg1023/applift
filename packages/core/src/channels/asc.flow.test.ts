@@ -1,12 +1,13 @@
 /**
  * ASC（App Store Connect）业务流程级测试：同一渠道实例贯穿
- *   stage（xcrun altool mock 上传 ipa）→ submit（apps→builds→appStoreVersions→
- *   绑构建→reviewSubmissions 三步提审）→ status（M2 未接入，返回 unknown）。
+ *   stage（altool mock 上传 ipa；iTMSTransporter 引擎在 asc.test.ts 单测覆盖）→ submit（apps→
+ *   builds→appStoreVersions→预检 localizations→绑构建→reviewSubmissions 三步提审）→
+ *   status（appVersionState 映射 ReviewStatus）。
  *
  * 业务不变量：
  * - stage 用的 p8 三元组（KeyID/Issuer/p8）与 submit 同源：submit 的所有 REST 请求
  *   携带同一实例 makeAscJwt 生成的同一 Bearer JWT（kid/iss 一致，20 分钟窗口内不重签）；
- * - submit 请求序列严格按官方链路：定位 App → 找 VALID 构建 → 创建版本 → 绑构建 → 创建提交；
+ * - submit 请求序列严格按官方链路：定位 App → 找 VALID 构建 → 创建版本 → 预检 → 绑构建 → 创建提交；
  * - 版本号取自构建关联的 preReleaseVersion（included 按 relationships 匹配，不取 included[0]）。
  */
 import { generateKeyPairSync } from "node:crypto";
@@ -95,6 +96,21 @@ describe("asc flow: 同一渠道实例 altool stage → REST submit → status",
       },
       { match: "reviewSubmissions", method: "PATCH", response: { json: { data: [] } } },
       { match: "relationships/builds", response: { json: { data: [] } } },
+      // 提审前预检：本地化描述齐备
+      {
+        match: "appStoreVersionLocalizations",
+        response: {
+          json: {
+            data: [
+              {
+                type: "appStoreVersionLocalizations",
+                id: "loc-1",
+                attributes: { locale: "zh-Hans", description: "企业司机端描述" },
+              },
+            ],
+          },
+        },
+      },
       // 版本列表为空 → 走 POST 创建分支
       { match: "appStoreVersions?", response: { json: { data: [] } } },
       {
@@ -221,9 +237,37 @@ describe("asc flow: 同一渠道实例 altool stage → REST submit → status",
     // iOS 默认手动发布（releaseType=MANUAL：审核通过后人工上架）
     expect(JSON.parse(createVersion.body as string).data.attributes.releaseType).toBe("MANUAL");
 
-    // ---------- status：契约未接入，返回 unknown（不抛错） ----------
-    const st = await channel.status();
-    expect(st.state).toBe("unknown");
+    // ---------- status：appVersionState 映射 ReviewStatus（重新 mock 审核中状态） ----------
+    fetchMock.restore();
+    const statusMock = mockFetch([
+      {
+        match: "/v1/apps?",
+        response: {
+          json: {
+            data: [{ type: "apps", id: APP_ID, attributes: { bundleId: "com.example.driver" } }],
+          },
+        },
+      },
+      {
+        match: "appStoreVersions?filter[platform]",
+        response: {
+          json: {
+            data: [
+              {
+                type: "appStoreVersions",
+                id: VERSION_ID,
+                attributes: { versionString: VERSION_STRING, appVersionState: "IN_REVIEW" },
+              },
+            ],
+          },
+        },
+      },
+    ]);
+    try {
+      expect(await channel.status(ctx)).toEqual({ state: "reviewing" });
+    } finally {
+      statusMock.restore();
+    }
   });
 
   it("创建 reviewSubmission 未返回 id → 明确报错", async () => {
@@ -235,6 +279,21 @@ describe("asc flow: 同一渠道实例 altool stage → REST submit → status",
     const fetchMock = mockFetch([
       { match: "reviewSubmissions", method: "POST", response: { json: { data: [] } } }, // 无 id
       { match: "relationships/builds", response: { json: { data: [] } } },
+      // 提审前预检路由（该用例预检通过后才走到 reviewSubmissions 失败点）
+      {
+        match: "appStoreVersionLocalizations",
+        response: {
+          json: {
+            data: [
+              {
+                type: "appStoreVersionLocalizations",
+                id: "loc-1",
+                attributes: { locale: "zh-Hans", description: "描述" },
+              },
+            ],
+          },
+        },
+      },
       { match: "appStoreVersions?", response: { json: { data: [] } } },
       {
         match: "/v1/appStoreVersions",

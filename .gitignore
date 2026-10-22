@@ -4,3 +4,5 @@ coverage/
 .DS_Store
 .pnpm-store/
 temp/
+# cli 的 tsdown --dts 经 tsconfig paths 引 core/src 生成声明（tsdown/typescript 写到源旁，每次 build 重生）
+packages/core/src/**/*.d.ts
