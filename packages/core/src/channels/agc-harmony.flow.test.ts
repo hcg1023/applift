@@ -2,7 +2,7 @@
  * AGC 鸿蒙 业务流程级测试：同一渠道实例贯穿
  *   stage（releaseType=6 测试发布 .hap：Testing API 上传→建版本→绑包，不提审）
  *   → submit（.app 整包 v3 全链：上传→绑定→云端编译轮询→提审）
- *   → status（未接入，返回 unknown）。
+ *   → status（商用版本 state → ReviewStatus 映射）。
  *
  * 业务不变量：
  * - beta 链路绝不调用 app-submit（测试发布没有提审概念，plan 标注 stage-only）；
@@ -194,9 +194,33 @@ describe("agc flow: 同一渠道实例 beta stage → formal submit → status",
     const phases = formal.events.filter((e) => e.type === "phase").map((e) => e.phase);
     expect(phases).toEqual(["auth", "upload", "bind", "wait", "submit", "done"]);
 
-    // ---------- status：未接入，契约返回 unknown ----------
-    const st = await channel.status();
-    expect(st.state).toBe("unknown");
+    // ---------- status：商用版本 state → ReviewStatus（重新 mock 审核中状态） ----------
+    fetchMock.restore();
+    const statusMock = mockFetch([
+      { match: "oauth2/v1/token", response: { json: { access_token: "agc-flow-token" } } },
+      {
+        match: "version/brief-info/list",
+        response: {
+          json: {
+            ret: { code: 0 },
+            versionList: [
+              {
+                versionId: "ver-9",
+                state: 4,
+                updateTime: 1_700_000_000_000,
+                testType: 1,
+                packageList: [{ packageId: "pkg-9", versionName: "5.2.0" }],
+              },
+            ],
+          },
+        },
+      },
+    ]);
+    try {
+      expect(await channel.status(formal.ctx)).toEqual({ state: "reviewing" });
+    } finally {
+      statusMock.restore();
+    }
   });
 
   it("formal stage → submit(stagedRef)：全程恰好 1 次整包上传，submit 复用 packageId 直接等编译+提审", async () => {

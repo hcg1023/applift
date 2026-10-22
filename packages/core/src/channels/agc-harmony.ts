@@ -10,6 +10,7 @@
  *   4. PUT  /api/publish/v3/app-language-info    newFeatures 更新文案（lang 缺省取 defaultLang）
  *   5. GET  /api/publish/v3/package/compile/status  轮询编译（0=成功 2=拒绝终态 其他=编译中）
  *   6. POST /api/publish/v3/app-submit           提审（ret 204144719/204144727 = 编译中可重试）
+ * 状态查询: POST /api/publish/v3/version/brief-info/list  查商用版本 state（同 AppInfo.releaseState 全表）
  *
  * 测试发布（ctx.target.releaseType === '6'，2026-10 起走 Testing API；旧 releaseType=6 直绑 app-package-info 链路已下线，枚举仅剩 1/7）:
  *   0. GET  /api/publish/v2/upload-url/for-obs?releaseType=6   .hap 上传地址 → PUT OBS
@@ -94,6 +95,20 @@ interface TestPkgResp extends AgcRet {
   pkgVersion?: string[];
 }
 
+/** 版本列表条目（publish/v3/version/brief-info/list；state 取值同 AppInfo.releaseState 全表） */
+interface BriefVersionInfo {
+  versionId?: string;
+  state?: number;
+  updateTime?: number;
+  /** 测试版本类型：3=邀请测试 4=公开测试（本仓 Testing API 链路同枚举）；商用版本缺省或 1 */
+  testType?: number;
+  packageList?: Array<{ packageId?: string; versionName?: string; versionCode?: number }>;
+}
+
+interface BriefVersionListResp extends AgcRet {
+  versionList?: BriefVersionInfo[];
+}
+
 /** AppTest 测试群组列表响应（rtnCode 外壳，非 publish API 的 ret.code） */
 interface TestGroupListResp {
   rtnCode?: number | string;
@@ -173,7 +188,7 @@ export class AgcHarmonyChannel implements Channel {
     stage: true,
     submit: true,
     scheduled: true,
-    status: false,
+    status: true,
   };
   readonly errorHints = {
     "204144719": "软件包正在编译中（正常时序，CLI 已自动重试；持续出现请到 AGC 控制台看包状态）",
@@ -185,24 +200,22 @@ export class AgcHarmonyChannel implements Channel {
     "204144692":
       "提审前置校验失败（按 msg 判断）：privacyPolicy → 控制台「更多服务→协议服务」登记隐私政策；count of harmony test in audit → 在审测试版本超限，先停止/删除在审的测试版本再提",
   };
-
-  private async authHeaders(ctx: ChannelContext) {
+  private async authHeaders(ctx: Pick<ChannelContext, "credentials" | "target">) {
     const clientId = required(ctx, "AGC_CLIENT_ID");
     const clientSecret = required(ctx, "AGC_CLIENT_SECRET");
     const token = await getAgcToken({ clientId, clientSecret });
     return { clientId, token, headers: { client_id: clientId, Authorization: `Bearer ${token}` } };
   }
 
-  /** appId 缺省时按 bundleName 查（v1 全链路 step 0，可选） */
   private async resolveAppId(
-    ctx: ChannelContext,
+    ctx: Pick<ChannelContext, "credentials" | "target"> & { emit?: ChannelContext["emit"] },
     clientId: string,
     token: string,
   ): Promise<string> {
     const appId = ctx.target.appId;
     if (appId) return appId;
     const bundleName = required(ctx, "bundleName", "项目配置 appId / bundleName 至少配一个");
-    ctx.emit({
+    ctx.emit?.({
       type: "progress",
       detail: `appId 缺省，按 bundleName=${bundleName} 查询 AGC 应用列表…`,
     });
@@ -363,8 +376,58 @@ export class AgcHarmonyChannel implements Channel {
     }
   }
 
-  async status(): Promise<ReviewStatus> {
-    return { state: "unknown", raw: "AGC 鸿蒙审核状态查询未接入（v1 亦无）" };
+  /**
+   * 查询商用版本审核状态：POST /publish/v3/version/brief-info/list。
+   * - 只取商用版本（testType 缺省或 1）；测试版本（3=邀请/4=公开）走 Testing API 链路，不混入
+   *   status 语义——过滤后为空即 unknown（fail-safe，不会误报测试版本状态）
+   * - state 取值同 AppInfo.releaseState 全表（与华为安卓渠道同表，apkgo/hw_query.py 交叉验证）：
+   *   0=已上架 1/8=审核不通过 2=已下架 3=待上架 4/5=审核中 7=草稿 11=撤销上架
+   * - 多个商用版本取 updateTime 最新
+   */
+  async status(ctx: Pick<ChannelContext, "credentials" | "target">): Promise<ReviewStatus> {
+    const { clientId, token, headers } = await this.authHeaders(ctx);
+    const appId = await this.resolveAppId(ctx, clientId, token);
+    const packageName = ctx.target.bundleName;
+    const json = await agcJson<BriefVersionListResp>(
+      `${BASE}/publish/v3/version/brief-info/list`,
+      {
+        method: "POST",
+        headers: { ...headers, appId, "Content-Type": "application/json" },
+        body: JSON.stringify(packageName ? { packageName } : {}),
+      },
+      "查询版本列表",
+    );
+    const commercial = (json.versionList ?? []).filter(
+      (v) => v.testType === undefined || v.testType === 1,
+    );
+    if (commercial.length === 0)
+      return { state: "unknown", raw: "AGC 无商用版本记录（仅测试版本或从未发布）" };
+    const latest = [...commercial].sort((a, b) => (b.updateTime ?? 0) - (a.updateTime ?? 0))[0]!;
+    const versionName = latest.packageList?.[0]?.versionName ?? "?";
+    const state = latest.state;
+    if (state === undefined)
+      return { state: "unknown", raw: `商用版本 ${versionName} 无 state 字段` };
+    const label = `${versionName}（releaseState=${state}）`;
+    switch (state) {
+      case 0:
+        return { state: "approved", live: true };
+      case 3:
+        return { state: "approved", live: false }; // 待上架：审核通过、尚未上架
+      case 4:
+      case 5:
+        return { state: "reviewing" }; // 审核中 / 升级审核中
+      case 1:
+      case 8:
+        return { state: "rejected", reason: label }; // 审核不通过 / 升级审核不通过
+      case 2:
+        return { state: "unknown", raw: `已下架（${label}）` };
+      case 7:
+        return { state: "unknown", raw: `草稿，未提审（${label}）` };
+      case 11:
+        return { state: "unknown", raw: `撤销上架（${label}）` };
+      default:
+        return { state: "unknown", raw: label };
+    }
   }
 
   /** v1 releaseHarmonyApp step 1-4：.app 校验 → 上传地址 → PUT 整包 → v3 绑定（releaseType=1）→ 文案（不阻断） */
@@ -673,7 +736,11 @@ export class AgcHarmonyChannel implements Channel {
   }
 }
 
-function required(ctx: ChannelContext, key: string, where?: string): string {
+function required(
+  ctx: Pick<ChannelContext, "credentials" | "target">,
+  key: string,
+  where?: string,
+): string {
   // target 优先；凭据别名 AGC_APP_ID 兜底（init/channels 指引写入）
   const alias = key === "appId" ? "AGC_APP_ID" : "";
   const v = ctx.target[key] ?? ctx.credentials[key] ?? (alias && ctx.credentials[alias]);
