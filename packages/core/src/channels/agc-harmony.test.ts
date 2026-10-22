@@ -54,7 +54,7 @@ describe("AgcHarmonyChannel 元数据", () => {
     const ch = new AgcHarmonyChannel();
     expect(ch.id).toBe("agc");
     expect(ch.label).toBe("华为 AGC(鸿蒙)");
-    expect(ch.capabilities).toEqual({ stage: true, submit: true, scheduled: true, status: false });
+    expect(ch.capabilities).toEqual({ stage: true, submit: true, scheduled: true, status: true });
     await expect(ch.plan(baseCtx().ctx)).resolves.toMatchObject({
       channel: "agc",
       platform: "harmony",
@@ -78,9 +78,123 @@ describe("AgcHarmonyChannel 元数据", () => {
     expect((await ch.plan(ctx2)).afterApproval).toBe("auto-publish");
   });
 
-  it("status 未接入，返回 unknown", async () => {
-    const st = await new AgcHarmonyChannel().status();
-    expect(st.state === "unknown" && st.raw ? st.raw : "").toContain("未接入");
+  it("status 缺凭据 → 人话报错", async () => {
+    await expect(
+      new AgcHarmonyChannel().status(makeTestCtx({ target: { appId: "app-1" } }).ctx),
+    ).rejects.toThrow("AGC_CLIENT_ID");
+  });
+});
+
+describe("AgcHarmonyChannel.status（商用版本 state → ReviewStatus）", () => {
+  const ch = new AgcHarmonyChannel();
+
+  function statusRoutes(versionList: unknown) {
+    return [
+      TOKEN_ROUTE,
+      {
+        match: "version/brief-info/list",
+        response: { json: { ret: { code: 0 }, versionList } },
+      },
+    ];
+  }
+
+  const version = (state: number, updateTime = 1_700_000_000_000) => ({
+    versionId: "v-1",
+    state,
+    updateTime,
+    testType: 1,
+    packageList: [{ packageId: "p-1", versionName: "5.2.0", versionCode: 5200000 }],
+  });
+
+  it.each([
+    [0, { state: "approved", live: true }],
+    [3, { state: "approved", live: false }],
+    [4, { state: "reviewing" }],
+    [5, { state: "reviewing" }],
+    [1, { state: "rejected", reason: "5.2.0（releaseState=1）" }],
+    [8, { state: "rejected", reason: "5.2.0（releaseState=8）" }],
+  ])("state=%i → %j", async (state, expected) => {
+    const m = mockFetch(statusRoutes([version(state)]));
+    try {
+      expect(await ch.status(baseCtx().ctx)).toEqual(expected);
+    } finally {
+      m.restore();
+    }
+  });
+
+  it.each([
+    [2, "已下架"],
+    [7, "草稿，未提审"],
+    [11, "撤销上架"],
+    [99, "releaseState=99"],
+  ])("state=%i → unknown 带 raw", async (state, rawPart) => {
+    const m = mockFetch(statusRoutes([version(state)]));
+    try {
+      const st = await ch.status(baseCtx().ctx);
+      if (st.state !== "unknown") throw new Error(`expected unknown, got ${st.state}`);
+      expect(st.raw).toContain(rawPart);
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("过滤测试版本（testType 3/4）只看商用；全为测试版本 → unknown", async () => {
+    const m = mockFetch(
+      statusRoutes([{ versionId: "t-1", state: 4, testType: 3, packageList: [] }]),
+    );
+    try {
+      const st = await ch.status(baseCtx().ctx);
+      expect(st).toEqual({ state: "unknown", raw: "AGC 无商用版本记录（仅测试版本或从未发布）" });
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("多个商用版本取 updateTime 最新", async () => {
+    const m = mockFetch(statusRoutes([version(0, 1_000), version(4, 9_999)]));
+    try {
+      expect(await ch.status(baseCtx().ctx)).toEqual({ state: "reviewing" });
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("请求形状：POST + header appId + body packageName；target.appId 直用不查 appid-list", async () => {
+    const m = mockFetch(statusRoutes([version(0)]));
+    try {
+      const { ctx } = baseCtx({ target: { appId: "app-1", bundleName: "com.qy.driver" } });
+      await ch.status(ctx);
+      const call = m.calls.find((c) => c.url.includes("version/brief-info/list"))!;
+      expect(call.method).toBe("POST");
+      expect(call.headers.appId).toBe("app-1");
+      expect(call.headers.client_id).toBe("cid-1");
+      expect(JSON.parse(call.body as string)).toEqual({ packageName: "com.qy.driver" });
+      expect(m.calls.some((c) => c.url.includes("appid-list"))).toBe(false);
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("缺 appId 时按 bundleName 查 appid-list 再查版本列表", async () => {
+    const m = mockFetch([
+      TOKEN_ROUTE,
+      {
+        match: "appid-list",
+        response: { json: { ret: { code: 0 }, appids: [{ key: "驱动端", value: "app-x" }] } },
+      },
+      {
+        match: "version/brief-info/list",
+        response: { json: { ret: { code: 0 }, versionList: [version(4)] } },
+      },
+    ]);
+    try {
+      const { ctx } = baseCtx({ target: { bundleName: "com.qy.driver" } });
+      await expect(ch.status(ctx)).resolves.toEqual({ state: "reviewing" });
+      const call = m.calls.find((c) => c.url.includes("version/brief-info/list"))!;
+      expect(call.headers.appId).toBe("app-x");
+    } finally {
+      m.restore();
+    }
   });
 });
 describe("getHarmonyAppId", () => {
