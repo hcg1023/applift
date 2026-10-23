@@ -52,7 +52,17 @@ export interface AppliftPlugin {
     ctx: HookContext,
   ): Promise<ChannelContext | false | void> | ChannelContext | false | void;
   "stage:after"?(
-    result: { channel: string; ok: boolean; ref?: string; error?: string; artifactPath?: string },
+    result: {
+      channel: string;
+      ok: boolean;
+      ref?: string;
+      error?: string;
+      artifactPath?: string;
+      /** 本次发布的平台（pipeline 由渠道计划解析后透传；基线上传类插件据此选对应用记录） */
+      platform?: string;
+      /** 发布阶段：beta=内测（测试包基线进 beta 应用记录）/ prod=正式。缺省由插件自行推断 */
+      target?: "beta" | "prod";
+    },
     ctx: HookContext,
   ): Promise<void> | void;
   "submit:before"?(

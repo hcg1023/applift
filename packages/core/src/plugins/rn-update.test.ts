@@ -9,10 +9,9 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { judgeDelivery, makeRnUpdateProvider, rnUpdate, betaPackageVersion } from "./rn-update.js";
+import { judgeDelivery, makeRnUpdateProvider, rnUpdate } from "./rn-update.js";
 import type { UpdateProvider } from "../update.js";
 import type { PushyCli } from "./pushy-api.js";
-import { PUSHY_TOKEN_KEY } from "./pushy-api.js";
 import type { FrameworkAdapter } from "../framework.js";
 
 const rn: FrameworkAdapter = {
@@ -285,12 +284,12 @@ describe("publishToBeta / promoteToProd（OpenAPI 客户端组装：取号 + 测
     });
   }
 
-  it("publishToBeta：读 versionName → 探测 ppk 产物（mtime 最新）→ 服务端取号 → publish 绑 major+1000 偏移测试版本", async () => {
+  it("publishToBeta：读 versionName → 探测 ppk 产物（mtime 最新）→ 服务端取号 → publish 绑派生测试版本", async () => {
     const dir = rnProject();
     ppkArtifact(dir, 60_000); // 旧 ppk：mtime 排序应被新者胜出
     const fresh = ppkArtifact(dir);
     const { cli, calls } = mkCli({
-      versions: async () => [{ id: 303339, hash: "qm5Xb8bG", name: "4.0.0-patch.4" }],
+      versions: async () => [{ id: 303339, hash: "qm5Xb8bG", name: "4.0.1000-patch.4" }],
     });
     const provider = makeRnUpdateProvider({ harmony: 34166 }, cli);
     const r = await provider.publishToBeta!({
@@ -299,13 +298,13 @@ describe("publishToBeta / promoteToProd（OpenAPI 客户端组装：取号 + 测
       platform: "harmony",
       note: "修复登录",
     });
-    expect(r).toEqual({ versionName: "4.0.0-patch.5", versionId: 303353 });
+    expect(r).toEqual({ versionName: "4.0.1000-patch.5", versionId: 303353 });
     expect(calls.publish).toHaveBeenCalledWith(
       expect.objectContaining({
         appId: 34166,
         ppk: fresh,
-        name: "4.0.0-patch.5",
-        packageVersion: "1004.0.0",
+        name: "4.0.1000-patch.5",
+        packageVersion: "4.0.1000",
         description: "修复登录",
       }),
     );
@@ -379,8 +378,8 @@ describe("publishToBeta / promoteToProd（OpenAPI 客户端组装：取号 + 测
     const dir = rnProject();
     const { cli, calls } = mkCli({
       versions: async () => [
-        { id: 303339, hash: "qm5Xb8bG", name: "4.0.0-patch.4" },
-        { id: 303353, hash: "Qn19JhbA", name: "4.0.0-patch.5" },
+        { id: 303339, hash: "qm5Xb8bG", name: "4.0.1000-patch.4" },
+        { id: 303353, hash: "Qn19JhbA", name: "4.0.1000-patch.5" },
       ],
     });
     const provider = makeRnUpdateProvider({ harmony: 34166, defaultRollout: 10 }, cli);
@@ -389,7 +388,7 @@ describe("publishToBeta / promoteToProd（OpenAPI 客户端组装：取号 + 测
       framework: rn,
       platform: "harmony",
     });
-    expect(r).toEqual({ versionName: "4.0.0-patch.5", rollout: 10 });
+    expect(r).toEqual({ versionName: "4.0.1000-patch.5", rollout: 10 });
     expect(calls.rebind).toHaveBeenCalledWith({
       appId: 34166,
       versionId: 303353,
@@ -401,11 +400,11 @@ describe("publishToBeta / promoteToProd（OpenAPI 客户端组装：取号 + 测
   it("promoteToProd：未配置 defaultRollout → 内置默认 100（全量）", async () => {
     const dir = rnProject();
     const { cli, calls } = mkCli({
-      versions: async () => [{ id: 303353, hash: "Qn19JhbA", name: "4.0.0-patch.5" }],
+      versions: async () => [{ id: 303353, hash: "Qn19JhbA", name: "4.0.1000-patch.5" }],
     });
     const provider = makeRnUpdateProvider({ harmony: 34166 }, cli);
     const r = await provider.promoteToProd!({ cwd: dir, framework: rn, platform: "harmony" });
-    expect(r).toEqual({ versionName: "4.0.0-patch.5", rollout: 100 });
+    expect(r).toEqual({ versionName: "4.0.1000-patch.5", rollout: 100 });
     expect(calls.rebind).toHaveBeenCalledWith(
       expect.objectContaining({ versionId: 303353, rollout: 100 }),
     );
@@ -416,15 +415,80 @@ describe("publishToBeta / promoteToProd（OpenAPI 客户端组装：取号 + 测
     const { cli, calls } = mkCli({
       versions: async () => [
         { id: 303340, hash: "aaa", name: "3.9.9-patch.9" },
-        { id: 303353, hash: "Qn19JhbA", name: "4.0.0-patch.2" },
+        { id: 303353, hash: "Qn19JhbA", name: "4.0.1000-patch.2" },
       ],
     });
     const provider = makeRnUpdateProvider({ harmony: 34166 }, cli);
     const r = await provider.promoteToProd!({ cwd: dir, framework: rn, platform: "harmony" });
-    expect(r!.versionName).toBe("4.0.0-patch.2");
+    expect(r!.versionName).toBe("4.0.1000-patch.2");
     expect(calls.rebind).toHaveBeenCalledWith(
       expect.objectContaining({ versionId: 303353, packageVersion: "4.0.0" }),
     );
+  });
+
+  it("promoteToProd：只认测试线（4.0.1000-patch.N），不把正式线自发的 4.0.0-patch.N 当候选", async () => {
+    const dir = rnProject();
+    const { cli, calls } = mkCli({
+      versions: async () => [
+        { id: 1, hash: "prod", name: "4.0.0-patch.9" },
+        { id: 2, hash: "beta", name: "4.0.1000-patch.1" },
+      ],
+    });
+    const provider = makeRnUpdateProvider({ harmony: 34166 }, cli);
+    const r = await provider.promoteToProd!({ cwd: dir, framework: rn, platform: "harmony" });
+    expect(r!.versionName).toBe("4.0.1000-patch.1");
+    expect(calls.rebind).toHaveBeenCalledWith(
+      expect.objectContaining({ versionId: 2, packageVersion: "4.0.0" }),
+    );
+  });
+
+  it("promoteToProd：app-id 模式 → 返 null + stderr 提示无法 promote（跨 appId 的 versionId 不通用）", async () => {
+    const dir = rnProject();
+    const { cli, calls } = mkCli();
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const provider = makeRnUpdateProvider({ harmony: 34166 }, cli, () => ({ mode: "app-id" }));
+      await expect(
+        provider.promoteToProd!({ cwd: dir, framework: rn, platform: "harmony" }),
+      ).resolves.toBeNull();
+      expect(err.mock.calls.flat().join("")).toContain(
+        "harmony 无法 promote：跨 appId 的 versionId 不通用",
+      );
+      expect(calls.rebind).not.toHaveBeenCalled();
+    } finally {
+      err.mockRestore();
+    }
+  });
+
+  it("promoteToProd：offset 模式但配置了双 appId {prod,beta} → 同样返 null（hasDualAppId 分支）", async () => {
+    const dir = rnProject();
+    const { cli, calls } = mkCli();
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      // 默认 getBetaConfig = offset/patch/1000，但双 appId 同样阻断 rebind
+      const provider = makeRnUpdateProvider({ harmony: { prod: 111, beta: 222 } }, cli);
+      await expect(
+        provider.promoteToProd!({ cwd: dir, framework: rn, platform: "harmony" }),
+      ).resolves.toBeNull();
+      expect(err.mock.calls.flat().join("")).toContain("无法 promote");
+      expect(calls.rebind).not.toHaveBeenCalled();
+    } finally {
+      err.mockRestore();
+    }
+  });
+
+  it("promoteToProd：rebind 失败（正式基线未上传）→ 错误含 --delivery native 修复提示", async () => {
+    const dir = rnProject();
+    const { cli } = mkCli({
+      versions: async () => [{ id: 2, hash: "Qn19JhbA", name: "4.0.1000-patch.1" }],
+      rebind: async () => {
+        throw new Error("版本 4.0.0 不存在");
+      },
+    });
+    const provider = makeRnUpdateProvider({ harmony: 34166 }, cli);
+    await expect(
+      provider.promoteToProd!({ cwd: dir, framework: rn, platform: "harmony" }),
+    ).rejects.toThrow(/版本 4\.0\.0 不存在[\s\S]*applift release harmony --delivery native/);
   });
 
   it("promoteToProd：当前 versionName 无 patch（其他版本的不串台）→ 返回 null 不误 promote", async () => {
@@ -457,7 +521,7 @@ describe("publishToBeta / promoteToProd（OpenAPI 客户端组装：取号 + 测
     expect(calls.rebind).not.toHaveBeenCalled();
   });
 
-  it("publishToProd：探测 ppk → 取号 → 绑正式版本（非偏移线）+ rollout", async () => {
+  it("publishToProd：探测 ppk → 取号 → 绑正式版本（非测试线）+ rollout", async () => {
     const dir = rnProject();
     const fresh = ppkArtifact(dir);
     const { cli, calls } = mkCli({
@@ -476,7 +540,7 @@ describe("publishToBeta / promoteToProd（OpenAPI 客户端组装：取号 + 测
         appId: 34166,
         ppk: fresh,
         name: "4.0.0-patch.5",
-        packageVersion: "4.0.0", // 正式线（publishToBeta 是 1004.0.0 偏移线）
+        packageVersion: "4.0.0", // 正式线（publishToBeta 绑的是派生测试版本）
         description: "正式修复",
         rollout: 100,
       }),
@@ -518,6 +582,24 @@ describe("stage:after 自动基线（原生路径发版成功后 pushy uploadApp
       { cwd: "/tmp", channel: "agc" },
     );
     expect(calls.uploadApp).toHaveBeenCalledWith(34166, artifact, "4.0.0", {});
+  });
+
+  it("旧载荷无 target 且工程版本文件损坏（读版本抛错）→ 按正式线上传（fail-safe 不抛）", async () => {
+    const artifact = appArtifact();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-rnupd-broken-"));
+    // 损坏 harmony 版本文件：readProjectVersions 抛错 → baselineChannel 退 prod
+    // （保守：宁可少传一条测试基线，也不把测试包灌进正式 app 的反向错判）
+    fs.mkdirSync(path.join(dir, "harmony", "AppScope"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "harmony", "AppScope", "app.json5"), "{ broken");
+    const m = mkCli();
+    const plugin = rnUpdate({ harmony: 34166 }, m.cli);
+    await expect(
+      plugin["stage:after"]!(
+        { channel: "agc", ok: true, artifactPath: artifact },
+        { cwd: dir, channel: "agc" },
+      ),
+    ).resolves.toBeUndefined();
+    expect(m.calls.uploadApp).toHaveBeenCalledWith(34166, artifact, "4.0.0", {});
   });
 
   it("产物读不出版本号（无 pack.info 的 .app）→ 不上传，stderr 提醒人工补传", async () => {
@@ -636,11 +718,32 @@ describe("stage:after 自动基线（原生路径发版成功后 pushy uploadApp
 });
 
 describe("错误分支与工厂注册", () => {
-  it("betaPackageVersion：非数字开头版本 → 显式报错；纯数字与带段版本可偏移", () => {
-    expect(() => betaPackageVersion("v4.0.0")).toThrow(/非 X\.Y\.Z 形态/);
-    expect(betaPackageVersion("4.a.0")).toBe("1004.a.0"); // 契约：只要求 major 数字可偏移，余段原样保留
-    expect(betaPackageVersion("4")).toBe("1004");
-    expect(betaPackageVersion("4.0.0")).toBe("1004.0.0");
+  it("rnUpdate：config:resolved 捕获 beta（offset/major 兼容旧行为）", async () => {
+    const dir = tmpProject((d) => {
+      fs.mkdirSync(path.join(d, "harmony", "AppScope"), { recursive: true });
+      fs.writeFileSync(
+        path.join(d, "harmony", "AppScope", "app.json5"),
+        '{ "versionName": "4.0.0", "versionCode": 4000000 }',
+      );
+    });
+    ppkArtifact(dir);
+    const { cli, calls } = mkCli();
+    const plugin = rnUpdate({ harmony: 34166 }, cli);
+    plugin["config:resolved"]!(
+      {
+        version: {
+          versionCode: "increment",
+          beta: { mode: "offset", segment: "major", delta: 1000 },
+        },
+      } as never,
+      { cwd: dir },
+    );
+    const providers: UpdateProvider[] = [];
+    plugin["update:register"]!(providers, { cwd: dir });
+    await providers[0]!.publishToBeta!({ cwd: dir, framework: rn, platform: "harmony" });
+    expect(calls.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ packageVersion: "1004.0.0" }),
+    );
   });
 
   it("publishToBeta：工程无该平台版本文件 → 明确报错（不是静默空版本）", async () => {
@@ -663,5 +766,118 @@ describe("错误分支与工厂注册", () => {
     expect(providers[0]!.judge(["src/a.ts"], { cwd: "/tmp", framework: rn })).toMatchObject({
       recommendation: "ota",
     });
+  });
+});
+
+describe("策略守卫（app-id / suffix 正则）", () => {
+  function harmonyProject(): string {
+    return tmpProject((d) => {
+      fs.mkdirSync(path.join(d, "harmony", "AppScope"), { recursive: true });
+      fs.writeFileSync(
+        path.join(d, "harmony", "AppScope", "app.json5"),
+        '{ "versionName": "4.0.0", "versionCode": 4000000 }',
+      );
+    });
+  }
+
+  it("app-id 模式只有单 appId → 报错（不得静默把测试热更绑到正式线）", async () => {
+    const dir = harmonyProject();
+    ppkArtifact(dir);
+    const { cli, calls } = mkCli();
+    const provider = makeRnUpdateProvider({ harmony: 34166 }, cli, () => ({ mode: "app-id" }));
+    await expect(
+      provider.publishToBeta!({ cwd: dir, framework: rn, platform: "harmony" }),
+    ).rejects.toThrow(/app-id[\s\S]*prod, beta/);
+    expect(calls.publish).not.toHaveBeenCalled();
+  });
+
+  it("suffix 模板含正则元字符（+）时取号仍递增，不会永远 patch.1", async () => {
+    const dir = harmonyProject();
+    ppkArtifact(dir);
+    const { cli, calls } = mkCli({
+      versions: async () => [{ id: 9, hash: "h", name: "4.0.0+beta-patch.1" }],
+    });
+    const provider = makeRnUpdateProvider({ harmony: 34166 }, cli, () => ({
+      mode: "suffix",
+      template: "{base}+beta",
+    }));
+    await provider.publishToBeta!({ cwd: dir, framework: rn, platform: "harmony" });
+    expect(calls.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "4.0.0+beta-patch.2", packageVersion: "4.0.0+beta" }),
+    );
+  });
+});
+
+describe("stage:after 基线归属（显式 target）", () => {
+  function artifactWith(versionName: string): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-rnupd-base-"));
+    fs.writeFileSync(path.join(dir, "x.app"), "");
+    fs.writeFileSync(
+      path.join(dir, "pack.info"),
+      JSON.stringify({ summary: { app: { version: { name: versionName, code: 4000000 } } } }),
+    );
+    return path.join(dir, "x.app");
+  }
+
+  it("target=beta 且双 appId → 基线进 beta 应用记录（不靠版本名猜）", async () => {
+    const { cli, calls } = mkCli();
+    const plugin = rnUpdate({ harmony: { prod: 111, beta: 222 } }, cli);
+    await plugin["stage:after"]!(
+      {
+        channel: "agc",
+        ok: true,
+        artifactPath: artifactWith("4.0.1000"),
+        platform: "harmony",
+        target: "beta",
+      },
+      { cwd: "/tmp", channel: "agc" },
+    );
+    expect(calls.uploadApp).toHaveBeenCalledTimes(1);
+    expect(calls.uploadApp.mock.calls[0]![0]).toBe(222);
+  });
+
+  it("target=prod → 进正式应用记录", async () => {
+    const { cli, calls } = mkCli();
+    const plugin = rnUpdate({ harmony: { prod: 111, beta: 222 } }, cli);
+    await plugin["stage:after"]!(
+      {
+        channel: "agc",
+        ok: true,
+        artifactPath: artifactWith("4.0.0"),
+        platform: "harmony",
+        target: "prod",
+      },
+      { cwd: "/tmp", channel: "agc" },
+    );
+    expect(calls.uploadApp.mock.calls[0]![0]).toBe(111);
+  });
+
+  it("同一 (平台, 版本名) 一次运行只传一次（test:all 的 .hap/.app 并发）", async () => {
+    const { cli, calls } = mkCli();
+    const plugin = rnUpdate({ harmony: 34166 }, cli);
+    const ctx = { cwd: "/tmp", channel: "agc" };
+    await Promise.all([
+      plugin["stage:after"]!(
+        {
+          channel: "agc",
+          ok: true,
+          artifactPath: artifactWith("4.0.1000"),
+          platform: "harmony",
+          target: "beta",
+        },
+        ctx,
+      ),
+      plugin["stage:after"]!(
+        {
+          channel: "pgyer",
+          ok: true,
+          artifactPath: artifactWith("4.0.1000"),
+          platform: "harmony",
+          target: "beta",
+        },
+        ctx,
+      ),
+    ]);
+    expect(calls.uploadApp).toHaveBeenCalledTimes(1);
   });
 });

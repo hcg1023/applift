@@ -78,6 +78,9 @@ export async function runStage(input: PipelineInput): Promise<PipelineSummary> {
       const r = channel.capabilities.stage
         ? await channel.stage(effectiveCtx)
         : { ok: false, error: "该渠道不支持只传包（上传与提审一体）" };
+      // plan 先算：stage:after 需要 platform 才能把基线上传到正确的 pushy 应用记录
+      //（.app 同属 iOS 与鸿蒙整包，扩展名不可靠；渠道映射只覆盖 agc）
+      const plan = await safePlan(channel, effectiveCtx);
       if (plugins)
         await plugins.broadcast(
           "stage:after",
@@ -88,9 +91,10 @@ export async function runStage(input: PipelineInput): Promise<PipelineSummary> {
             ref: r.ref,
             error: r.error,
             artifactPath: effectiveCtx.artifactPath,
+            platform: plan.platform,
+            target: "prod",
           },
         );
-      const plan = await safePlan(channel, effectiveCtx);
       summary.push({
         channel: channel.id,
         label: channel.label,
@@ -207,7 +211,8 @@ export async function runSubmit(
             plans.find((p) => p.channel === channel.id)?.artifactVersion || undefined,
         });
         // --submit 一体路径的 stage 同样广播 stage:after（与 runStage 对称；否则基线上传类插件在该路径静默失效）
-        if (plugins)
+        if (plugins) {
+          const stagedPlan = planFor(plans, basePlans, channel.id, ctx.artifactPath);
           await plugins.broadcast(
             "stage:after",
             { channel: channel.id, cwd: input.cwd, credentials: effectiveCtx.credentials },
@@ -216,8 +221,11 @@ export async function runSubmit(
               ok: true,
               ref: stageResult.ref,
               artifactPath: effectiveCtx.artifactPath,
+              platform: stagedPlan.platform,
+              target: "prod",
             },
           );
+        }
       }
       const r = await channel.submit(effectiveCtx, stagedRef);
       summary.push({
@@ -261,11 +269,13 @@ async function safePlan(channel: Channel, ctx: ChannelContext): Promise<ReleaseP
   }
 }
 
-/** 按产物扩展名推断平台（兜底条目用）：.ipa→ios，.hap→harmony，.apk/.aab 及其余→android */
+/** 按产物扩展名推断平台（兜底条目用）：.ipa→ios，.hap/.app→harmony，.apk/.aab 及其余→android。
+ *  `.app` 在 applift 的分发口径里只会是鸿蒙整包（iOS 上架/内测统一用 .ipa）——
+ *  历史实现把它归到 android，会让 stage:after 把鸿蒙基线传到 android 应用记录。 */
 function platformOfArtifact(artifactPath: string): "android" | "ios" | "harmony" {
   const ext = path.extname(artifactPath).toLowerCase();
   if (ext === ".ipa") return "ios";
-  if (ext === ".hap") return "harmony";
+  if (ext === ".hap" || ext === ".app") return "harmony";
   return "android";
 }
 

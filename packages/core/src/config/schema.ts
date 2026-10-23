@@ -108,8 +108,34 @@ export const VersionCodeConfigSchema = z.union([
 ]);
 export type VersionCodeConfig = z.infer<typeof VersionCodeConfigSchema>;
 
+/**
+ * 测试版本名策略：测试包与正式包的 versionName 必须不同（pushy 只认 packageVersion 字符串）。
+ * - offset：段偏移，默认 patch+1000（4.0.0 → 4.0.1000）——三段纯数字，iOS/Android/鸿蒙全通
+ * - suffix：semver prerelease（4.0.0-beta）——iOS TestFlight/App Store 硬拒，仅侧载可用
+ * - app-id：版本名不变，隔离交给两个 pushy 应用记录
+ */
+export const BetaVersionConfigSchema = z.union([
+  z.object({
+    mode: z.literal("offset"),
+    segment: z.enum(["patch", "major"]).default("patch"),
+    delta: z.number().int().positive().default(1000),
+  }),
+  z.object({
+    mode: z.literal("suffix"),
+    /** 模板：只支持 {base} 占位（不支持 {n}：序号类模板需要持久化状态） */
+    template: z.string().default("{base}-beta"),
+  }),
+  z.object({ mode: z.literal("app-id") }),
+]);
+/**
+ * 配置侧类型：用 z.input（字段带 .default 即为可选）。
+ * 用户写 `{ mode: 'offset' }` 也应合法——默认值由 schema 在 parse 时补齐。
+ */
+export type BetaVersionConfig = z.input<typeof BetaVersionConfigSchema>;
+
 export const VersionConfigSchema = z.object({
   versionCode: VersionCodeConfigSchema.default("increment"),
+  beta: BetaVersionConfigSchema.default({ mode: "offset", segment: "patch", delta: 1000 }),
 });
 export type VersionConfig = z.infer<typeof VersionConfigSchema>;
 

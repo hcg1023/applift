@@ -56,6 +56,8 @@ import {
   applyBump,
   type VersionWrite,
   latestSemverTag,
+  betaVersionName,
+  type BetaVersionConfig,
   type VersionCodeConfig,
   type FrameworkAdapter,
 } from "@applift/core";
@@ -162,11 +164,45 @@ program
   .version(pkg.version);
 
 /**
- * 期望产物版本号（版本语义：beta 的热更平台 = 偏移测试包，release = 工程正式版）。
- * - beta 且平台接入热更（provider.platforms 含之）：偏移版（major+1000，如 1004.0.0）——
- *   测试设备装偏移包才能收到测试线热更，版本号精确隔离正式用户
- * - release：工程 versionName——测试包/偏移包不能用于正式分发
- * 返回 undefined = 该场景不做版本校验（未接热更平台的 beta、读不到工程版本）
+ * beta 路径的 stage 收尾：与 release 的 runStage 对称，广播 stage:after。
+ * beta 不走 pipeline（直接调 channel.stage），不补这一下，rn-update 的基线自动上传
+ * 在测试线永远不会触发 —— 测试包没有基线，热更 bind 必然失败。
+ */
+export async function notifyStageAfter(
+  host: PluginHost | undefined,
+  channelId: string,
+  platform: string,
+  ctx: { artifactPath?: string; credentials?: Readonly<Record<string, string>> },
+  result: { ok: boolean; ref?: string; error?: string },
+  cwd: string,
+): Promise<void> {
+  try {
+    await host?.broadcast(
+      "stage:after",
+      { channel: channelId, cwd, credentials: ctx.credentials },
+      {
+        channel: channelId,
+        ok: result.ok,
+        ref: result.ref,
+        error: result.error,
+        artifactPath: ctx.artifactPath,
+        platform,
+        // beta 路径只可能是内测：基线要进 beta 应用记录（双 appId 时不能靠版本名猜）
+        target: "beta",
+      },
+    );
+  } catch (e) {
+    // 钩子失败不能把「已上传成功」改判成渠道失败（rn-update 自己已 catch，此处防第三方插件）
+    process.stderr.write(`⚠ stage:after 插件执行失败（不影响本次上传）：${(e as Error).message}\n`);
+  }
+}
+
+/**
+ * 期望产物版本号（版本语义：beta 的热更平台 = 派生测试版本，release = 工程正式版）。
+ * - beta 且平台接入热更（provider.platforms 含之）：按 beta 策略派生（默认 patch+1000，
+ *   如 4.0.1000）—— 测试设备装测试包才能收到测试线热更，版本名精确隔离正式用户
+ * - release：工程 versionName——测试包/旧版本不能用于正式分发
+ * 返回 undefined = 该场景不做版本校验（未接热更平台的 beta、读不到工程版本、策略不适用）
  */
 function expectedArtifactVersion(
   cwd: string,
@@ -174,18 +210,16 @@ function expectedArtifactVersion(
   platform: string,
   mode: "beta" | "release",
   hotPlatforms: ReadonlySet<string>,
+  betaConfig?: BetaVersionConfig,
 ): string | undefined {
   const versionName = framework
     ? readProjectVersions(cwd, framework).find((v) => v.platform === platform)?.versionName
     : undefined;
   if (!versionName) return undefined;
   if (mode === "release") return versionName;
-  // 偏移算法内联（major+1000）：与 rn-update 的 betaPackageVersion 同构。
-  // 不从 @applift/core/plugins 静态 import——其 chunk 链上具名 re-export 会被 ESM
-  // 链接期校验拒绝（实测 betaPackageVersion 动态可见、静态 import 报 does not provide）
-  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(versionName);
-  if (!m) return undefined;
-  return hotPlatforms.has(platform) ? `${Number(m[1]) + 1000}.${m[2]}.${m[3]}` : undefined;
+  if (!hotPlatforms.has(platform)) return undefined;
+  // 派生走 core 的同一纯函数，避免 CLI 与 provider 各写一套（历史漂移点）
+  return betaVersionName({ base: versionName, config: betaConfig, platform });
 }
 
 /**
@@ -643,23 +677,24 @@ program
         const found = findArtifacts(cmdOpts.cwd, patterns).filter((f) =>
           exts.includes(path.extname(f).toLowerCase()),
         );
-        // 版本语义：热更平台的 beta 吃偏移测试包（快捷路径同款校验）
+        // 版本语义：热更平台的 beta 吃派生测试包（快捷路径同款校验）
         const expected = expectedArtifactVersion(
           cmdOpts.cwd,
           framework,
           plat,
           "beta",
           hotPlatforms,
+          projCfg.version?.beta,
         );
         const picked = pickArtifactByVersion(found, expected);
         if (expected && picked.mismatched)
           throw new Error(
-            `未探测到 ${plat} 偏移测试包 ${expected}（现存 ${picked.mismatched
+            `未探测到 ${plat} 测试包 ${expected}（现存 ${picked.mismatched
               .map((f) => path.basename(f))
               .slice(0, 3)
               .join(
                 ", ",
-              )}）——测试分发的包全为偏移版本（major+1000），请构建偏移测试包后再发，或 --artifact 显式指定`,
+              )}）——测试分发的包版本名必须是 ${expected}，请构建测试包后再发，或 --artifact 显式指定`,
           );
         return picked.artifact;
       };
@@ -702,6 +737,7 @@ program
                 );
                 warnDuplicateVersion("pgyer", artifactPath);
                 const r = await pgyer.stage(ctx);
+                await notifyStageAfter(host, "pgyer", plat, ctx, r, cmdOpts.cwd);
                 if (!r.ok) throw new Error(r.error ?? "上传失败");
                 appendEntry({
                   ts: Date.now(),
@@ -746,6 +782,7 @@ program
               );
               warnDuplicateVersion("agc", artifactPath);
               const r = await agc.stage(ctx);
+              await notifyStageAfter(host, "agc", "harmony", ctx, r, cmdOpts.cwd);
               if (!r.ok) throw new Error(r.error ?? "AGC 测试发布失败");
               appendEntry({
                 ts: Date.now(),
@@ -783,6 +820,7 @@ program
               );
               warnDuplicateVersion("asc", artifactPath);
               const r = await asc.stage(ctx);
+              await notifyStageAfter(host, "asc", "ios", ctx, r, cmdOpts.cwd);
               if (!r.ok) throw new Error(r.error ?? "上传失败");
               appendEntry({
                 ts: Date.now(),
@@ -824,7 +862,7 @@ program
         const patterns =
           projCfg.artifacts?.[platform] ?? framework?.artifactPatterns(platform) ?? [];
         const found = findArtifacts(cmdOpts.cwd, patterns);
-        // 版本语义：热更平台的 beta 吃偏移测试包（测试设备收测试线热更）
+        // 版本语义：热更平台的 beta 吃派生测试包（测试设备收测试线热更）
         const providers: UpdateProvider[] = [];
         await host?.broadcast("update:register", { cwd: cmdOpts.cwd }, providers);
         const hotPlatforms = new Set(providers.flatMap((p) => p.platforms ?? []));
@@ -834,16 +872,17 @@ program
           platform,
           "beta",
           hotPlatforms,
+          projCfg.version?.beta,
         );
         const picked = pickArtifactByVersion(found, expected);
         if (expected && picked.mismatched)
           throw new Error(
-            `未探测到偏移测试包 ${expected}（现存 ${picked.mismatched
+            `未探测到测试包 ${expected}（现存 ${picked.mismatched
               .map((f) => path.basename(f))
               .slice(0, 3)
               .join(
                 ", ",
-              )}）——测试分发的包全为偏移版本（major+1000），请构建偏移测试包后再发，或 --artifact 显式指定`,
+              )}）——测试分发的包版本名必须是 ${expected}，请构建测试包后再发，或 --artifact 显式指定`,
           );
         artifactPath = picked.artifact;
       }
@@ -879,6 +918,7 @@ program
             if (e.type === "warn") s.message(pc.yellow(`⚠ ${redactText(e.message)}`));
           },
         });
+        await notifyStageAfter(host, "agc", platform, ctx, r, cmdOpts.cwd);
         if (r.ok) {
           s.stop(
             agcCfg?.submit
@@ -910,6 +950,7 @@ program
           if (e.type === "warn") s.message(pc.yellow(`⚠ ${redactText(e.message)}`));
         },
       });
+      await notifyStageAfter(host, "pgyer", platform, ctx, r, cmdOpts.cwd);
       if (r.ok) {
         s.stop(`蒲公英发布成功 ${pc.green("✓")} 扫码即装`);
       } else {
@@ -1102,8 +1143,15 @@ program
       const byExt = exts.length
         ? found.filter((f) => exts.includes(path.extname(f).toLowerCase()))
         : found;
-      // 版本语义：正式分发/上架必须工程 versionName——偏移测试包（1004.x）与旧版本产物都不能出正式门
-      const expected = expectedArtifactVersion(opts.cwd, framework, platform, "release", new Set());
+      // 版本语义：正式分发/上架必须工程 versionName——测试包（4.0.1000）与旧版本产物都不能出正式门
+      const expected = expectedArtifactVersion(
+        opts.cwd,
+        framework,
+        platform,
+        "release",
+        new Set(),
+        config.version?.beta,
+      );
       const picked = pickArtifactByVersion(byExt, expected);
       artifactPath = picked.artifact;
       if (artifactPath && !isJson) {

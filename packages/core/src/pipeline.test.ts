@@ -18,8 +18,9 @@ function fakeChannel(spec: {
   id: string;
   label?: string;
   canStage?: boolean;
-  artifactVersion?: string;
   planThrows?: boolean;
+  platform?: "android" | "ios" | "harmony";
+  artifactVersion?: string;
   stage?: () => Promise<StageResult>;
   submit?: () => Promise<SubmitResult>;
 }): Channel {
@@ -32,7 +33,7 @@ function fakeChannel(spec: {
       if (spec.planThrows) throw new Error(`plan-boom-${id}`);
       return {
         channel: id,
-        platform: "android",
+        platform: spec.platform ?? "android",
         artifactVersion: spec.artifactVersion ?? "1.2.3",
         action: "stage+submit",
         afterApproval: "auto-publish",
@@ -58,6 +59,7 @@ function makePipelineInput(
   channels: Channel[],
   opts: {
     concurrency?: number;
+    artifactPath?: string;
     plugins?: PluginHost;
     confirm?: PipelineInput["confirm"];
     historySink?: PipelineInput["historySink"];
@@ -66,7 +68,7 @@ function makePipelineInput(
   const ctxs = new Map<string, TestCtx>();
   const contexts = new Map<string, ChannelContext>();
   for (const ch of channels) {
-    const made = makeTestCtx({ artifactPath: `/tmp/${ch.id}-release.apk` });
+    const made = makeTestCtx({ artifactPath: opts.artifactPath ?? `/tmp/${ch.id}-release.apk` });
     ctxs.set(ch.id, made);
     contexts.set(ch.id, made.ctx);
   }
@@ -614,5 +616,59 @@ describe("错误消息 cause 解包", () => {
     const summary = await runStage(input);
     expect(summary.stage[0]?.stageError).toContain("fetch failed");
     expect(summary.stage[0]?.stageError).toContain("NotReadableError");
+  });
+});
+
+describe("stage:after 载荷（基线归属依赖 platform/target）", () => {
+  it("正常 stage：载荷带 platform 与 target=prod", async () => {
+    const seen: Array<{ platform?: string; target?: string }> = [];
+    const spy: AppliftPlugin = {
+      name: "spy",
+      "stage:after": (r) => void seen.push(r),
+    };
+    const ch = fakeChannel({ id: "a" });
+    const { input } = makePipelineInput([ch], { plugins: new PluginHost([spy]) });
+    await runStage(input);
+    expect(seen[0]).toMatchObject({ platform: "android", target: "prod" });
+  });
+
+  it("plan 抛错时：platform 按产物扩展名兜底，target 仍是 prod", async () => {
+    const seen: Array<{ platform?: string; target?: string }> = [];
+    const spy: AppliftPlugin = {
+      name: "spy",
+      "stage:after": (r) => void seen.push(r),
+    };
+    const ch = fakeChannel({ id: "a", planThrows: true });
+    const { input } = makePipelineInput([ch], { plugins: new PluginHost([spy]) });
+    await runStage(input);
+    expect(seen[0]).toMatchObject({ platform: "android", target: "prod" });
+  });
+
+  it("plan 抛错且产物是 .app：扩展名兜底必须归 harmony（回归锁：.app 曾误归 android，鸿蒙基线传错应用记录）", async () => {
+    const seen: Array<{ platform?: string; target?: string }> = [];
+    const spy: AppliftPlugin = {
+      name: "spy",
+      "stage:after": (r) => void seen.push(r),
+    };
+    const ch = fakeChannel({ id: "a", planThrows: true });
+    const { input } = makePipelineInput([ch], {
+      plugins: new PluginHost([spy]),
+      artifactPath: "/tmp/entry-default-signed.app",
+    });
+    await runStage(input);
+    expect(seen[0]).toMatchObject({ platform: "harmony", target: "prod" });
+  });
+
+  it("runSubmit(--submit 一体路径)：stage 成功同样广播 stage:after，载荷带 platform 与 target=prod", async () => {
+    const seen: Array<{ platform?: string; target?: string }> = [];
+    const spy: AppliftPlugin = {
+      name: "spy",
+      "stage:after": (r) => void seen.push(r),
+    };
+    const ch = fakeChannel({ id: "a", platform: "harmony" });
+    const { input } = makePipelineInput([ch], { plugins: new PluginHost([spy]) });
+    await runSubmit(input, { skipStage: false });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ platform: "harmony", target: "prod", channel: "a" });
   });
 });
