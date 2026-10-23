@@ -9,6 +9,12 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { readProjectVersions } from "../version/project.js";
 import { readArtifactVersion } from "../version/artifact.js";
+import {
+  assertBetaVersionSupported,
+  betaVersionName,
+  DEFAULT_BETA_VERSION_CONFIG,
+} from "../version/beta-version.js";
+import type { BetaVersionConfig } from "../config/schema.js";
 import { collectReleaseDiff } from "../update.js";
 import { findArtifacts } from "../framework.js";
 import type {
@@ -21,11 +27,17 @@ import type { AppliftPlugin, HookContext } from "../plugin.js";
 import type { PushyCli } from "./pushy-api.js";
 import { createPushyApi, readDepVersions, PUSHY_TOKEN_KEY } from "./pushy-api.js";
 
+/**
+ * 平台 appId 配置：单 appId（隔离靠版本名）或双 appId（内测/正式各一个 pushy 应用记录）。
+ * 双 appId 时 promoteToProd 无法 rebind（跨 appId 的 versionId 不通用），退化为同一 ppk 重发。
+ */
+export type AppIdConfig = number | { prod: number; beta: number };
+
 export interface RnUpdateOptions {
   /** 各平台的 app 记录号（如 harmony: 34166）；未声明的平台不启用热更 */
-  harmony?: number;
-  android?: number;
-  ios?: number;
+  harmony?: AppIdConfig;
+  android?: AppIdConfig;
+  ios?: AppIdConfig;
   /** 补丁目录（patch-package 约定默认 patches/，项目可覆盖） */
   patchDir?: string;
   /** 正式发布默认灰度比例（缺省 100 全量——promote 语义是"验证后发正式"，灰度是显式选择；
@@ -235,32 +247,33 @@ export function judgeDelivery(
   return { recommendation: "ota", confidence: hasJs ? "high" : "low", evidence };
 }
 
-/** pushy 官方测试包约定：与正式同源码、仅版本号偏移（major+1000，如 1.6.0→1001.6.0） */
-const BETA_VERSION_OFFSET = 1000;
-
 /** 正式 promote 的内置默认灰度比例（100 = 全量）。promote 语义是"测试通道已验证、发正式"，
  *  全量是常态、灰度是显式选择（--rollout 或 rnUpdate({ defaultRollout })），不藏在配置后面 */
 const DEFAULT_ROLLOUT = 100;
 
-/** 生成测试包偏移版本号（major+1000）；非数字开头版本号无法偏移，显式报错 */
-export function betaPackageVersion(versionName: string): string {
-  const m = /^(\d+)(\..+)?$/.exec(versionName);
-  if (!m) {
-    throw new Error(
-      `versionName「${versionName}」非 X.Y.Z 形态，无法按 major+${BETA_VERSION_OFFSET} 生成测试包偏移版本`,
-    );
+/** 平台 appId（beta 语境优先取双 appId 里的 beta 记录） */
+function platformAppId(opts: RnUpdateOptions, platform: string, channel: "beta" | "prod"): number {
+  const cfg = (opts as Record<string, unknown>)[platform];
+  if (typeof cfg === "number") return cfg;
+  if (cfg && typeof cfg === "object") {
+    const ids = cfg as Partial<{ prod: number; beta: number }>;
+    if (channel === "beta" && typeof ids.beta === "number") return ids.beta;
+    if (typeof ids.prod === "number") return ids.prod;
   }
-  return `${Number(m[1]!) + BETA_VERSION_OFFSET}${m[2] ?? ""}`;
+  throw new Error(
+    `平台 ${platform} 未配置热更 app 记录：rnUpdate({ ${platform}: <appId> }) 或 rnUpdate({ ${platform}: { prod, beta } })（在 applift.config.ts 的插件参数里声明）`,
+  );
 }
 
-function platformAppId(opts: RnUpdateOptions, platform: string): number {
-  const id = (opts as Record<string, unknown>)[platform];
-  if (typeof id !== "number") {
-    throw new Error(
-      `平台 ${platform} 未配置热更 app 记录：rnUpdate({ ${platform}: <appId> })（在 applift.config.ts 的插件参数里声明）`,
-    );
-  }
-  return id;
+/** 是否配置了独立的内测 appId（app-id 模式下 promote 无法 rebind） */
+function hasDualAppId(opts: RnUpdateOptions, platform: string): boolean {
+  const cfg = (opts as Record<string, unknown>)[platform];
+  return (
+    !!cfg &&
+    typeof cfg === "object" &&
+    typeof (cfg as { beta?: number }).beta === "number" &&
+    (cfg as { beta?: number }).beta !== (cfg as { prod?: number }).prod
+  );
 }
 
 /** 当前 versionName（readProjectVersions 按 framework 定位工程文件） */
@@ -275,9 +288,14 @@ function currentVersionName(ctx: PublishContext): string {
   return v.versionName;
 }
 
+/** 正则转义：基线名可能来自 suffix 模板（`+` 等元字符），只转义点号会生成错误正则 */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /** 服务端取号：该 versionName 下已有热更名 {ver}-patch.N 的最大 N → next = N+1（首版 N=0 → 1） */
 function nextPatchNumber(names: Array<{ name: string }>, versionName: string): number {
-  const re = new RegExp(`^${versionName.replace(/\./g, "\\.")}-patch\\.(\\d+)$`);
+  const re = new RegExp(`^${escapeRegExp(versionName)}-patch\\.(\\d+)$`);
   let max = 0;
   for (const { name } of names) {
     const m = name.match(re);
@@ -355,45 +373,96 @@ async function assertPpkFresh(cwd: string, ppk: string): Promise<void> {
     );
   }
 }
-/** 发布新热更的公共骨架：客户端/appId/版本号/ppk 探测 + 服务端取号（publishToBeta/publishToProd 共用） */
+/** beta 配置读取（插件在 config:resolved 钩子里捕获；缺省走内置默认） */
+export type BetaConfigGetter = () => BetaVersionConfig;
+
+/** 发布新热更的公共骨架：客户端/appId/版本名/ppk 探测 + 服务端取号（publishToBeta/publishToProd 共用） */
 async function preparePublish(
   opts: RnUpdateOptions,
   cli: PushyCli | undefined,
   ctx: PublishContext,
-): Promise<{ client: PushyCli; appId: number; versionName: string; ppk: string; name: string }> {
+  channel: "beta" | "prod",
+  getBetaConfig: BetaConfigGetter,
+): Promise<{
+  client: PushyCli;
+  appId: number;
+  base: string;
+  packageVersion: string;
+  ppk: string;
+  name: string;
+}> {
   const client = resolvePushyClient(opts, cli, ctx.credentials);
-  const appId = platformAppId(opts, ctx.platform);
-  const versionName = currentVersionName(ctx);
+  const appId = platformAppId(opts, ctx.platform, channel);
+  const base = currentVersionName(ctx);
+  // 测试线绑派生版本名（4.0.1000），正式线绑工程版本名（4.0.0）——pushy 只认这个字符串
+  const packageVersion =
+    channel === "beta"
+      ? betaVersionName({ base, config: getBetaConfig(), platform: ctx.platform })
+      : base;
   const ppk = await resolvePpk(opts, ctx);
   const existing = await client.versions(appId);
-  const name = `${versionName}-patch.${nextPatchNumber(existing, versionName)}`;
-  return { client, appId, versionName, ppk, name };
+  // 热更名带基线：4.0.1000-patch.1 / 4.0.0-patch.1，promote 后仍可溯源
+  const name = `${packageVersion}-patch.${nextPatchNumber(existing, packageVersion)}`;
+  return { client, appId, base, packageVersion, ppk, name };
 }
 
-/** provider 构造（cli 注入点见 resolvePushyClient） */
-export function makeRnUpdateProvider(opts: RnUpdateOptions, cli?: PushyCli): UpdateProvider {
+/** provider 构造（cli 注入点见 resolvePushyClient；betaConfig 由插件钩子注入） */
+export function makeRnUpdateProvider(
+  opts: RnUpdateOptions,
+  cli?: PushyCli,
+  getBetaConfig: BetaConfigGetter = () => DEFAULT_BETA_VERSION_CONFIG,
+): UpdateProvider {
   return {
     id: "rn-update",
     frameworks: ["rn"],
     // 已配置 app 记录号的平台即已接入热更；其余平台路由直接走原生
-    platforms: (["harmony", "android", "ios"] as const).filter((k) => typeof opts[k] === "number"),
+    platforms: (["harmony", "android", "ios"] as const).filter(
+      (k) => (opts as Record<string, unknown>)[k] !== undefined,
+    ),
     judge: (diff: string[], ctx: FrameworkContext) => judgeDelivery(diff, ctx, opts),
     async publishToBeta(ctx: PublishContext) {
-      const { client, appId, versionName, ppk, name } = await preparePublish(opts, cli, ctx);
+      // 配置缺失先报（与产物/版本读取无关，避免报错信息被下游噪声掩盖）
+      platformAppId(opts, ctx.platform, "beta");
+      // app-id 模式靠两个应用记录隔离；只有一个 id 时会静默把测试热更发到正式线
+      if (getBetaConfig().mode === "app-id" && !hasDualAppId(opts, ctx.platform))
+        throw new Error(
+          `app-id 模式必须为 ${ctx.platform} 配置两个推送应用记录：rnUpdate({ ${ctx.platform}: { prod, beta } })` +
+            `——当前只有单 appId，测试热更会绑到正式线（packageVersion 也与正式相同）`,
+        );
+      // 官方不支持的策略组合在发布前就报错/告警，不留到上传被拒
+      for (const w of assertBetaVersionSupported({
+        base: currentVersionName(ctx),
+        config: getBetaConfig(),
+        platform: ctx.platform,
+      }))
+        process.stderr.write(`⚠ ${w}\n`);
+      const { client, appId, packageVersion, ppk, name } = await preparePublish(
+        opts,
+        cli,
+        ctx,
+        "beta",
+        getBetaConfig,
+      );
       const r = await client.publish({
         appId,
         ppk,
         platform: ctx.platform,
         name,
         description: ctx.note,
-        // 测试通道绑定偏移版本（major+1000）——只有装着测试包的设备能收到
-        packageVersion: betaPackageVersion(versionName),
+        // 测试通道绑定派生版本名——只有装着同版本测试包的设备能收到
+        packageVersion,
         deps: readDepVersions(ctx.cwd),
       });
       return { versionName: name, versionId: r.versionId };
     },
     async publishToProd(ctx: PublishContext) {
-      const { client, appId, versionName, ppk, name } = await preparePublish(opts, cli, ctx);
+      const { client, appId, packageVersion, ppk, name } = await preparePublish(
+        opts,
+        cli,
+        ctx,
+        "prod",
+        getBetaConfig,
+      );
       // 灰度比例优先级：--rollout 旗标 > rnUpdate({ defaultRollout }) > 内置默认 100（全量）
       const rollout = ctx.rollout ?? opts.defaultRollout ?? DEFAULT_ROLLOUT;
       const r = await client.publish({
@@ -402,8 +471,8 @@ export function makeRnUpdateProvider(opts: RnUpdateOptions, cli?: PushyCli): Upd
         platform: ctx.platform,
         name,
         description: ctx.note,
-        // 直接发正式：绑当前工程版本（正式原生线，非偏移测试线）
-        packageVersion: versionName,
+        // 直接发正式：绑当前工程版本（正式原生线）
+        packageVersion,
         rollout,
         deps: readDepVersions(ctx.cwd),
       });
@@ -414,15 +483,24 @@ export function makeRnUpdateProvider(opts: RnUpdateOptions, cli?: PushyCli): Upd
       };
     },
     async promoteToProd(ctx: PublishContext) {
+      const config = getBetaConfig();
+      // app-id 模式 / 独立内测 appId：跨 appId 的 versionId 不通用，无法 rebind
+      // → 返回 null 交回 publishToProd（同一 ppk 重发到正式 appId）
+      if (config.mode === "app-id" || hasDualAppId(opts, ctx.platform)) {
+        process.stderr.write(
+          `⚠ ${ctx.platform} 无法 promote：跨 appId 的 versionId 不通用（app-id/双 appId 模式）` +
+            `——转为 publishToProd，同一 ppk 直接发正式应用记录\n`,
+        );
+        return null;
+      }
       const client = resolvePushyClient(opts, cli, ctx.credentials);
-      const appId = platformAppId(opts, ctx.platform);
-      const versionName = currentVersionName(ctx);
+      const appId = platformAppId(opts, ctx.platform, "prod");
+      const base = currentVersionName(ctx);
+      const betaName = betaVersionName({ base, config, platform: ctx.platform });
       const existing = await client.versions(appId);
       const candidates = existing
         .map((v) => {
-          const m = v.name.match(
-            new RegExp(`^${versionName.replace(/\./g, "\\.")}-patch\\.(\\d+)$`),
-          );
+          const m = v.name.match(new RegExp(`^${escapeRegExp(betaName)}-patch\\.(\\d+)$`));
           return m ? { ...v, n: Number(m[1]) } : null;
         })
         .filter((x): x is { id: number; hash: string; name: string; n: number } => x !== null)
@@ -432,35 +510,69 @@ export function makeRnUpdateProvider(opts: RnUpdateOptions, cli?: PushyCli): Upd
       if (!latest) return null;
       // 灰度比例优先级：--rollout 旗标 > rnUpdate({ defaultRollout }) > 内置默认 100（全量）
       const rollout = ctx.rollout ?? opts.defaultRollout ?? DEFAULT_ROLLOUT;
-      await client.rebind({ appId, versionId: latest.id, packageVersion: versionName, rollout });
+      try {
+        await client.rebind({ appId, versionId: latest.id, packageVersion: base, rollout });
+      } catch (e) {
+        throw new Error(
+          `${(e as Error).message}\n提示：promote 需要正式版本 ${base} 的原生基线已上传。` +
+            `先执行 applift release ${ctx.platform} --delivery native（只 stage、不含 --submit）生成基线，再重试 promote。`,
+        );
+      }
       return { versionName: latest.name, ...(rollout !== undefined ? { rollout } : {}) };
     },
   };
 }
 
-/** 渠道 → 平台映射（热更已接入的平台；基线上传按此路由） */
+/** 这条基线属于测试线还是正式线：测试包 versionName 由策略派生，与工程版本名不同。
+ *  读不到工程版本时按 prod 处理（保守：宁可少传一条测试基线，也不把测试包灌进正式 app）。 */
+function baselineChannel(versionName: string, platform: string, cwd: string): "beta" | "prod" {
+  try {
+    const versions = readProjectVersions(cwd, null);
+    const base = versions.find((v) => v.platform === platform)?.versionName;
+    return base && base !== versionName ? "beta" : "prod";
+  } catch {
+    return "prod";
+  }
+}
+
+/** 渠道 → 平台兜底映射（新链路优先用 stage:after 透传的 platform；此表仅兼容旧载荷） */
 const CHANNEL_PLATFORM: Record<string, string> = {
   agc: "harmony",
 };
 
 /** rnUpdate 插件工厂：注册完整 provider（判定 + beta 发布 + promote）+ 原生发版自动基线。
- *  cli 注入点：测试 mock / 特殊 transport；缺省 OpenAPI 客户端（token 来自 ctx.credentials）。 */
+ *  cli 注入点：测试 mock / 特殊 transport；缺省 OpenAPI 客户端（token 来自 ctx.credentials）。
+ *  beta 策略由项目配置决定，在 config:resolved 钩子里捕获（不重复声明在插件参数里）。 */
 export function rnUpdate(opts: RnUpdateOptions = {}, cli?: PushyCli): AppliftPlugin {
-  const provider = makeRnUpdateProvider(opts, cli);
+  let betaConfig: BetaVersionConfig = DEFAULT_BETA_VERSION_CONFIG;
+  const provider = makeRnUpdateProvider(opts, cli, () => betaConfig);
+  // 同一次运行内同 (平台, 版本名) 只传一份基线：test:all 会并发 stage .hap + .app，
+  // 两条都传会让服务端面对同名基线（或产生一条假失败告警）
+  const uploadedBaselines = new Set<string>();
   return {
     name: "rn-update",
+    "config:resolved"(config) {
+      betaConfig = config.version?.beta ?? DEFAULT_BETA_VERSION_CONFIG;
+    },
     "update:register"(providers: UpdateProvider[]) {
       providers.push(provider);
     },
     // stage:after 的 result 自带 artifactPath（core 补齐的接口字段），无插件级状态、并发天然安全
     async "stage:after"(
-      result: { channel: string; ok: boolean; artifactPath?: string },
+      result: {
+        channel: string;
+        ok: boolean;
+        artifactPath?: string;
+        platform?: string;
+        target?: "beta" | "prod";
+      },
       hookCtx: HookContext,
     ) {
-      const platform = CHANNEL_PLATFORM[result.channel];
+      // 优先用 pipeline 透传的 platform（三端接热更后蒲公英也要能传基线）；
+      // 旧载荷无 platform 时退回渠道映射（.app 同属 iOS 与鸿蒙整包，不能按扩展名推导）
+      const platform = result.platform ?? CHANNEL_PLATFORM[result.channel];
       if (!result.ok || !platform || !result.artifactPath) return;
-      const appId = (opts as Record<string, unknown>)[platform];
-      if (typeof appId !== "number") return; // 平台未配置热更，不上传
+      if ((opts as Record<string, unknown>)[platform] === undefined) return; // 平台未配置热更，不上传
       try {
         // 基线版本号从产物读取（旧链路服务端从包内解析，API 化后由调用方显式传入）
         const versionName = readArtifactVersion(result.artifactPath)?.versionName;
@@ -468,6 +580,13 @@ export function rnUpdate(opts: RnUpdateOptions = {}, cli?: PushyCli): AppliftPlu
           throw new Error(
             `未能从产物读出 versionName：${result.artifactPath}（readArtifactVersion 不支持该格式？）`,
           );
+        // 显式 target 优先（CLI 的 beta 路径与 release pipeline 都会透传）；
+        // 老载荷没有 target 时才退回「版本名 ≠ 工程版本名」的启发式
+        const target = result.target ?? baselineChannel(versionName, platform, hookCtx.cwd);
+        const appId = platformAppId(opts, platform, target);
+        const key = `${platform}:${versionName}`;
+        if (uploadedBaselines.has(key)) return;
+        uploadedBaselines.add(key);
         await resolvePushyClient(opts, cli, hookCtx.credentials).uploadApp(
           appId,
           result.artifactPath,
@@ -475,6 +594,9 @@ export function rnUpdate(opts: RnUpdateOptions = {}, cli?: PushyCli): AppliftPlu
           readDepVersions(hookCtx.cwd),
         );
       } catch (e) {
+        uploadedBaselines.delete(
+          `${platform}:${readArtifactVersion(result.artifactPath)?.versionName ?? ""}`,
+        );
         // 基线上传失败不阻断发布主流程（发版已成功）；提示人工补传
         process.stderr.write(`⚠ pushy 基线上传失败（请人工补传）：${(e as Error).message}\n`);
       }

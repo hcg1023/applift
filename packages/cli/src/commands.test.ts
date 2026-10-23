@@ -226,12 +226,12 @@ describe("全命令冒烟（非交互路径）", () => {
     expect(r.out).toMatch(/无版本 4\.0\.0 的 \.app[\s\S]*不能正式分发/);
   });
 
-  it("beta harmony：热更平台只探测到非偏移包 → 引导构建偏移测试包", () => {
+  it("beta harmony：热更平台只探测到非测试包 → 引导构建测试包", () => {
     fs.writeFileSync(
       path.join(proj, "applift.config.ts"),
       `import { defineConfig } from "@applift/cli";\nimport { rnFramework, rnUpdate } from "@applift/cli/plugins";\nexport default defineConfig({\n  plugins: [rnFramework(), rnUpdate({ harmony: 1 })],\n  artifacts: { harmony: ['harmony/build/outputs/**/*-signed.app'] },\n});\n`,
     );
-    // 工程版本文件（beta 偏移期望 = betaPackageVersion(工程版 4.0.0) = 1004.0.0）
+    // 工程版本文件（beta 期望 = betaVersionName(4.0.0) = 4.0.1000，默认 patch+1000）
     fs.mkdirSync(path.join(proj, "harmony", "AppScope"), { recursive: true });
     fs.writeFileSync(
       path.join(proj, "harmony", "AppScope", "app.json5"),
@@ -245,7 +245,49 @@ describe("全命令冒烟（非交互路径）", () => {
       JSON.stringify({ summary: { app: { version: { name: "4.0.0", code: 4000000 } } } }),
     );
     const r = cli(["beta", "harmony", "--delivery", "native", "--yes"]);
-    expect(r.out).toMatch(/未探测到偏移测试包 1004\.0\.0[\s\S]*偏移版本（major\+1000）/);
+    expect(r.out).toMatch(/未探测到测试包 4\.0\.1000[\s\S]*版本名必须是 4\.0\.1000/);
+  });
+
+  it("beta harmony：suffix 策略期望派生测试包 4.0.0-beta（默认 patch+1000 之外的策略生效）", () => {
+    fs.writeFileSync(
+      path.join(proj, "applift.config.ts"),
+      `import { defineConfig } from "@applift/cli";\nimport { rnFramework, rnUpdate } from "@applift/cli/plugins";\nexport default defineConfig({\n  plugins: [rnFramework(), rnUpdate({ harmony: 1 })],\n  artifacts: { harmony: ['harmony/build/outputs/**/*-signed.app'] },\n  version: { beta: { mode: "suffix" } },\n});\n`,
+    );
+    fs.mkdirSync(path.join(proj, "harmony", "AppScope"), { recursive: true });
+    fs.writeFileSync(
+      path.join(proj, "harmony", "AppScope", "app.json5"),
+      JSON.stringify({ versionName: "4.0.0", versionCode: 4000000 }),
+    );
+    const appDir = path.join(proj, "harmony", "build", "outputs", "default");
+    fs.mkdirSync(appDir, { recursive: true });
+    fs.writeFileSync(path.join(appDir, "harmony-default-signed.app"), "fake");
+    fs.writeFileSync(
+      path.join(appDir, "pack.info"),
+      JSON.stringify({ summary: { app: { version: { name: "4.0.0", code: 4000000 } } } }),
+    );
+    const r = cli(["beta", "harmony", "--delivery", "native", "--yes"]);
+    // 期望版本按 suffix 策略派生为 4.0.0-beta，现存 4.0.0 正式包被判不匹配
+    expect(r.out).toMatch(/未探测到测试包 4\.0\.0-beta[\s\S]*版本名必须是 4\.0\.0-beta/);
+  });
+
+  it("beta ios：suffix 策略与 iOS 不兼容 → 报错文案引导改 offset/app-id（TestFlight 硬拒）", () => {
+    fs.writeFileSync(
+      path.join(proj, "applift.config.ts"),
+      `import { defineConfig } from "@applift/cli";\nimport { rnFramework, rnUpdate } from "@applift/cli/plugins";\nexport default defineConfig({\n  plugins: [rnFramework(), rnUpdate({ ios: 1 })],\n  artifacts: { ios: ['ios/build/*.ipa'] },\n  version: { beta: { mode: "suffix" } },\n});\n`,
+    );
+    // iOS 版本事实源：pbxproj 的 MARKETING_VERSION（RN 布局标准位置）
+    fs.mkdirSync(path.join(proj, "ios", "DemoApp.xcodeproj"), { recursive: true });
+    fs.writeFileSync(
+      path.join(proj, "ios", "DemoApp.xcodeproj", "project.pbxproj"),
+      "423ABCD = { /* Debug */\n  CURRENT_PROJECT_VERSION = 4000;\n  MARKETING_VERSION = 4.0.0;\n};\n",
+    );
+    fs.mkdirSync(path.join(proj, "ios", "build"), { recursive: true });
+    fs.writeFileSync(path.join(proj, "ios", "build", "DemoApp.ipa"), "fake-ipa");
+    const r = cli(["beta", "ios", "--delivery", "native", "--yes"]);
+    expect(r.code).not.toBe(0);
+    expect(r.out).toMatch(
+      /ios 的 versionName 不支持 prerelease 后缀[\s\S]*改用 version\.beta\.mode=offset/,
+    );
   });
 
   it("version：空目录 → 未识别框架兜底提示", () => {

@@ -21,10 +21,11 @@ export {
   tauriAdapter,
 } from "./frameworks.js";
 export {
-  betaPackageVersion,
   judgeDelivery,
   makeRnUpdateProvider,
   rnUpdate,
+  type AppIdConfig,
+  type BetaConfigGetter,
   type RnUpdateOptions,
 } from "./rn-update.js";
 export {
