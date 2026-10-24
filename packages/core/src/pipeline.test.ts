@@ -617,6 +617,18 @@ describe("错误消息 cause 解包", () => {
     expect(summary.stage[0]?.stageError).toContain("fetch failed");
     expect(summary.stage[0]?.stageError).toContain("NotReadableError");
   });
+
+  it("stage 抛非 Error（字符串异常）→ 汇总消息按 String(e) 原样呈现", async () => {
+    const ch = fakeChannel({
+      id: "str",
+      stage: async () => {
+        throw "network-gone"; // eslint-disable-line no-throw-literal -- 覆盖 errText 非 Error 臂
+      },
+    });
+    const { input } = makePipelineInput([ch]);
+    const summary = await runStage(input);
+    expect(summary.stage[0]?.stageError).toBe("network-gone");
+  });
 });
 
 describe("stage:after 载荷（基线归属依赖 platform/target）", () => {

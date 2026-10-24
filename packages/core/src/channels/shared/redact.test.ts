@@ -87,6 +87,12 @@ describe("redactText", () => {
     expect(redactText("https://user:pass@example.com/x?a=1")).toBe("https://example.com/x?a=1");
   });
 
+  it("URL 带 userinfo 但无 query → 剥 userinfo 后原样返回（走无 query 分支）", () => {
+    expect(redactText("https://user:pass@example.com/dir/file")).toBe(
+      "https://example.com/dir/file",
+    );
+  });
+
   it("JSON 字符串递归脱敏：嵌套对象 + 数组元素继承键名", () => {
     expect(
       redactText(

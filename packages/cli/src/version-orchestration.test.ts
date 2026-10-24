@@ -55,30 +55,54 @@ function setupRn(withConfig = false) {
 }
 
 describe("CLI version show/bump 编排（spawn 级）", () => {
-  it("show：读出各端实况与锚点 tag 提示", () => {
+  it("show：读出各端实况与发版锚点提示", () => {
     setupRn();
     const r = cli(["version"]);
     expect(r.code).toBe(0);
     expect(r.out).toContain("4.0.0");
     expect(r.out).toContain("android/app/build.gradle");
-    expect(r.out).toContain("无（bump 后打第一个 tag 激活 git 推断）");
+    expect(r.out).toContain("无（首次 bump 前，推断退化为 patch 兜底）");
   });
 
-  it("bump --yes：全闭环（写文件 + CHANGELOG + commit + tag）且输出提示 push", () => {
+  it("bump --yes：声明闭环（写文件 + CHANGELOG + commit），默认不打 tag", () => {
     setupRn();
     const r = cli(["version", "bump", "--yes"]);
     expect(r.code).toBe(0);
     expect(r.out).toContain("chore(release): 4.0.1");
-    expect(r.out).toContain("git tag: v4.0.1");
-    expect(r.out).toContain("git push --follow-tags");
+    expect(r.out).toContain("版本已声明（未打 tag）");
+    expect(r.out).toContain("git push（applift 永不代 push");
     expect(fs.readFileSync(path.join(dir, "package.json"), "utf8")).toContain('"version": "4.0.1"');
+    // tag 语义后移：声明不打 tag（tag = 交付标记，release 提审成功后补）
+    const tags = spawnSync("git", ["tag", "-l"], { cwd: dir, encoding: "utf8" }).stdout.trim();
+    expect(tags).toBe("");
   });
 
-  it("bump --pre beta --yes：tag v4.1.0-beta.0，工程 versionName 仍 4.1.0", () => {
+  it("bump --tag --yes：显式声明时同步打 tag（保留旧习惯的逃生口）", () => {
+    setupRn();
+    const r = cli(["version", "bump", "--tag", "--yes"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("git tag: v4.0.1");
+    expect(spawnSync("git", ["tag", "-l"], { cwd: dir, encoding: "utf8" }).stdout).toContain(
+      "v4.0.1",
+    );
+  });
+
+  it("bump --pre beta --yes：声明 4.1.0-beta.0，工程 versionName 仍 4.1.0", () => {
     setupRn();
     const r = cli(["version", "bump", "minor", "--pre", "beta", "--yes"]);
     expect(r.code).toBe(0);
-    expect(r.out).toContain("v4.1.0-beta.0");
+    expect(r.out).toContain("chore(release): 4.1.0-beta.0");
+    expect(fs.readFileSync(path.join(dir, "package.json"), "utf8")).toContain('"version": "4.1.0"');
+  });
+
+  it("bump --pre beta --tag --yes：显式开 tag 时打 v4.1.0-beta.0（prerelease 组合覆盖）", () => {
+    setupRn();
+    const r = cli(["version", "bump", "minor", "--pre", "beta", "--tag", "--yes"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("git tag: v4.1.0-beta.0");
+    expect(spawnSync("git", ["tag", "-l"], { cwd: dir, encoding: "utf8" }).stdout).toContain(
+      "v4.1.0-beta.0",
+    );
     expect(fs.readFileSync(path.join(dir, "package.json"), "utf8")).toContain('"version": "4.1.0"');
   });
 
@@ -112,6 +136,6 @@ describe("bump 非交互门控（spawn 级，非 TTY）", () => {
     spawnSync("git", ["commit", "-qm", "chore: test config"], { cwd: dir });
     const r = cli(["version", "bump"]);
     expect(r.code).toBe(0);
-    expect(r.out).toContain("git tag: v4.0.1");
+    expect(r.out).toContain("chore(release): 4.0.1");
   });
 });

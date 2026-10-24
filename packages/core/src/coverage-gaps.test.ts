@@ -154,7 +154,7 @@ describe("planBump 组合分支（platforms/字段缺失/公式限定）", () =>
       versionCode: { formula: "major*100+minor", platforms: ["harmony"] },
     });
     expect(plan.writes.find((w) => w.platform === "android")?.versionCode).toBe(8);
-    expect(plan.anchorTag).toBeUndefined();
+    expect(plan.anchor).toBeUndefined();
     expect(plan.infer).toBeUndefined();
   });
 });

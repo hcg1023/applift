@@ -14,6 +14,8 @@
  *
  * 测试发布（ctx.target.releaseType === '6'，2026-10 起走 Testing API；旧 releaseType=6 直绑 app-package-info 链路已下线，枚举仅剩 1/7）:
  *   0. GET  /api/publish/v2/upload-url/for-obs?releaseType=6   .hap 上传地址 → PUT OBS
+ *   0.5 （cleanup !== 'false'，默认开）清理旧测试版本：brief-info/list 发现 testType 3/4 →
+ *       POST /api/publish/v2/test/version/stop（完全下架）→ DELETE /api/publish/v2/test/app/version
  *   1. POST /api/publish/v2/test/app/version                   新建测试版本（testType 3=邀请测试）→ versionId
  *   2. POST /api/publish/v2/test/version/pkg                   添加测试软件包（distributeMode=1）→ pkgId
  *   3. GET  /api/publish/v3/package/compile/status             轮询云端编译
@@ -198,7 +200,7 @@ export class AgcHarmonyChannel implements Channel {
     "204144702": "签名/证书不匹配：检查签名证书指纹（SHA256）与 AGC 后台登记是否一致",
     "204144677": "bundleName 与应用不匹配：确认 appId 对应的应用包名",
     "204144692":
-      "提审前置校验失败（按 msg 判断）：privacyPolicy → 控制台「更多服务→协议服务」登记隐私政策；count of harmony test in audit → 在审测试版本超限，先停止/删除在审的测试版本再提",
+      "提审前置校验失败（按 msg 判断）：privacyPolicy → 控制台「更多服务→协议服务」登记隐私政策；count of harmony test in audit → 在审测试版本超限（beta.agc.cleanup 默认已自动清理，仍出现请到控制台核对是否有删不掉的旧测试版本）",
   };
   private async authHeaders(ctx: Pick<ChannelContext, "credentials" | "target">) {
     const clientId = required(ctx, "AGC_CLIENT_ID");
@@ -510,7 +512,8 @@ export class AgcHarmonyChannel implements Channel {
   /**
    * 测试发布（releaseType=6，2026-10 起走 Testing API——旧 app-package-info 直绑链路已被华为下线，
    * 其 releaseType 枚举仅剩 1=全网 / 7=企业非公开）：
-   * 上传 .app → 新建测试版本（testType 3=邀请测试 4=公开测试）→ 添加测试软件包 → 等云端编译 → 更新测试版本绑定；
+   * 上传 .app → 清理旧测试版本（cleanupOldTestVersions，默认开）→ 新建测试版本（testType 3=邀请测试
+   * 4=公开测试）→ 添加测试软件包 → 等云端编译 → 更新测试版本绑定；
    * target.submitTest='true' 时：（可选按 testGroup 绑测试群组）自动提交测试版本审核；否则由控制台人工完成。
    */
   private async uploadBeta(
@@ -567,6 +570,9 @@ export class AgcHarmonyChannel implements Channel {
       throw new Error(`AGC 文件上传失败 HTTP ${upRes.status}`);
     }
     ctx.emit({ type: "progress", detail: "文件上传完成" });
+
+    // step 0.5（默认开，target.cleanup='false' 关）：清理旧测试版本，腾出在审/在架名额
+    await this.cleanupOldTestVersions(ctx, appId, headers);
 
     // step 1：新建测试版本（releaseType=6 HarmonyOS 测试发布；testType 3=邀请测试 4=公开测试，target.testType 透传）
     const testType = ctx.target.testType === "4" ? 4 : 3;
@@ -673,6 +679,93 @@ export class AgcHarmonyChannel implements Channel {
       message: "测试版本已就绪（未提交审核）；到控制台提交或配置 test['agc'].submit 自动提审",
     });
     return { ok: true, ref: versionId };
+  }
+
+  /**
+   * 发布前清理旧测试版本（target.cleanup === 'false' 关闭，默认开；config 键 beta.agc.cleanup）：
+   * AGC 测试版本数量约束——在审上限（提交报 204144692 "count of harmony test in audit"）、
+   * 在架上限（邀请测试 3 / 公开测试 1 / 总数 100）——旧版本不清理会阻塞新版本提审（AGC 不自动下架）。
+   * 发现：brief-info/list 反向过滤 testType 3/4（与 status() 的商用过滤互补）。故意不解读 state：
+   * 测试版本 state 枚举与商用 releaseState 表不一致且未经实机验证，清理全部旧版本无需依赖 state。
+   * 清理：stop（完全下架）→ delete（官方指南顺序）；best-effort——单个失败仅告警不阻断，
+   * 名额仍被占时提审步骤的 204144692 errorHint 兜底提示人工处理。
+   * 影响面：已装设备 App 本体与 pushy 热更均不受影响（只移除 AGC 在架记录）；
+   * 受影响的仅审核空窗期内想经 AGC 邀请链接新装的人（蒲公英通道不受影响）。
+   */
+  private async cleanupOldTestVersions(
+    ctx: ChannelContext,
+    appId: string,
+    headers: Record<string, string>,
+  ): Promise<void> {
+    if (ctx.target.cleanup === "false") return;
+    const packageName = ctx.target.bundleName;
+    let json: BriefVersionListResp;
+    try {
+      json = await agcJson<BriefVersionListResp>(
+        `${BASE}/publish/v3/version/brief-info/list`,
+        {
+          method: "POST",
+          headers: { ...headers, appId, "Content-Type": "application/json" },
+          body: JSON.stringify(packageName ? { packageName } : {}),
+        },
+        "查询旧测试版本",
+      );
+    } catch (e) {
+      ctx.emit({
+        type: "warn",
+        message: `旧测试版本查询失败（跳过清理，不阻断）: ${(e as Error).message}`,
+      });
+      return;
+    }
+    const seen = new Set<string>();
+    const stale = (json.versionList ?? []).filter((v) => {
+      if ((v.testType !== 3 && v.testType !== 4) || !v.versionId || seen.has(v.versionId))
+        return false;
+      seen.add(v.versionId);
+      return true;
+    });
+    if (stale.length === 0) {
+      ctx.emit({ type: "progress", detail: "旧测试版本清理：无残留" });
+      return;
+    }
+    ctx.emit({
+      type: "progress",
+      detail: `发现 ${stale.length} 个旧测试版本，自动停止并删除（beta.agc.cleanup 默认开；已装设备与热更不受影响）`,
+    });
+    for (const v of stale) {
+      const vid = v.versionId!;
+      const label = `${v.packageList?.[0]?.versionName ?? "?"}（versionId ${vid}）`;
+      // stop：在架版本完全下架；在审/草稿态可能被拒——继续尝试 delete
+      try {
+        await agcJson(
+          `${BASE}/publish/v2/test/version/stop?appId=${encodeURIComponent(appId)}`,
+          {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify({ versionId: vid }),
+          },
+          "停止测试版本",
+        );
+      } catch (e) {
+        ctx.emit({
+          type: "warn",
+          message: `停止测试版本 ${label}失败（继续尝试删除）: ${(e as Error).message}`,
+        });
+      }
+      try {
+        await agcJson(
+          `${BASE}/publish/v2/test/app/version?versionId=${encodeURIComponent(vid)}&appId=${encodeURIComponent(appId)}`,
+          { method: "DELETE", headers },
+          "删除测试版本",
+        );
+        ctx.emit({ type: "progress", detail: `旧测试版本已清理: ${label}` });
+      } catch (e) {
+        ctx.emit({
+          type: "warn",
+          message: `删除测试版本 ${label}失败: ${(e as Error).message}`,
+        });
+      }
+    }
   }
 
   /**

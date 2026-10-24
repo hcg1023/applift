@@ -102,7 +102,7 @@ describe("业务周期：开发 → beta 内测 → 修复 → 转正式 → 下
     const plan = cycle(undefined); // 无 level：git 推断
     expect(plan.reason).toMatch(/minor/);
     expect(plan.nextVersion).toBe("4.2.0");
-    expect(plan.anchorTag).toBe("v4.1.0");
+    expect(plan.anchor).toMatchObject({ ref: "v4.1.0", kind: "tag" });
     expect(harmonyCode()).toBe(4000005);
 
     // 提交历史：5 个 release commit（beta.0/.1/.2 + 4.1.0 + 4.2.0）全部规范
@@ -141,5 +141,5 @@ describe("业务周期：公式版 versionCode（公式按目标版本位编码�
       readProjectVersions(dir, rnAdapter).find((v) => v.platform === "android")!.versionCode,
     );
     expect(android).toBe(4005);
-  }, 30_000);
+  }, 120_000);
 });

@@ -38,7 +38,7 @@ applift beta                             # 无参数：读 applift.config.ts 的
 ```ts
 beta: {
   pgyer: { platforms: ["android", "ios"], installPassword: "1234" },  // 缺省 platforms=["android"]
-  agc: { submit: true, group: "内测组", testType: 3 },                  // submit=true 上传绑定后自动提审（默认 false）
+  agc: { submit: true, group: "内测组", testType: 3 },                  // submit=true 上传绑定后自动提审（默认 false）；cleanup 默认 true=发布前自动停删旧测试版本
   testflight: { note: "TestFlight 备注" },                              // asc 渠道上传 ipa 进 TestFlight
 },
 ```

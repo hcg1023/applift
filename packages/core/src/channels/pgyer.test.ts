@@ -82,6 +82,8 @@ describe("PgyerChannel", () => {
     await expect(ch.plan(ipaCtx)).resolves.toMatchObject({ platform: "ios" });
     const { ctx: apkCtx } = makeTestCtx({ artifactPath: "/tmp/a.apk" });
     await expect(ch.plan(apkCtx)).resolves.toMatchObject({ platform: "android" });
+    const { ctx: dmgCtx } = makeTestCtx({ artifactPath: "/tmp/Installer.dmg" });
+    await expect(ch.plan(dmgCtx)).resolves.toMatchObject({ platform: "desktop" });
   });
 
   it("stage 全流程: getCOSToken → COS 上传 → buildInfo 轮询（1247 处理中 → code=0 出短链）", async () => {
@@ -254,6 +256,17 @@ describe("PgyerChannel", () => {
     await expect(p).resolves.toEqual({ ok: false, error: "蒲公英处理失败 9001: build deleted" });
   });
 
+  it("buildInfo 非 0 码且无 message → 失败文案以空串收尾", async () => {
+    vi.useFakeTimers();
+    mockFetch(baseRoutes(() => ({ json: { code: 9002 } })));
+    const { ctx } = makeTestCtx({ credentials: { PGYER_API_KEY: "pk" }, artifactPath: ARTIFACT });
+
+    const p = ch.stage(ctx);
+    await flushRealIo();
+    await vi.advanceTimersByTimeAsync(3000);
+    await expect(p).resolves.toEqual({ ok: false, error: "蒲公英处理失败 9002: " });
+  });
+
   it("buildInfo 1247（无 message）→ 视为处理中继续轮询直至成功（对拍 apkgo pgyer.go）", async () => {
     vi.useFakeTimers();
     let calls = 0;
@@ -338,6 +351,33 @@ describe("PgyerChannel", () => {
     // 10 轮 × 3 域名全试尽；轮询计数在成功时清零，此处每轮 3 域名计 1 次连续失败
     expect(fetchMock.calls.filter((c) => c.url.includes("buildInfo"))).toHaveLength(30);
     expect(events.some((e) => e.type === "warn" && String(e.message).includes("10/10"))).toBe(true);
+  });
+
+  it("buildInfo 网络层抛非 Error（字符串异常）→ failover 转 Error 文案、连续 10 次后失败", async () => {
+    vi.useFakeTimers();
+    const fetchMock = mockFetch([
+      { match: "getCOSToken", response: { json: COS_TOKEN_OK } },
+      { match: /cos\.ap-shanghai/, response: { status: 204, text: "" } },
+      {
+        match: "buildInfo",
+        response: () => {
+          // 路由求值直接抛字符串：模拟网络层 reject 非 Error 异常
+          throw "pgyer-network-down";
+        },
+      },
+    ]);
+    const { ctx } = makeTestCtx({ credentials: { PGYER_API_KEY: "pk" }, artifactPath: ARTIFACT });
+
+    const p = ch.stage(ctx);
+    await flushRealIo();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await expect(p).resolves.toEqual({
+      ok: false,
+      error:
+        "蒲公英状态查询持续失败（包已上传，可到控制台确认）: 蒲公英 /apiv2/app/buildInfo 请求失败",
+    });
+    // 每轮 3 域名全抛非 Error → pgyerPostFailover 以统一 Error 文案抛出
+    expect(fetchMock.calls.filter((c) => c.url.includes("buildInfo"))).toHaveLength(30);
   });
 
   it("15 分钟超时返回错误", async () => {

@@ -115,6 +115,28 @@ describe("betaVersionName：suffix", () => {
   });
 });
 
+describe("checkVersionNameShape / 缺省 config 回退", () => {
+  it("非「数字段 + 可选 prerelease」形态 → 形态报错（不猜）", () => {
+    expect(checkVersionNameShape("garbage!!", "ios")).toMatch(/不是「数字段 \+ 可选 prerelease」/);
+    expect(checkVersionNameShape("", "ios")).toMatch(/不是「数字段/);
+  });
+
+  it("suffix 模板产出非法形态 → 派生时抛错", () => {
+    expect(() =>
+      betaVersionName({
+        base: "4.0.0",
+        platform: "android",
+        config: { mode: "suffix", template: "{base}-@@@" },
+      }),
+    ).toThrow(/派生出的 versionName/);
+  });
+
+  it("assertBetaVersionSupported 无 config → 默认 offset 策略（合法即无告警）", () => {
+    expect(assertBetaVersionSupported({ base: "4.0.0", platform: "harmony" })).toEqual([]);
+    expect(assertBetaVersionSupported({ base: "4.0.0", platform: "unknown-native" })).toEqual([]);
+  });
+});
+
 describe("betaVersionName：app-id", () => {
   it("版本名与正式一致（隔离交给两个 pushy 应用记录）", () => {
     for (const platform of ["ios", "android", "harmony"])

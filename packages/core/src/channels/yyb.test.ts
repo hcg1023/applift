@@ -562,6 +562,29 @@ describe("YybChannel.submit", () => {
     await expect(new FailingStageYyb().submit(ctx)).rejects.toThrow("应用宝重新上传失败");
   });
 
+  it("重新上传 ok 但 staged 仍无流水号（内部状态异常）→ 明确报错", async () => {
+    class OkButUntrackedYyb extends YybChannel {
+      override async stage(): Promise<{ ok: boolean; ref?: string }> {
+        // 模拟 stage 成功但 staged Map 未登记（跨进程状态丢失的异常形态）
+        return { ok: true, ref: "302100009999" };
+      }
+    }
+    const { ctx } = makeTestCtx({ credentials: CREDS, target: TARGET, artifactPath: apkPath });
+    await expect(new OkButUntrackedYyb().submit(ctx)).rejects.toThrow(
+      "应用宝重新上传后仍缺少流水号（内部状态异常）",
+    );
+  });
+
+  it("重新上传失败且未给 error → 文案回退「未知错误」", async () => {
+    class BareFailYyb extends YybChannel {
+      override async stage(): Promise<{ ok: boolean }> {
+        return { ok: false };
+      }
+    }
+    const { ctx } = makeTestCtx({ credentials: CREDS, target: TARGET, artifactPath: apkPath });
+    await expect(new BareFailYyb().submit(ctx)).rejects.toThrow("应用宝重新上传失败: 未知错误");
+  });
+
   it("update_app ret!=0 抛错", async () => {
     const ch = await stagedChannel();
     const m = mockFetch([

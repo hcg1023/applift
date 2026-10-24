@@ -881,3 +881,130 @@ describe("stage:after 基线归属（显式 target）", () => {
     expect(calls.uploadApp).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("分支覆盖补齐（missed 清单）", () => {
+  /** 造 git 依赖对比工程（锚点 v1 的 oldDeps → HEAD 的 newDeps），不布置 node_modules */
+  function gitDepsProject(
+    oldDeps: Record<string, string>,
+    newDeps: Record<string, string>,
+  ): string {
+    return tmpProject((d) => {
+      const g = (args: string[]) => spawnSync("git", args, { cwd: d, encoding: "utf8" });
+      g(["init", "-q"]);
+      g(["config", "user.email", "t@t"]);
+      g(["config", "user.name", "t"]);
+      fs.writeFileSync(
+        path.join(d, "package.json"),
+        JSON.stringify({ name: "p", dependencies: oldDeps }),
+      );
+      g(["add", "-A"]);
+      g(["commit", "-qm", "init"]);
+      g(["tag", "v1"]);
+      fs.writeFileSync(
+        path.join(d, "package.json"),
+        JSON.stringify({ name: "p", dependencies: newDeps }),
+      );
+      g(["add", "-A"]);
+      g(["commit", "-qm", "deps"]);
+    });
+  }
+
+  it("新增 @react-native-ohos/* 依赖 → 必然原生（平行包自带原生实现，无需 node_modules 信号）", () => {
+    const dir = gitDepsProject({}, { "@react-native-ohos/geo": "^1.0.0" });
+    const r = judgeDelivery(["package.json"], ctx(dir, "v1"), {});
+    expect(r.recommendation).toBe("native");
+    expect(r.evidence.find((e) => e.path === "package.json")!.note).toContain(
+      "@react-native-ohos/geo",
+    );
+  });
+
+  it("锚点 ref 不存在（git show 失败）→ 锚点侧返回 null → uncertain（无锚点语义）", () => {
+    const dir = gitDepsProject({}, { dayjs: "^1.0.0" });
+    const r = judgeDelivery(["package.json"], ctx(dir, "no-such-ref"), {});
+    expect(r.recommendation).toBe("uncertain");
+    expect(r.evidence.find((e) => e.path === "package.json")!.rule).toContain("无锚点");
+  });
+
+  it("config:resolved：config 缺 version（或缺 beta）→ 沿用内置默认 offset/patch/1000", async () => {
+    const dir = tmpProject((d) => {
+      fs.mkdirSync(path.join(d, "harmony", "AppScope"), { recursive: true });
+      fs.writeFileSync(
+        path.join(d, "harmony", "AppScope", "app.json5"),
+        '{ "versionName": "4.0.0", "versionCode": 4000000 }',
+      );
+    });
+    ppkArtifact(dir);
+    const { cli, calls } = mkCli();
+    const plugin = rnUpdate({ harmony: 34166 }, cli);
+    plugin["config:resolved"]!({} as never, { cwd: dir });
+    plugin["config:resolved"]!({ version: {} } as never, { cwd: dir });
+    const providers: UpdateProvider[] = [];
+    plugin["update:register"]!(providers, { cwd: dir });
+    await providers[0]!.publishToBeta!({ cwd: dir, framework: rn, platform: "harmony" });
+    expect(calls.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ packageVersion: "4.0.1000" }),
+    );
+  });
+
+  /** 产物 fixture（带 pack.info 版本名），见 stage:after 组的 appArtifact */
+  function artifactWithVersion(versionName: string): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-rnupd-cov-"));
+    fs.writeFileSync(path.join(dir, "x.app"), "");
+    fs.writeFileSync(
+      path.join(dir, "pack.info"),
+      JSON.stringify({ summary: { app: { version: { name: versionName, code: 4000000 } } } }),
+    );
+    return path.join(dir, "x.app");
+  }
+
+  it("stage:after：result.platform 未配置热更（opts 缺该平台）→ 跳过上传", async () => {
+    const m = mkCli();
+    const plugin = rnUpdate({ harmony: 34166 }, m.cli);
+    await plugin["stage:after"]!(
+      {
+        channel: "agc",
+        ok: true,
+        artifactPath: artifactWithVersion("4.0.0"),
+        platform: "ios", // 未在 opts 配 ios
+        target: "prod",
+      },
+      { cwd: "/tmp", channel: "agc" },
+    );
+    expect(m.calls.uploadApp).not.toHaveBeenCalled();
+  });
+
+  it("stage:after 旧载荷无 target：版本名 ≠ 工程版本名 → 判 beta 线（dual appId 可观察）", async () => {
+    const dir = tmpProject((d) => {
+      fs.mkdirSync(path.join(d, "harmony", "AppScope"), { recursive: true });
+      fs.writeFileSync(
+        path.join(d, "harmony", "AppScope", "app.json5"),
+        '{ "versionName": "4.0.0", "versionCode": 4000000 }',
+      );
+    });
+    const m = mkCli();
+    const plugin = rnUpdate({ harmony: { prod: 111, beta: 222 } }, m.cli);
+    await plugin["stage:after"]!(
+      { channel: "agc", ok: true, artifactPath: artifactWithVersion("4.0.1000") },
+      { cwd: dir, channel: "agc" },
+    );
+    expect(m.calls.uploadApp).toHaveBeenCalledTimes(1);
+    expect(m.calls.uploadApp.mock.calls[0]![0]).toBe(222); // beta 应用记录
+  });
+
+  it("stage:after 旧载荷无 target：版本名 === 工程版本名 → 判 prod 线", async () => {
+    const dir = tmpProject((d) => {
+      fs.mkdirSync(path.join(d, "harmony", "AppScope"), { recursive: true });
+      fs.writeFileSync(
+        path.join(d, "harmony", "AppScope", "app.json5"),
+        '{ "versionName": "4.0.0", "versionCode": 4000000 }',
+      );
+    });
+    const m = mkCli();
+    const plugin = rnUpdate({ harmony: { prod: 111, beta: 222 } }, m.cli);
+    await plugin["stage:after"]!(
+      { channel: "agc", ok: true, artifactPath: artifactWithVersion("4.0.0") },
+      { cwd: dir, channel: "agc" },
+    );
+    expect(m.calls.uploadApp.mock.calls[0]![0]).toBe(111); // prod 应用记录
+  });
+});

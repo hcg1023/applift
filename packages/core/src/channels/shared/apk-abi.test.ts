@@ -68,6 +68,41 @@ describe("listApkLibAbis", () => {
   });
 });
 
+describe("listApkLibAbis 坏 zip 容错（防御分支）", () => {
+  function writeRaw(bytes: Buffer): string {
+    const p = path.join(
+      os.tmpdir(),
+      `apk-abi-bad-${process.pid}-${Math.random().toString(36).slice(2)}.apk`,
+    );
+    fs.writeFileSync(p, bytes);
+    return p;
+  }
+
+  it("中央目录首条目魔数不匹配 → 立即中断返回空数组", () => {
+    const zip = buildZip(["lib/arm64-v8a/libapp.so"]);
+    // EOCD 指向的中央目录起始处写坏魔数（非 0x02014b50）
+    const cenOffset = zip.length - 22 - (46 + "lib/arm64-v8a/libapp.so".length);
+    zip.writeUInt32LE(0xdeadbeef, cenOffset);
+    expect(listApkLibAbis(writeRaw(zip))).toEqual([]);
+  });
+
+  it("EOCD 指向的中央目录偏移越界（短读 46 字节）→ 空数组", () => {
+    const zip = buildZip(["lib/arm64-v8a/libapp.so"]);
+    // 偏移改到文件尾部：readSync 不足 46 字节 → break
+    zip.writeUInt32LE(zip.length - 10, zip.length - 22 + 16);
+    expect(listApkLibAbis(writeRaw(zip))).toEqual([]);
+  });
+
+  it("中央目录文件名长度字段超出实际（短读文件名）→ 空数组", () => {
+    const name = "lib/arm64-v8a/libapp.so";
+    const zip = buildZip([name]);
+    const cenOffset = zip.length - 22 - (46 + name.length);
+    // nameLen 改为远超文件实际长度：nameBuf 读不满 → break
+    zip.writeUInt16LE(4096, cenOffset + 28);
+    expect(listApkLibAbis(writeRaw(zip))).toEqual([]);
+  });
+});
+
 describe("isApkArm64Only", () => {
   it("仅 arm64-v8a → true", () => {
     expect(isApkArm64Only(writeTmpZip(["lib/arm64-v8a/libapp.so"]))).toBe(true);

@@ -9,7 +9,14 @@ import path from "node:path";
 import fs from "node:fs";
 import semver from "semver";
 import type { FrameworkAdapter } from "../framework.js";
-import { commitsSince, git, isGitRepo, latestSemverTag, looseSemver, statusShort } from "./git.js";
+import {
+  commitsSince,
+  git,
+  isGitRepo,
+  latestVersionAnchor,
+  statusShort,
+  type VersionAnchor,
+} from "./git.js";
 import { decideNextVersion, inferBumpLevel, storeVersionName, type InferResult } from "./infer.js";
 import { renderChangelogSection, toChangelogEntries, upsertChangelog } from "./changelog.js";
 import { evalVersionCodeFormula, nextVersionCode } from "./version-code.js";
@@ -33,7 +40,8 @@ export interface BumpOptions {
 }
 
 export interface BumpPlan {
-  anchorTag?: string;
+  /** 版本声明锚点（tag=已交付 / bump commit=已声明未交付，取新者）；首次无锚点 */
+  anchor?: VersionAnchor;
   /** 疑似失败重跑（HEAD 是 release commit 且锚点后无新业务提交）——CLI 在 --yes 且无显式 level 时拒绝 */
   suspectRerun?: boolean;
   /** 基线版本（多端中最大 semver） */
@@ -96,14 +104,14 @@ function lastCommitIsRelease(cwd: string): boolean {
   return git(cwd, ["log", "-1", "--format=%s"]).stdout.startsWith("chore(release): ");
 }
 export function planBump(opts: BumpOptions): BumpPlan {
-  let anchorTag: string | undefined;
+  let anchor: VersionAnchor | undefined;
   let commits: string[] = [];
   let infer: InferResult | undefined;
   if (isGitRepo(opts.cwd)) {
-    anchorTag = latestSemverTag(opts.cwd);
-    if (anchorTag) {
-      // 无锚点不做全量历史推断（设计定稿：无 tag → patch 兜底并明示）
-      commits = commitsSince(opts.cwd, anchorTag);
+    anchor = latestVersionAnchor(opts.cwd) ?? undefined;
+    if (anchor) {
+      // 无锚点不做全量历史推断（设计定稿：无锚点 → patch 兜底并明示）
+      commits = commitsSince(opts.cwd, anchor.ref);
       if (commits.length > 0) infer = inferBumpLevel(commits);
     }
   }
@@ -114,7 +122,7 @@ export function planBump(opts: BumpOptions): BumpPlan {
   );
   // 基线:工程 versionName 恒三段数字,prerelease 状态只在 tag(v4.1.0-beta.0)——
   // 锚点是 prerelease 时基线取 tag(递进/转正式的语义基线),否则取 max(各端文件, tag)
-  const anchorVersion = anchorTag ? (looseSemver(anchorTag) ?? undefined) : undefined;
+  const anchorVersion = anchor?.version;
   const anchorIsPre = anchorVersion ? semver.prerelease(anchorVersion) !== null : false;
   const base = anchorIsPre
     ? anchorVersion!
@@ -134,18 +142,18 @@ export function planBump(opts: BumpOptions): BumpPlan {
   }
 
   const decided = decideNextVersion(base ?? "0.0.0", { level: opts.level, pre: opts.pre }, infer);
-  // 无 tag（首次）：patch 兜底需明示，不能默认吞掉（决定链红线「不静默」）
-  if (!anchorTag && !opts.level)
-    decided.reason = "无发版锚点 tag（首次 bump）→ patch 兜底；打第一个 tag 后激活 git 推断";
+  // 无锚点（首次）：patch 兜底需明示，不能默认吞掉（决定链红线「不静默」）
+  if (!anchor && !opts.level)
+    decided.reason = "无发版锚点（首次 bump）→ patch 兜底；首个 bump commit 或 tag 后激活 git 推断";
   // 疑似失败重跑：HEAD 是 release commit 且锚点后没有非 release 提交（覆盖构建失败/tag 打完/
   // commit 失败后残留 tag 等形态）——再 bump 会静默烧掉一个版本号
   const suspectRerun =
-    !!anchorTag &&
+    !!anchor &&
     lastCommitIsRelease(opts.cwd) &&
     commits.every((c) => c.startsWith("chore(release): "));
   if (suspectRerun)
     decided.reason +=
-      "；⚠ 锚点后无新业务提交且 HEAD 已是 release commit——疑似失败重跑，建议 --no-bump 复用已 bump 版本";
+      "；⚠ 锚点后无新业务提交且 HEAD 已是 release commit——疑似失败重跑，建议不带 --bump 重跑复用已 bump 版本";
 
   // versionCode per platform：max(公式值, 现值+1)
   const formulaCfg =
@@ -206,7 +214,7 @@ export function planBump(opts: BumpOptions): BumpPlan {
   if (resetCodes.length > 0)
     formulaNote += `；⚠ 非数字 versionCode 已从 1 重新起号（${resetCodes.join(", ")}）——商店单调性可能拒绝，建议配置 version.versionCode 公式或手动规范化`;
   return {
-    anchorTag,
+    anchor,
     currentVersions: currents,
     writes,
     base: base ?? decided.next,
@@ -221,9 +229,9 @@ export function planBump(opts: BumpOptions): BumpPlan {
 }
 
 export interface ApplyOptions {
-  /** 代 commit（默认 true；--no-commit 跳过） */
+  /** 代 commit（CLI 默认开；--no-commit 跳过） */
   commit: boolean;
-  /** 代打 tag（默认 true；--no-tag 跳过） */
+  /** 代打 tag（CLI 默认不打——tag 是交付标记，归 release 提审成功后补；--tag 显式开） */
   tag: boolean;
 }
 

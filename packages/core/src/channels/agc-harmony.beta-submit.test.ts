@@ -60,6 +60,11 @@ function makeCtx(target: Record<string, string>): ChannelContext {
 function baseRoutes() {
   return [
     { match: "oauth2/v1/token", response: { json: { access_token: "agc-token" } } },
+    // 旧测试版本清理（默认开）：默认无残留，清理用例自行覆盖该路由
+    {
+      match: "version/brief-info/list",
+      response: { json: { ret: { code: 0 }, versionList: [] } },
+    },
     {
       match: /for-obs\?.*releaseType=6$/,
       response: {
@@ -240,5 +245,367 @@ describe("agc beta 自动提审（submitTest）", () => {
       testGroup: GROUP_NAME,
     });
     await expect(channel.stage(ctx)).rejects.toThrow(/查询测试群组失败: rtnCode=204144701 无权限/);
+  });
+});
+
+/**
+ * 旧测试版本自动清理契约（target.cleanup !== 'false' 默认开）：
+ * AGC 测试版本数量约束（在审上限→204144692 / 在架上限）导致旧版本不清理会阻塞新版本提审。
+ * - 发现：brief-info/list 反向过滤 testType 3/4（商用版本绝不动）
+ * - 清理：stop（完全下架）→ delete 级联，且都发生在「新建测试版本」之前（不给新版本误删窗口）
+ * - best-effort：查询/单版本 stop/delete 失败仅告警，不阻断发布（提审 204144692 兜底提示人工）
+ */
+describe("agc beta 旧测试版本自动清理（默认开）", () => {
+  const staleList = () => [
+    {
+      versionId: "old-v1",
+      testType: 3,
+      state: 7,
+      packageList: [{ versionName: "4.0.1000", versionCode: 100 }],
+    },
+    { versionId: "old-v2", testType: 4, state: 1 },
+    // 重复 versionId 只清一次
+    { versionId: "old-v2", testType: 4, state: 1 },
+    // 商用版本（testType=1 / 缺省）绝不触碰
+    { versionId: "live-v", testType: 1, state: 0 },
+    { versionId: "legacy-v" },
+  ];
+
+  /** 自定义 brief-info/list 路由放数组最前（mockFetch 首个命中生效），其余走基础路由 */
+  const briefRoute = (versionList: unknown) => ({
+    match: "version/brief-info/list",
+    response: { json: { ret: { code: 0 }, versionList } },
+  });
+
+  it("默认清理：逐个 stop+delete 测试版本，商用版本不动，且全部发生在新建之前", async () => {
+    const fetchMock = mockFetch([
+      briefRoute(staleList()),
+      // stop / delete 成功
+      { match: "test/version/stop", response: { json: { ret: { code: 0 } } } },
+      { match: "test/app/version", method: "DELETE", response: { json: { ret: { code: 0 } } } },
+      ...baseRoutes(),
+    ]);
+    const channel = new AgcHarmonyChannel();
+    const events: Array<{ type: string; [k: string]: unknown }> = [];
+    const result = await channel.stage({
+      ...makeCtx({ appId: APP_ID, releaseType: "6", submitTest: "true" }),
+      emit: (e) => events.push(e as { type: string; [k: string]: unknown }),
+    });
+    expect(result).toEqual({ ok: true, ref: VERSION_ID });
+
+    const stopCalls = fetchMock.calls.filter((c) => c.url.includes("test/version/stop"));
+    expect(stopCalls).toHaveLength(2);
+    expect(stopCalls.map((c) => JSON.parse(c.body as string))).toEqual([
+      { versionId: "old-v1" },
+      { versionId: "old-v2" },
+    ]);
+    for (const c of stopCalls) {
+      expect(c.method).toBe("POST");
+      expect(c.url).toContain(`appId=${APP_ID}`);
+    }
+
+    const deleteCalls = fetchMock.calls.filter(
+      (c) => c.url.includes("test/app/version") && c.method === "DELETE",
+    );
+    expect(deleteCalls).toHaveLength(2);
+    expect(deleteCalls[0]!.url).toContain("versionId=old-v1");
+    expect(deleteCalls[0]!.url).toContain(`appId=${APP_ID}`);
+    expect(deleteCalls[1]!.url).toContain("versionId=old-v2");
+
+    // 商用版本（testType=1/缺省）绝不进清理
+    expect(fetchMock.calls.some((c) => c.url.includes("live-v"))).toBe(false);
+    expect(fetchMock.calls.some((c) => c.url.includes("legacy-v"))).toBe(false);
+
+    // 时序：清理全部完成后才新建测试版本（新版本不会被误删）
+    const createIdx = fetchMock.calls.findIndex(
+      (c) => c.url.includes("test/app/version") && c.method === "POST",
+    );
+    const lastCleanupIdx = Math.max(
+      fetchMock.calls.indexOf(deleteCalls[1]!),
+      fetchMock.calls.indexOf(stopCalls[1]!),
+    );
+    expect(createIdx).toBeGreaterThan(lastCleanupIdx);
+
+    expect(
+      events.some((e) => e.type === "progress" && String(e.detail).includes("发现 2 个旧测试版本")),
+    ).toBe(true);
+    expect(events.some((e) => e.type === "progress" && String(e.detail).includes("4.0.1000"))).toBe(
+      true,
+    );
+  });
+
+  it("cleanup='false'：完全不查旧版本、不发清理请求（零侵入逃生口）", async () => {
+    const fetchMock = mockFetch(baseRoutes());
+    const channel = new AgcHarmonyChannel();
+    const result = await channel.stage(
+      makeCtx({ appId: APP_ID, releaseType: "6", cleanup: "false" }),
+    );
+    expect(result).toEqual({ ok: true, ref: VERSION_ID });
+    expect(fetchMock.find("version/brief-info/list")).toBeUndefined();
+    expect(fetchMock.calls.some((c) => c.url.includes("test/version/stop"))).toBe(false);
+    expect(fetchMock.calls.some((c) => c.method === "DELETE")).toBe(false);
+  });
+
+  it("无旧测试版本：提示无残留，正常发布", async () => {
+    const mock = mockFetch(baseRoutes());
+    const events: Array<{ type: string; [k: string]: unknown }> = [];
+    await new AgcHarmonyChannel().stage({
+      ...makeCtx({ appId: APP_ID, releaseType: "6" }),
+      emit: (e) => events.push(e as { type: string; [k: string]: unknown }),
+    });
+    expect(mock.calls.some((c) => c.url.includes("test/version/stop"))).toBe(false);
+    expect(events.some((e) => e.type === "progress" && String(e.detail).includes("无残留"))).toBe(
+      true,
+    );
+  });
+
+  it("stop 失败（如审核中不可停）：告警后仍尝试 delete，发布继续", async () => {
+    const fetchMock = mockFetch([
+      briefRoute([
+        { versionId: "old-v1", testType: 3, packageList: [{ versionName: "4.0.1000" }] },
+      ]),
+      {
+        match: "test/version/stop",
+        response: { json: { ret: { code: 204144699, msg: "version can not be stopped" } } },
+      },
+      ...baseRoutes(),
+    ]);
+    const events: Array<{ type: string; [k: string]: unknown }> = [];
+    const result = await new AgcHarmonyChannel().stage({
+      ...makeCtx({ appId: APP_ID, releaseType: "6" }),
+      emit: (e) => events.push(e as { type: string; [k: string]: unknown }),
+    });
+    expect(result).toEqual({ ok: true, ref: VERSION_ID });
+    expect(
+      events.some(
+        (e) =>
+          e.type === "warn" &&
+          String(e.message).includes(
+            "停止测试版本 4.0.1000（versionId old-v1）失败（继续尝试删除）",
+          ),
+      ),
+    ).toBe(true);
+    // stop 失败不挡 delete
+    expect(
+      fetchMock.calls.some((c) => c.url.includes("test/app/version") && c.method === "DELETE"),
+    ).toBe(true);
+  });
+
+  it("delete 失败：告警不阻断（提审若仍超限由 204144692 提示兜底）", async () => {
+    mockFetch([
+      briefRoute([{ versionId: "old-v1", testType: 3 }]),
+      {
+        match: "test/app/version",
+        method: "DELETE",
+        response: { json: { ret: { code: 204144001, msg: "delete denied" } } },
+      },
+      ...baseRoutes(),
+    ]);
+    const events: Array<{ type: string; [k: string]: unknown }> = [];
+    await expect(
+      new AgcHarmonyChannel().stage({
+        ...makeCtx({ appId: APP_ID, releaseType: "6" }),
+        emit: (e) => events.push(e as { type: string; [k: string]: unknown }),
+      }),
+    ).resolves.toEqual({ ok: true, ref: VERSION_ID });
+    expect(
+      events.some(
+        (e) =>
+          e.type === "warn" &&
+          String(e.message).includes(
+            "删除测试版本 ?（versionId old-v1）失败: AGC 删除测试版本失败",
+          ),
+      ),
+    ).toBe(true);
+  });
+
+  it("brief-info/list 查询失败：告警跳过清理，不阻断发布", async () => {
+    const fetchMock = mockFetch([
+      { match: "version/brief-info/list", response: { json: { ret: { code: 500, msg: "boom" } } } },
+      ...baseRoutes(),
+    ]);
+    const events: Array<{ type: string; [k: string]: unknown }> = [];
+    const result = await new AgcHarmonyChannel().stage({
+      ...makeCtx({ appId: APP_ID, releaseType: "6" }),
+      emit: (e) => events.push(e as { type: string; [k: string]: unknown }),
+    });
+    expect(result).toEqual({ ok: true, ref: VERSION_ID });
+    expect(
+      events.some(
+        (e) =>
+          e.type === "warn" && String(e.message).includes("旧测试版本查询失败（跳过清理，不阻断）"),
+      ),
+    ).toBe(true);
+    expect(fetchMock.calls.some((c) => c.url.includes("test/version/stop"))).toBe(false);
+  });
+});
+
+describe("分支覆盖补齐（missed 清单：method/testDesc 回退、versionId/pkgVersion 缺失、群组分页）", () => {
+  it("urlInfo 缺 method → 上传回退 PUT", async () => {
+    const fetchMock = mockFetch([
+      {
+        match: /for-obs\?.*releaseType=6$/,
+        response: {
+          json: {
+            ret: { code: 0 },
+            urlInfo: { url: "https://obs-agc.example.com/nomethod", objectId: OBJECT_ID },
+          },
+        },
+      },
+      ...baseRoutes(),
+    ]);
+    const result = await new AgcHarmonyChannel().stage(
+      makeCtx({ appId: APP_ID, releaseType: "6" }),
+    );
+    expect(result.ok).toBe(true);
+    expect(fetchMock.find("obs-agc.example.com/nomethod")!.method).toBe("PUT");
+  });
+
+  it("updateDescription 缺省 → testDesc 回退「applift 测试发布」", async () => {
+    const fetchMock = mockFetch(baseRoutes());
+    const ctx = { ...makeCtx({ appId: APP_ID, releaseType: "6" }), updateDescription: undefined };
+    await new AgcHarmonyChannel().stage(ctx);
+    expect(JSON.parse(fetchMock.find("test/app/version", "POST")!.body as string)).toMatchObject({
+      testDesc: "applift 测试发布",
+    });
+  });
+
+  it("新建测试版本未返回 versionId → 抛错", async () => {
+    mockFetch([
+      {
+        match: "version/brief-info/list",
+        response: { json: { ret: { code: 0 }, versionList: [] } },
+      },
+      {
+        match: "test/app/version",
+        method: "POST",
+        response: { json: { ret: { code: 0 } } }, // 无 versionId
+      },
+      ...baseRoutes(),
+    ]);
+    await expect(
+      new AgcHarmonyChannel().stage(makeCtx({ appId: APP_ID, releaseType: "6" })),
+    ).rejects.toThrow("AGC 新建测试版本未返回 versionId");
+  });
+
+  it("添加测试软件包未返回 pkgVersion → 抛错", async () => {
+    mockFetch([
+      {
+        match: "version/brief-info/list",
+        response: { json: { ret: { code: 0 }, versionList: [] } },
+      },
+      { match: "test/version/pkg", response: { json: { ret: { code: 0 } } } }, // 无 pkgVersion
+      ...baseRoutes(),
+    ]);
+    await expect(
+      new AgcHarmonyChannel().stage(makeCtx({ appId: APP_ID, releaseType: "6" })),
+    ).rejects.toThrow("AGC 添加测试软件包未返回 pkgVersion");
+  });
+
+  it("清理查询：target 带 bundleName → body 携带 packageName；无 versionId 的测试版本不进清理", async () => {
+    const fetchMock = mockFetch([
+      {
+        match: "version/brief-info/list",
+        response: {
+          json: {
+            ret: { code: 0 },
+            versionList: [
+              { testType: 3 }, // 无 versionId → 跳过
+              { versionId: "old-v1", testType: 4 },
+            ],
+          },
+        },
+      },
+      { match: "test/version/stop", response: { json: { ret: { code: 0 } } } },
+      { match: "test/app/version", method: "DELETE", response: { json: { ret: { code: 0 } } } },
+      ...baseRoutes(),
+    ]);
+    const result = await new AgcHarmonyChannel().stage(
+      makeCtx({ appId: APP_ID, releaseType: "6", bundleName: "com.qy.driver" }),
+    );
+    expect(result.ok).toBe(true);
+    const brief = fetchMock.find("version/brief-info/list")!;
+    expect(JSON.parse(brief.body as string)).toEqual({ packageName: "com.qy.driver" });
+    // 只有带 versionId 的 old-v1 被清理一次
+    expect(fetchMock.calls.filter((c) => c.url.includes("test/version/stop"))).toHaveLength(1);
+    expect(JSON.parse(fetchMock.find("test/version/stop")!.body as string)).toEqual({
+      versionId: "old-v1",
+    });
+  });
+
+  it("查群组 HTTP !ok → 人话报错", async () => {
+    mockFetch([
+      ...baseRoutes(),
+      { match: "test-group/list", response: { status: 500, text: "bad gateway" } },
+    ]);
+    await expect(
+      new AgcHarmonyChannel().stage(
+        makeCtx({ appId: APP_ID, releaseType: "6", submitTest: "true", testGroup: GROUP_NAME }),
+      ),
+    ).rejects.toThrow("AGC 查询测试群组失败 HTTP 500");
+  });
+
+  it("rtnCode 缺失 → rtnCode=? 且无描述尾巴；rtnCode 非 0 无 rtnDesc → 只报码", async () => {
+    mockFetch([...baseRoutes(), { match: "test-group/list", response: { json: {} } }]);
+    await expect(
+      new AgcHarmonyChannel().stage(
+        makeCtx({ appId: APP_ID, releaseType: "6", submitTest: "true", testGroup: GROUP_NAME }),
+      ),
+    ).rejects.toThrow("AGC 查询测试群组失败: rtnCode=?");
+
+    mockFetch([...baseRoutes(), { match: "test-group/list", response: { json: { rtnCode: 7 } } }]);
+    await expect(
+      new AgcHarmonyChannel().stage(
+        makeCtx({ appId: APP_ID, releaseType: "6", submitTest: "true", testGroup: GROUP_NAME }),
+      ),
+    ).rejects.toThrow("AGC 查询测试群组失败: rtnCode=7");
+  });
+
+  it("分页：totalPage 驱动翻页，第 2 页命中群组", async () => {
+    const fetchMock = mockFetch([
+      ...baseRoutes(),
+      {
+        match: "current=1",
+        response: {
+          json: {
+            rtnCode: 0,
+            groups: [{ groupId: "grp-other", groupName: "别的组" }],
+            pageInfo: { current: 1, totalPage: 2 },
+          },
+        },
+      },
+      {
+        match: "current=2",
+        response: {
+          json: { rtnCode: 0, groups: [{ groupId: GROUP_ID, groupName: GROUP_NAME }] },
+        },
+      },
+      {
+        match: "test/app/version/submit",
+        method: "POST",
+        response: { json: { ret: { code: 0 } } },
+      },
+    ]);
+    const result = await new AgcHarmonyChannel().stage(
+      makeCtx({ appId: APP_ID, releaseType: "6", submitTest: "true", testGroup: GROUP_NAME }),
+    );
+    expect(result).toEqual({ ok: true, ref: VERSION_ID });
+    expect(fetchMock.calls.filter((c) => c.url.includes("test-group/list"))).toHaveLength(2);
+    expect(fetchMock.find("current=2")).toBeDefined();
+  });
+
+  it("响应缺 pageInfo → totalPage 回退当前页，找不到群组即止步报错", async () => {
+    mockFetch([
+      ...baseRoutes(),
+      {
+        match: "test-group/list",
+        response: { json: { rtnCode: 0, groups: [{ groupId: "g", groupName: "别的组" }] } },
+      },
+    ]);
+    await expect(
+      new AgcHarmonyChannel().stage(
+        makeCtx({ appId: APP_ID, releaseType: "6", submitTest: "true", testGroup: GROUP_NAME }),
+      ),
+    ).rejects.toThrow(/未找到名为.*测试群组/);
   });
 });

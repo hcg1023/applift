@@ -9,6 +9,7 @@ import {
   nativeAndroidFramework,
   nativeHarmonyFramework,
   nativeIosFramework,
+  rnAdapter,
   rnFramework,
   suggestFramework,
   tauriFramework,
@@ -65,5 +66,22 @@ describe("suggestFramework（init/doctor 的探测建议，非发布依据）", 
 
   it("未知目录返回 null", () => {
     expect(suggestFramework(os.tmpdir())).toBeNull();
+  });
+
+  it("expoAwareLabel：依赖 expo → Expo (React Native)，无 expo → React Native", () => {
+    const expoDir = tmpProject((d) => {
+      fs.writeFileSync(
+        path.join(d, "package.json"),
+        JSON.stringify({ dependencies: { "react-native": "0.84.0", expo: "~54.0.0" } }),
+      );
+    });
+    const plainDir = tmpProject((d) => {
+      fs.writeFileSync(
+        path.join(d, "package.json"),
+        JSON.stringify({ dependencies: { "react-native": "0.84.0" } }),
+      );
+    });
+    expect(rnAdapter.expoAwareLabel?.(expoDir)).toBe("Expo (React Native)");
+    expect(rnAdapter.expoAwareLabel?.(plainDir)).toBe("React Native");
   });
 });

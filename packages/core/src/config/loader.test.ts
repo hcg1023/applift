@@ -213,4 +213,15 @@ describe("loadCredentialsLayered 逐级凭据", () => {
       fs.unlinkSync(globalFile);
     }
   });
+
+  it("未提供 projectRoot（undefined）→ 直接返回全局，不查找项目级文件", () => {
+    const globalFile = tmpFile("layered-global3");
+    saveCredentials({ profiles: { default: { K: "v" } } }, globalFile);
+    try {
+      const merged = loadCredentialsLayered(undefined, globalFile);
+      expect(merged).toEqual({ profiles: { default: { K: "v" } } });
+    } finally {
+      fs.unlinkSync(globalFile);
+    }
+  });
 });

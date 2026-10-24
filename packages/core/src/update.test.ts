@@ -173,4 +173,37 @@ describe("collectReleaseDiff（上个发版锚点到工作区的文件列表，�
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("bump 声明后（无 tag）锚点推进到 bump commit：版本文件改动不计入 diff（防连环烧版本号）", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-diff-"));
+    try {
+      const g = (args: string[]) =>
+        spawnSync("git", args, { cwd: dir, encoding: "utf8" }) as { status: number | null };
+      g(["init", "-q"]);
+      g(["config", "user.email", "t@t"]);
+      g(["config", "user.name", "t"]);
+      fs.writeFileSync(path.join(dir, "base.txt"), "x");
+      g(["add", "-A"]);
+      g(["commit", "-qm", "init"]);
+      g(["tag", "v4.0.0"]);
+      // 模拟 applyBump 的声明提交：版本文件（原生目录内）随 chore(release) 提交
+      fs.mkdirSync(path.join(dir, "android", "app"), { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "android", "app", "build.gradle"),
+        `android { defaultConfig { versionName "4.1.0" } }\n`,
+      );
+      fs.writeFileSync(path.join(dir, "CHANGELOG.md"), "## 4.1.0\n");
+      g(["add", "-A"]);
+      g(["commit", "-qm", "chore(release): 4.1.0"]);
+      // 声明后纯 JS 改动：diff 只含 JS 文件，不含 bump 写入的版本文件 → 判定走 OTA 不再建议 bump
+      fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+      fs.writeFileSync(path.join(dir, "src", "hotfix.ts"), "z");
+      const diff = await collectReleaseDiff(dir);
+      expect(diff).toContain("src/hotfix.ts");
+      expect(diff).not.toContain("android/app/build.gradle");
+      expect(diff).not.toContain("CHANGELOG.md");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

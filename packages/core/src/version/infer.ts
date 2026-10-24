@@ -5,6 +5,7 @@
  */
 import { CommitParser, type Commit } from "conventional-commits-parser";
 import semver from "semver";
+import { looseSemver } from "./git.js";
 
 export type BumpLevel = "major" | "minor" | "patch";
 
@@ -137,4 +138,25 @@ export function decideNextVersion(
 export function storeVersionName(full: string): string {
   const v = new semver.SemVer(full);
   return `${v.major}.${v.minor}.${v.patch}`;
+}
+
+/** compareDeclared 结果：ahead=已声明未发布（只需重建）；not-ahead=未声明/持平（需 bump）；unknown=无法比较 */
+export type DeclaredComparison = "ahead" | "not-ahead" | "unknown";
+
+/**
+ * 三态判定核心比较（beta 原生路径用）：工程 versionName 是否领先于最近发布 tag。
+ * - ahead：版本已声明（bump 过未 release）→ 引导重建 + --delivery native，不再 bump
+ * - not-ahead：未声明或持平 → 引导/自动 bump
+ * - unknown：工程版本非 semver（历史非规范值）→ 调用方按需 bump 分支并告警，不猜
+ * releasedTag 缺省（从未发布过）→ 任何合法工程版本都算已声明。
+ */
+export function compareDeclared(
+  project: string | undefined,
+  releasedTag: string | undefined,
+): DeclaredComparison {
+  const p = project ? (semver.valid(project) ?? undefined) : undefined;
+  if (!p) return "unknown";
+  const r = releasedTag ? (looseSemver(releasedTag) ?? undefined) : undefined;
+  if (!r) return "ahead";
+  return semver.gt(p, r) ? "ahead" : "not-ahead";
 }

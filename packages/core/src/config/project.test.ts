@@ -182,4 +182,20 @@ describe("已删除配置键的迁移警告", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+  it("release 键存在但无 bump → 不产生废弃警告", async () => {
+    const dir = tmpProject((d) => {
+      fs.writeFileSync(
+        path.join(d, "applift.config.ts"),
+        "export default { release: { notes: 'x' } };",
+      );
+    });
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await loadProjectConfig(dir);
+      expect(errSpy.mock.calls.flat().join(" ")).not.toContain("废弃");
+    } finally {
+      errSpy.mockRestore();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

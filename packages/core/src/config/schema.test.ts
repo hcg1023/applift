@@ -41,6 +41,14 @@ describe("StoresSchema 规范化", () => {
     expect(StoresSchema.safeParse({ huawei: { appId: 123 } }).success).toBe(false);
     expect(StoresSchema.safeParse("huawei").success).toBe(false);
   });
+
+  it("④ 混排数组：字符串渠道 + { 渠道: appId 简写 } 元素 → 后者归一为 { appId }", () => {
+    expect(StoresSchema.parse(["huawei", { yyb: "30001" }, "vivo"])).toEqual({
+      huawei: {},
+      yyb: { appId: "30001" },
+      vivo: {},
+    });
+  });
 });
 
 describe("ProjectConfigSchema 平台段", () => {
@@ -119,7 +127,13 @@ describe("BetaConfigSchema（beta 多渠道）", () => {
     });
     expect(config.beta?.pgyer?.platforms).toEqual(["android", "ios"]);
     expect(config.beta?.pgyer?.installPassword).toBe("1234");
-    expect(config.beta?.agc).toEqual({ submit: true, group: "内测组", testType: 4 });
+    // cleanup 默认 true（AGC 测试版本自动清理）——显式关时才是 false
+    expect(config.beta?.agc).toEqual({
+      submit: true,
+      group: "内测组",
+      testType: 4,
+      cleanup: true,
+    });
     expect(config.beta?.testflight?.note).toBe("TF 备注");
   });
 

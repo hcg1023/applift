@@ -499,6 +499,11 @@ describe("AgcHarmonyChannel.stage（releaseType=6 测试发布）", () => {
   it("走 Testing API 链路：上传→新建测试版本→添加软件包→等编译→绑定，不提审", async () => {
     const { find } = mockFetch([
       TOKEN_ROUTE,
+      // 旧测试版本清理（默认开）：无残留时不影响主链路
+      {
+        match: "version/brief-info/list",
+        response: { json: { ret: { code: 0 }, versionList: [] } },
+      },
       { match: "upload-url", response: { json: { ret: { code: 0 }, urlInfo: obsRoutes() } } },
       { match: "obs.example.com", response: { status: 200, text: "" } },
       {
@@ -959,5 +964,139 @@ describe("getHarmonyAppId 补充分支", () => {
     await expect(
       getHarmonyAppId({ clientId: "cid", token: "tk", bundleName: "com.foo" }),
     ).resolves.toBe("");
+  });
+});
+
+describe("分支覆盖补齐（missed 清单：plan/status/defaultLang/required）", () => {
+  const ch = new AgcHarmonyChannel();
+  it("plan：releaseType=6 + submitTest=true → notes 含（可选绑测试群组）自动提审", async () => {
+    const { ctx } = baseCtx({
+      target: { appId: "app-1", releaseType: "6", submitTest: "true" },
+    });
+    expect((await ch.plan(ctx)).notes).toContain("（可选绑测试群组）自动提交测试审核");
+  });
+
+  it("status：testType 缺省视为商用版本（不误判为测试线）", async () => {
+    const m = mockFetch([
+      TOKEN_ROUTE,
+      {
+        match: "version/brief-info/list",
+        response: {
+          json: {
+            ret: { code: 0 },
+            versionList: [{ versionId: "v-1", state: 4, packageList: [{ versionName: "5.2.0" }] }],
+          },
+        },
+      },
+    ]);
+    try {
+      expect(await ch.status(baseCtx().ctx)).toEqual({ state: "reviewing" });
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("status：updateTime 缺失按 0 参与排序，仍取有时间戳的最新商用版本", async () => {
+    const m = mockFetch([
+      TOKEN_ROUTE,
+      {
+        match: "version/brief-info/list",
+        response: {
+          json: {
+            ret: { code: 0 },
+            versionList: [
+              { versionId: "a", state: 4, packageList: [{ versionName: "1.0.0" }] }, // 无 updateTime → 0
+              { versionId: "b", state: 0, updateTime: 5, packageList: [{ versionName: "2.0.0" }] },
+            ],
+          },
+        },
+      },
+    ]);
+    try {
+      expect(await ch.status(baseCtx().ctx)).toEqual({ state: "approved", live: true });
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("status：packageList 缺失 → versionName 回退 ?，state 缺失 → unknown", async () => {
+    const m = mockFetch([
+      TOKEN_ROUTE,
+      {
+        match: "version/brief-info/list",
+        response: { json: { ret: { code: 0 }, versionList: [{ versionId: "v-1", testType: 1 }] } },
+      },
+    ]);
+    try {
+      expect(await ch.status(baseCtx().ctx)).toEqual({
+        state: "unknown",
+        raw: "商用版本 ? 无 state 字段",
+      });
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("status：已知 state 但 packageList 缺失 → raw 内版本名回退 ?", async () => {
+    const m = mockFetch([
+      TOKEN_ROUTE,
+      {
+        match: "version/brief-info/list",
+        response: { json: { ret: { code: 0 }, versionList: [{ versionId: "v-1", state: 2 }] } },
+      },
+    ]);
+    try {
+      const st = await ch.status(baseCtx().ctx);
+      expect(st.state).toBe("unknown");
+      if (st.state === "unknown") expect(st.raw).toContain("已下架（?（releaseState=2））");
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("app-info 无 defaultLang → getDefaultLang 回退 zh-CN 写入文案语言位", async () => {
+    const { find } = mockFetch([
+      TOKEN_ROUTE,
+      { match: "upload-url", response: { json: { ret: { code: 0 }, urlInfo: obsRoutes() } } },
+      { match: "obs.example.com", response: { status: 200, text: "" } },
+      { match: "app-package-info", response: { json: { ret: { code: 0 }, packageId: "pkg-1" } } },
+      { match: "app-info", response: { json: { ret: { code: 0 } } } }, // 无 appInfo.defaultLang
+      { match: "app-language-info", response: { json: { ret: { code: 0 } } } },
+    ]);
+    const { ctx } = baseCtx({ updateDescription: "desc" });
+    await expect(new AgcHarmonyChannel().stage(ctx)).resolves.toEqual({ ok: true, ref: "pkg-1" });
+    expect(JSON.parse(String(find("app-language-info")!.body ?? ""))).toEqual({
+      lang: "zh-CN",
+      newFeatures: "desc",
+    });
+  });
+
+  it("required：target 携带 AGC_CLIENT_ID/AGC_CLIENT_SECRET 时优先生效（token 请求体可见）", async () => {
+    const { find } = mockFetch([
+      TOKEN_ROUTE,
+      {
+        match: "appid-list",
+        response: {
+          json: { ret: { code: 0 }, appIds: [{ appId: "resolved-1", bundleName: "com.foo" }] },
+        },
+      },
+      { match: "upload-url", response: { json: { ret: { code: 0 }, urlInfo: obsRoutes() } } },
+      { match: "obs.example.com", response: { status: 200, text: "" } },
+      { match: "app-package-info", response: { json: { ret: { code: 0 }, packageId: "pkg-1" } } },
+    ]);
+    const { ctx } = makeTestCtx({
+      credentials: {},
+      target: {
+        AGC_CLIENT_ID: "cid-from-target",
+        AGC_CLIENT_SECRET: "sec-from-target",
+        bundleName: "com.foo",
+      },
+      artifactPath: ARTIFACT,
+    });
+    await expect(new AgcHarmonyChannel().stage(ctx)).resolves.toEqual({ ok: true, ref: "pkg-1" });
+    expect(JSON.parse(String(find("oauth2/v1/token")!.body ?? ""))).toMatchObject({
+      client_id: "cid-from-target",
+      client_secret: "sec-from-target",
+    });
   });
 });

@@ -253,6 +253,21 @@ describe("detectBundleIds", () => {
     );
   });
 
+  it("app/build.gradle 无 applicationId（正则不中）→ 继续扫后续候选文件", () => {
+    withTmp(
+      (d) => {
+        fs.mkdirSync(path.join(d, "app"));
+        fs.mkdirSync(path.join(d, "android/app"), { recursive: true });
+        fs.writeFileSync(d + "/app/build.gradle", 'android { namespace "com.x" }');
+        fs.writeFileSync(
+          d + "/android/app/build.gradle",
+          'android { applicationId "com.fallthrough" }',
+        );
+      },
+      (dir) => expect(detectBundleIds(dir).androidPkgName).toBe("com.fallthrough"),
+    );
+  });
+
   it("RN 工程的 android/app/build.gradle 也能兜底读 applicationId", () => {
     withTmp(
       (d) => {
@@ -335,6 +350,57 @@ describe("detectBundleIds", () => {
           iosScheme: undefined,
         });
       },
+    );
+  });
+
+  it("字段值为纯空白字符串 → trim 后视为缺失（pickString 回退 undefined）", () => {
+    withTmp(
+      (d) =>
+        fs.writeFileSync(d + "/app.json", JSON.stringify({ android: { applicationId: "   " } })),
+      (dir) => expect(detectBundleIds(dir).androidPkgName).toBeUndefined(),
+    );
+  });
+
+  it("xcodeproj 目录存在但无 project.pbxproj → continue 扫描下一个工程", () => {
+    withTmp(
+      (d) => {
+        // 排序靠前的空工程（读不到 pbxproj）应被跳过，取到后续有效工程
+        fs.mkdirSync(path.join(d, "AEmpty.xcodeproj"), { recursive: true });
+        fs.mkdirSync(path.join(d, "BReal.xcodeproj"), { recursive: true });
+        fs.writeFileSync(
+          path.join(d, "BReal.xcodeproj/project.pbxproj"),
+          "PRODUCT_BUNDLE_IDENTIFIER = com.ios.real;",
+        );
+      },
+      (dir) =>
+        expect(detectBundleIds(dir)).toMatchObject({
+          iosBundleId: "com.ios.real",
+          iosScheme: "BReal",
+        }),
+    );
+  });
+
+  it("Expo app.json：expo.android.package / expo.ios.bundleIdentifier / expo.name 优先", () => {
+    withTmp(
+      (d) =>
+        fs.writeFileSync(
+          d + "/app.json",
+          JSON.stringify({
+            expo: {
+              name: "ExpoApp",
+              android: { package: "com.expo.app" },
+              ios: { bundleIdentifier: "com.expo.ios" },
+            },
+            android: { applicationId: "shadowed.android" },
+            ios: { bundleIdentifier: "shadowed.ios" },
+          }),
+        ),
+      (dir) =>
+        expect(detectBundleIds(dir)).toMatchObject({
+          androidPkgName: "com.expo.app",
+          iosBundleId: "com.expo.ios",
+          iosScheme: "ExpoApp",
+        }),
     );
   });
 

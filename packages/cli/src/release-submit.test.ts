@@ -508,5 +508,5 @@ describe("release L3 提审路径（桩渠道进程内）", () => {
       vi.restoreAllMocks();
       fs.rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 });

@@ -6,7 +6,7 @@
  * 只做推荐与证据展示，最终投递方式由用户在确认界面拍板（CI 非交互时 uncertain 即中止）。
  */
 import { spawnSync } from "node:child_process";
-import { latestSemverTag } from "./version/git.js";
+import { latestVersionAnchor } from "./version/git.js";
 import type { FrameworkAdapter } from "./framework.js";
 
 /** 判定结论：推荐值 + 置信度 + 逐文件证据（透明可审计，不是黑盒） */
@@ -95,15 +95,17 @@ export async function routeDelivery(
 }
 
 /**
- * 收集上个发版锚点（最新 semver tag）到工作区的变更文件列表。
+ * 收集上个发版锚点到工作区的变更文件列表。锚点 = 最新 semver tag 或最新 `chore(release):`
+ * bump commit 取新者（见 git.ts latestVersionAnchor）——bump 声明后未 release 的窗口内，
+ * 判定不会把 bump 自己写入的版本文件误判为原生改动。
  * 含未提交改动与未跟踪文件（pushy bundle 打包的是工作区内容，判定口径必须一致）。
  * 无锚点 / 非 git 仓库 → null（调用方按 uncertain 处理，不猜）。
  */
 export async function collectReleaseDiff(cwd: string): Promise<string[] | null> {
-  const anchor = latestSemverTag(cwd);
+  const anchor = latestVersionAnchor(cwd);
   if (!anchor) return null;
   // anchor..HEAD 只含已提交：改为 anchor（对比工作区）+ 未跟踪清单，二者合并去重
-  const r = spawnSync("git", ["diff", "--name-only", anchor], { cwd, encoding: "utf8" });
+  const r = spawnSync("git", ["diff", "--name-only", anchor.ref], { cwd, encoding: "utf8" });
   const untracked = spawnSync("git", ["ls-files", "--others", "--exclude-standard"], {
     cwd,
     encoding: "utf8",

@@ -72,6 +72,11 @@ describe("agc flow: 同一渠道实例 beta stage → formal submit → status",
 
     const fetchMock = mockFetch([
       { match: "oauth2/v1/token", response: { json: { access_token: "agc-flow-token" } } },
+      // 旧测试版本清理（默认开）：无残留时不影响主链路
+      {
+        match: "version/brief-info/list",
+        response: { json: { ret: { code: 0 }, versionList: [] } },
+      },
       // beta 上传地址（URL 恰以 releaseType=6 结尾；正则避免误吞 formal 调用）
       {
         match: /for-obs\?.*releaseType=6$/,

@@ -87,6 +87,13 @@ export const BetaConfigSchema = z.object({
       group: z.string().optional(),
       /** 3=邀请测试（默认）4=公开测试 */
       testType: z.union([z.literal(3), z.literal(4)]).default(3),
+      /**
+       * 发布前自动清理旧测试版本（stop+delete，默认 true）：
+       * AGC 测试版本在审/在架数量有上限（在审超限提交报 204144692、在架邀请测试 3 个），
+       * 旧版本不清理会阻塞新版本提审。清理只移除 AGC 在架记录——已装设备与热更均不受影响，
+       * 受影响的仅审核空窗期内想新装的人（期间 AGC 邀请链接装不了）。
+       */
+      cleanup: z.boolean().default(true),
     })
     .optional(),
   testflight: z
@@ -94,6 +101,9 @@ export const BetaConfigSchema = z.object({
       note: z.string().optional(),
     })
     .optional(),
+  /** 判定为「原生·需 bump」时自动升版（等价于永远带 --bump；非交互环境须配合 --yes）。
+   *  热更（ota）与「已声明」态不受影响——热更不动版本号，已声明只引导重建 */
+  autoBump: z.boolean().default(false),
 });
 
 /** versionCode 策略："increment"(默认 +1) | 公式（可限定平台） */

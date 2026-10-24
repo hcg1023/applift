@@ -42,6 +42,38 @@ describe("dingtalkNotify", () => {
     vi.unstubAllGlobals();
   });
 
+  it("失败文案回退链：stageError 缺失用 submitError，两者皆无用「失败」", async () => {
+    const fetchMock = vi.fn(
+      async (_url: string, _init?: RequestInit) => ({ ok: true }) as unknown as Response,
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const plan = {
+      channel: "huawei",
+      platform: "android" as const,
+      artifactVersion: "1.0.0",
+      action: "stage+submit" as const,
+      afterApproval: "auto-publish" as const,
+    };
+    const submitErrEntry = {
+      channel: "huawei",
+      label: "华为应用市场",
+      ok: false,
+      plan,
+      submitError: "submit boom token=topsecret456",
+    };
+    const noErrEntry = { channel: "huawei", label: "华为应用市场", ok: false, plan };
+    const plugin = dingtalkNotify({ webhook: "https://oapi.dingtalk.com/robot/send" });
+    await plugin["notify"]!({ stage: [], submit: [submitErrEntry] }, { cwd: "/tmp" });
+    await plugin["notify"]!({ stage: [], submit: [noErrEntry] }, { cwd: "/tmp" });
+    const texts = fetchMock.mock.calls.map((c) => JSON.parse(String(c[1]?.body))?.markdown?.text);
+    // stageError 缺失 → submitError 兜底（且脱敏）
+    expect(texts[0]).toContain("❌ submit boom token=[REDACTED]");
+    expect(texts[0]).not.toContain("topsecret456");
+    // stageError/submitError 均缺失 → 「失败」字面量
+    expect(texts[1]).toContain("❌ 失败");
+    vi.unstubAllGlobals();
+  });
+
   it("atMobiles 附加 at 字段", async () => {
     const fetchMock = vi.fn(
       async (_url: string, _init?: RequestInit) => ({ ok: true }) as unknown as Response,

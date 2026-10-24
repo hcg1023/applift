@@ -600,3 +600,48 @@ describe("分支补缺（错误语义/载荷边界）", () => {
     expect(httpUpload.mock.calls[0]![3]!.toString()).toContain("Content-Type: application/json");
   });
 });
+
+describe("分支覆盖补齐（错误消息回退 / formData 边界 / https 直传）", () => {
+  it("非 200 带 message 字段 → message 优先于 statusText", async () => {
+    const fetchImpl: FetchImpl = async () =>
+      Response.json({ message: "quota exceeded" }, { status: 429, statusText: "Too Many" });
+    const cli = createPushyApi({ token: "t", fetchImpl });
+    await expect(cli.versions(1)).rejects.toThrow(/HTTP 429[\s\S]*quota exceeded/);
+  });
+
+  it("非 200 无 message 无 statusText → HTTP 状态码兜底", async () => {
+    const fetchImpl: FetchImpl = async () => new Response("nope", { status: 418 });
+    const cli = createPushyApi({ token: "t", fetchImpl });
+    await expect(cli.versions(1)).rejects.toThrow(/HTTP 418[\s\S]*：HTTP 418$/);
+  });
+
+  it("/upload 指令缺 formData → multipart 仅 file part，直传后因缺 key 报服务端异常", async () => {
+    const file = ppkFile();
+    const { fetchImpl, httpUpload } = mockFetch(
+      { "/upload": { url: "https://oss.example.com/bucket" } },
+      () => 204,
+    );
+    const cli = createPushyApi({ token: "t", fetchImpl, httpUpload });
+    await expect(
+      cli.publish({
+        appId: 34166,
+        ppk: file,
+        platform: "harmony",
+        name: "n",
+        packageVersion: "1.0.0",
+        deps: {},
+      }),
+    ).rejects.toThrow(/缺 formData\.key（服务端响应异常）/);
+    // formData 空 → 表单只有 file part，没有任何先导字段
+    const body = httpUpload.mock.calls[0]![3]!.toString();
+    expect(body).toContain('name="file"; filename="harmony.pp123.pk"');
+    expect(body).not.toContain('name="key"');
+    expect(body).not.toContain('name="policy"');
+  });
+
+  it("nodeHttpUpload：https URL 走 node:https（连接失败同样显式报错）", async () => {
+    await expect(
+      nodeHttpUpload("POST", "https://127.0.0.1:1/u", {}, Buffer.from("b")),
+    ).rejects.toThrow(/直传网络错误/);
+  });
+});

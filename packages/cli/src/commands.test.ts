@@ -43,7 +43,12 @@ function cli(args: string[], cwd = proj) {
       APPLIFT_HOME: path.join(dir, ".applift"),
     },
   });
-  return { code: r.status, out: `${r.stdout}${r.stderr}` };
+  // 剥 ANSI 色码：CI 环境（FORCE_COLOR/CI 变量族）子进程会带色输出，本地管道则无色——
+  // 断言必须与颜色无关（实证：判定行 pc.bold(ota) 在 GH Actions 上切断 toContain）
+  return {
+    code: r.status,
+    out: `${r.stdout}${r.stderr}`.replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""),
+  };
 }
 
 describe("全命令冒烟（非交互路径）", () => {
@@ -379,5 +384,110 @@ describe("业务流程：外部构建产物 → beta 发版（applift 不接管�
     const r = cli(["beta", "--yes"]);
     expect(r.code).not.toBe(0);
     expect(r.out).toMatch(/凭据|产物|构建/); // 外部模型否定路径：凭据/产物缺失均给出明确引导
+  }, 120_000);
+});
+
+describe("业务流程：bump-semantics 三态判定（原生·需 bump / 原生·已声明 / OTA）", () => {
+  /** RN + rnUpdate(harmony) 工程：git 仓库 + tag v4.0.0 锚点 + harmony 版本文件 4.0.0 */
+  function setupHot(configExtra = "") {
+    const g = (args: string[]) => spawnSync("git", args, { cwd: proj, encoding: "utf8" });
+    g(["init", "-q"]);
+    g(["config", "user.email", "t@t"]);
+    g(["config", "user.name", "t"]);
+    fs.writeFileSync(
+      path.join(proj, "package.json"),
+      JSON.stringify({ name: "tri", dependencies: { "react-native": "0.84.0" } }),
+    );
+    fs.mkdirSync(path.join(proj, "harmony", "AppScope"), { recursive: true });
+    fs.writeFileSync(
+      path.join(proj, "harmony", "AppScope", "app.json5"),
+      JSON.stringify({ versionName: "4.0.0", versionCode: 4000000 }),
+    );
+    g(["add", "-A"]);
+    g(["commit", "-qm", "feat: init"]);
+    g(["tag", "v4.0.0"]);
+    fs.writeFileSync(
+      path.join(proj, "applift.config.ts"),
+      `import { defineConfig } from "@applift/cli";\nimport { rnFramework, rnUpdate } from "@applift/cli/plugins";\nexport default defineConfig({\n  plugins: [rnFramework(), rnUpdate({ harmony: 1 })],\n  artifacts: { harmony: ['harmony/build/outputs/**/*-signed.app'] },${configExtra}\n});\n`,
+    );
+  }
+
+  function commitNative(file: string): void {
+    const g = (args: string[]) => spawnSync("git", args, { cwd: proj, encoding: "utf8" });
+    fs.mkdirSync(path.join(proj, "harmony", "entry", "src", "main"), { recursive: true });
+    fs.writeFileSync(path.join(proj, "harmony", "entry", "src", "main", file), "x");
+    g(["add", "-A"]);
+    g(["commit", "-qm", "feat: native feature"]);
+  }
+
+  it("原生·需 bump（无 --bump）：引导三步并给推荐版本（feat → minor 4.1.0）", () => {
+    setupHot();
+    commitNative("a.ets");
+    const r = cli(["beta", "harmony", "--yes"]);
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("判定为原生发版");
+    expect(r.out).toContain("推荐版本：4.1.0");
+    expect(r.out).toContain(`applift beta harmony --bump`);
+    expect(r.out).toContain(`applift beta harmony --delivery native`);
+  }, 120_000);
+
+  it("原生·需 bump + --bump --yes：直接声明（写文件 + commit，无 tag）并引导重建", () => {
+    setupHot();
+    commitNative("a.ets");
+    const r = cli(["beta", "harmony", "--bump", "--yes"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("chore(release): 4.1.0");
+    expect(r.out).toContain(`applift beta harmony --delivery native`);
+    expect(
+      fs
+        .readFileSync(path.join(proj, "harmony", "AppScope", "app.json5"), "utf8")
+        .includes('"4.1.0"'),
+    ).toBe(true);
+    // 声明不打 tag（tag = 交付标记，release 成功后补）
+    expect(spawnSync("git", ["tag", "-l"], { cwd: proj, encoding: "utf8" }).stdout.trim()).toBe(
+      "v4.0.0",
+    );
+  }, 120_000);
+
+  it("原生·已声明（bump 后又有原生改动）：不再建议 bump，只引导重建 + --delivery native", () => {
+    setupHot();
+    commitNative("a.ets");
+    cli(["beta", "harmony", "--bump", "--yes"]); // 声明 4.1.0（无 tag）
+    commitNative("b.ets"); // 声明后又有原生改动（另一文件：同文件同内容不会产生新提交）
+    const r = cli(["beta", "harmony", "--yes"]);
+    expect(r.code).not.toBe(0);
+    expect(r.out).not.toContain("推荐版本");
+    expect(r.out).toContain("已声明");
+    expect(r.out).toContain(`applift beta harmony --delivery native`);
+  }, 120_000);
+
+  it("beta.autoBump 配置 = 永远带 --bump（三态判定原生时自动声明）", () => {
+    setupHot(`\n  beta: { autoBump: true },`);
+    commitNative("a.ets");
+    const r = cli(["beta", "harmony", "--yes"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("chore(release): 4.1.0");
+  }, 120_000);
+
+  it("声明后纯 JS 改动 → 判定 OTA（锚点已推进，版本文件不再误判为原生）；--bump 给出不生效提示", () => {
+    setupHot();
+    commitNative("a.ets");
+    cli(["beta", "harmony", "--bump", "--yes"]); // 声明 4.1.0
+    fs.mkdirSync(path.join(proj, "src"), { recursive: true });
+    fs.writeFileSync(path.join(proj, "src", "hotfix.ts"), "z");
+    const r = cli(["beta", "harmony", "--bump", "--yes"]);
+    expect(r.out).toContain("本次发布判定：ota");
+    expect(r.out).toContain("--bump / beta.autoBump 不生效");
+    // OTA 路径继续走到 ppk 探测失败（无凭据/无 ppk 均 fail-fast，非静默）
+    expect(r.code).not.toBe(0);
+  }, 120_000);
+
+  it("--delivery native 显式走原生：--bump 不生效警告（发布以已构建产物为准）", () => {
+    setupHot();
+    commitNative("a.ets");
+    const r = cli(["beta", "harmony", "--delivery", "native", "--bump", "--yes"]);
+    expect(r.out).toContain("--bump / beta.autoBump 不生效");
+    // 显式原生继续走产物探测：期望测试孪生包 4.0.1000，现存无产物 → fail-fast（非静默）
+    expect(r.code).not.toBe(0);
   }, 120_000);
 });

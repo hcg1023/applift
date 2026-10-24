@@ -56,6 +56,8 @@ import {
   applyBump,
   type VersionWrite,
   latestSemverTag,
+  latestVersionAnchor,
+  compareDeclared,
   betaVersionName,
   type BetaVersionConfig,
   type VersionCodeConfig,
@@ -103,7 +105,8 @@ async function resolveDeliveryMode(
     );
   }
   const diff = await collectReleaseDiff(cwd);
-  const anchor = diff === null ? undefined : latestSemverTag(cwd);
+  // 判定 ctx.anchor 与 diff 同锚点（collectReleaseDiff 内部即 latestVersionAnchor）；ref 兼容 tag 名与 sha
+  const anchor = diff === null ? undefined : latestVersionAnchor(cwd)?.ref;
   const route = await routeDelivery(providers, { cwd, framework, anchor }, diff ?? [], platform);
   if (!route) {
     if (opts.delivery === "ota") {
@@ -374,10 +377,10 @@ function warnDuplicateVersion(channel: string, artifactPath: string): void {
 }
 
 /**
- * bump 编排闭环（beta/release 的 --bump、config bump:true 与 version bump 命令共用）：
- * plan → 展示确认 → apply（写文件+changelog+commit+tag）→ 构建涉及平台。
- * commit/tag 可关（version --no-commit/--no-tag）；applift 不接管构建，bump 仅写版本事实源。
- * 返回 storeName/writes 供产物版本校验；未启用返回 undefined。
+ * bump 编排闭环（beta 的 --bump/autoBump 与 version bump 命令共用）：
+ * plan → 展示确认 → apply（写文件+changelog+commit）→ 构建涉及平台。
+ * bump = 版本声明；tag = 交付封板（默认不打，version --tag 显式开，release 成功后补）。
+ * applift 不接管构建，bump 仅写版本事实源。
  */
 interface BumpOutcome {
   storeName: string;
@@ -395,17 +398,17 @@ async function runBumpOrchestration(args: {
   assumeYes?: boolean;
   /** 限定端（version 命令的 --platform） */
   platforms?: string[];
-  /** 代 commit（version 命令 --no-commit 透传；缺省开） */
+  /** 代 commit（version 命令 --no-commit / beta 自动 bump 透传；缺省开） */
   commit?: boolean;
-  /** 代 tag（version 命令 --no-tag 透传；缺省开） */
+  /** 代打 tag（缺省不打——tag 是交付封板标记，归 release 提审成功后补；version 命令 --tag 显式开） */
   tag?: boolean;
 }): Promise<BumpOutcome | undefined> {
   if (args.bump === false) return undefined;
   const level = typeof args.bump === "string" && args.bump !== "" ? args.bump : undefined;
-  // commit/tag 开关：version 命令 --no-commit/--no-tag 透传，缺省全开
+  // commit/tag 开关：commit 缺省开（--no-commit 关）；tag 缺省关（--tag 显式开）——
+  // bump = 版本声明（写文件 + CHANGELOG + commit），tag = 交付封板，归 release 成功后补打
   const commit = args.commit !== false;
-  // tag 默认依赖 commit：--no-commit 时 tag 会指向不含版本变更的旧树，须显式保留才打
-  const tag = args.tag !== false && (commit || args.tag === true);
+  const tag = args.tag === true;
   const plan = planBump({
     cwd: args.cwd,
     framework: args.framework,
@@ -415,7 +418,7 @@ async function runBumpOrchestration(args: {
     platforms: args.platforms,
   });
   p.intro(pc.bgCyan(pc.black(" applift version · bump ")));
-  p.log.info(`锚点 tag: ${plan.anchorTag ?? pc.dim("无（首次，推断退化为 patch 兜底）")}`);
+  p.log.info(`发版锚点: ${plan.anchor?.label ?? pc.dim("无（首次，推断退化为 patch 兜底）")}`);
   p.log.info(plan.reason);
   for (const c of plan.currentVersions) {
     const w = plan.writes.find((x) => x.platform === c.platform);
@@ -426,7 +429,7 @@ async function runBumpOrchestration(args: {
   // 疑似失败重跑 + --yes（CI 自动重试高发）+ 无显式 level → 拒绝：防止反复失败连烧版本号
   if (args.yes && plan.suspectRerun && !level)
     throw new Error(
-      `疑似失败重跑（${plan.reason}）——为防 CI 反复重试烧版本号：显式指定 level/版本号确认继续，或 beta/release 改用 --no-bump 复用已 bump 版本`,
+      `疑似失败重跑（${plan.reason}）——为防 CI 反复重试烧版本号：显式指定 level/版本号确认继续，或去掉 --bump 参数复用已 bump 版本（beta 无 --no-bump 选项）`,
     );
   p.log.info(`versionCode 策略: ${plan.versionCodeNote}`);
   // 非 TTY（CI/管道）无法完成 clack 交互确认（会挂起），fail-fast 引导 --yes / assumeYes
@@ -435,9 +438,14 @@ async function runBumpOrchestration(args: {
       "非交互环境（CI/管道）bump 需 --yes 跳过确认；疑似失败重跑请显式指定 level 或版本号",
     );
   if (!(args.yes || args.assumeYes)) {
-    // 文案如实反映将发生的动作：--no-commit --tag 时仍会打 tag，不能漏报
-    const effects =
-      commit && tag ? "并代 commit + tag" : commit ? "并代 commit" : tag ? "并打 tag" : "";
+    // 文案如实反映将发生的动作：--tag 时会打 tag，默认不打须提示去向
+    const effects = commit
+      ? tag
+        ? "并代 commit + tag"
+        : "并代 commit（tag 留待 release 成功后补）"
+      : tag
+        ? "并打 tag"
+        : "";
     const go = await p.confirm({
       message: `确认 bump 到 ${pc.bold(plan.nextVersion)}${effects ? ` ${effects}` : ""}？`,
     });
@@ -449,18 +457,21 @@ async function runBumpOrchestration(args: {
   for (const w of applied.warnings) p.log.warn(w);
   if (applied.committed) p.log.success(`git commit: chore(release): ${plan.nextVersion}`);
   if (applied.tagged) p.log.success(`git tag: v${plan.nextVersion}`);
-  p.log.info(pc.dim("推送：git push --follow-tags（applift 永不代 push）"));
+  else p.log.info(pc.dim(`版本已声明（未打 tag）：release 提审成功后自动补 v${plan.nextVersion}`));
+  p.log.info(pc.dim("推送：git push（applift 永不代 push；tag 由 release 成功后补）"));
   return { storeName: plan.storeName, writes: plan.writes };
 }
 program
   .command("version")
-  .description("版本管理：show 各端实况 | bump 升版本（写工程文件 + CHANGELOG + commit + tag）")
+  .description(
+    "版本管理：show 各端实况 | bump 声明版本（写工程文件 + CHANGELOG + commit；tag 由 release 成功后补）",
+  )
   .argument("[action]", "show（默认）| bump")
   .argument("[level]", "major | minor | patch | prerelease | <semver>（缺省 git 推断）")
   .option("--pre <id>", "prerelease 标识（beta | rc）：挂到目标版本，如 4.1.0-beta.1")
   .option("--platform <list>", "仅限端（逗号分隔：android,ios,harmony,flutter,js,tauri,expo）")
   .option("--no-commit", "只写文件，不代 commit")
-  .option("--no-tag", "不打 tag")
+  .option("--tag", "声明时同步打 tag（默认不打：tag 是交付标记，release 提审成功后自动补）")
   .option("--yes", "跳过确认（CI）")
   .option("--cwd <dir>", "项目目录", process.cwd())
   .action(
@@ -487,7 +498,7 @@ program
       }
 
       if (action !== "bump") {
-        // ---- show：各端 versionName/versionCode + 文件 + 锚点 tag ----
+        // ---- show：各端 versionName/versionCode + 文件 + 发版锚点（tag 或 bump commit 取新者）----
         const versions = readProjectVersions(cmdOpts.cwd, framework);
         if (versions.length === 0)
           throw new Error(
@@ -499,12 +510,14 @@ program
           );
           if (v.problem) p.log.warn(v.problem);
         }
-        const anchor = latestSemverTag(cmdOpts.cwd);
-        p.log.info(`发版锚点 tag: ${anchor ?? pc.dim("无（bump 后打第一个 tag 激活 git 推断）")}`);
+        const anchor = latestVersionAnchor(cmdOpts.cwd);
+        p.log.info(
+          `发版锚点: ${anchor?.label ?? pc.dim("无（首次 bump 前，推断退化为 patch 兜底）")}`,
+        );
         return;
       }
 
-      // ---- bump：复用 runBumpOrchestration 闭环（写文件 + changelog + commit + tag）----
+      // ---- bump：复用 runBumpOrchestration 闭环（写文件 + changelog + commit；tag 默认不打）----
       // 全局 config.toml assumeYes 与 --yes 同权（与 release 一致；本批修复：version 命令此前未透传）
       const globalCfg = loadGlobalConfig().config;
       const platforms = cmdOpts.platform
@@ -521,7 +534,7 @@ program
         assumeYes: globalCfg.assumeYes,
         platforms,
         commit: cmdOpts.commit,
-        tag: cmdOpts.tag,
+        tag: cmdOpts.tag === true,
       });
     },
   );
@@ -540,7 +553,11 @@ program
     "--delivery <mode>",
     "投递方式：ota（热更）| native（原生包）；缺省按判定推荐，CI uncertain 时必须显式",
   )
-  .option("--yes", "跳过 bump 确认（CI）")
+  .option("--yes", "跳过 bump/发布确认（CI）")
+  .option(
+    "--bump [level]",
+    "判定为原生·需 bump 时自动声明版本（major|minor|patch|<semver>，缺省用推断）；完成后引导重建",
+  )
   .option("--cwd <dir>", "项目目录", process.cwd())
   .action(
     async (
@@ -551,7 +568,6 @@ program
         via?: string;
         installPassword?: string;
         bump?: boolean | string;
-        pre?: string;
         delivery?: string;
         yes?: boolean;
         cwd: string;
@@ -581,6 +597,10 @@ program
 
       // ---------- 热更路由（有 UpdateProvider 插件时判定推荐；--delivery 显式覆盖）----------
       // 路由在 bump 之前：热更路径不动原生版本号。无 platform（多渠道并行）时不路由（原生多渠道语义）。
+      if (!platform && (cmdOpts.bump !== undefined || projCfg.beta?.autoBump === true))
+        p.log.warn(
+          "多渠道并行发布（beta 无平台参数）不经过热更判定：--bump / beta.autoBump 不生效",
+        );
       if (platform) {
         const fw = requireFramework(cmdOpts.cwd, pluginFrameworks);
         const decision = await resolveDeliveryMode(
@@ -594,6 +614,8 @@ program
           platform,
         );
         if (decision?.mode === "ota" && decision.provider) {
+          if (cmdOpts.bump !== undefined || projCfg.beta?.autoBump === true)
+            p.log.warn("判定为热更（ota）：--bump / beta.autoBump 不生效（热更不动原生版本号）");
           if (!decision.provider.publishToBeta)
             throw new Error(
               `热更 provider「${decision.provider.id}」未提供内测发布（publishToBeta）——该 provider 仅支持正式发布，直接 applift release ${platform}`,
@@ -643,19 +665,75 @@ program
           );
           return;
         }
-        // 判定 native 且非用户显式选择：引导走原生发版三步（升版本→构建→重发）。
+        // 判定 native 且非用户显式选择：三态引导（原生·需 bump / 原生·已声明）。
         // 显式选 native（--delivery native 或交互 select）= 用户看过证据后拍板，直接走下方原生内测路径
         if (decision?.mode === "native" && !decision.explicit) {
+          const releasedTag = latestSemverTag(cmdOpts.cwd);
+          const mine = readProjectVersions(cmdOpts.cwd, fw).find((v) => v.platform === platform);
+          const declared = compareDeclared(mine?.versionName, releasedTag);
+          if (declared === "unknown")
+            p.log.warn(
+              `工程版本 ${mine?.versionName ?? "?"} 非 semver，无法与发布 tag 比较——按需 bump 处理`,
+            );
+          if (declared === "ahead") {
+            // 已声明（工程版本领先最近发布 tag）：只需重建 + 重跑，再 bump 会烧版本号
+            throw new Error(
+              [
+                `工程版本 ${mine?.versionName} 已声明（领先最近发布 tag ${releasedTag ?? "（无 tag）"}），无需再 bump：`,
+                "  1. 重新构建测试包（产物内嵌派生测试版本）",
+                `  2. 重跑: applift beta ${platform} --delivery native`,
+                "（重跑发原生包必须 --delivery native 显式指定：正常声明后锚点已推进、判定会推荐热更）",
+              ].join("\n"),
+            );
+          }
+          // 原生·需 bump：--bump / beta.autoBump 直接声明（写文件 + CHANGELOG + commit，不打 tag）
+          if (cmdOpts.bump !== undefined || projCfg.beta?.autoBump === true) {
+            const level =
+              typeof cmdOpts.bump === "string" && cmdOpts.bump !== "" ? cmdOpts.bump : undefined;
+            const globalCfg = loadGlobalConfig().config;
+            await runBumpOrchestration({
+              cwd: cmdOpts.cwd,
+              framework: fw,
+              config: projCfg,
+              bump: level ?? true,
+              yes: cmdOpts.yes,
+              assumeYes: globalCfg.assumeYes,
+              commit: true,
+              tag: false,
+            });
+            p.log.info(`下一步：重新构建 ${platform} 测试包（产物内嵌派生测试版本）`);
+            p.log.info(`然后重跑: ${pc.cyan(`applift beta ${platform} --delivery native`)}`);
+            return;
+          }
+          let recommend = "";
+          try {
+            const plan = planBump({
+              cwd: cmdOpts.cwd,
+              framework: fw,
+              versionCode: projCfg.version?.versionCode as VersionCodeConfig | undefined,
+            });
+            recommend = `\n  推荐版本：${plan.nextVersion}（${plan.reason}）\n`;
+          } catch {
+            // 推断失败（如各端无 semver 基线）→ 省略推荐行，引导文案仍完整
+          }
           throw new Error(
             [
-              "本次改动判定为原生发版（含原生代码，无法热更），需要发新原生版本：",
-              "  1. applift version bump [--pre beta]   升三端版本 + CHANGELOG + commit",
+              "本次改动判定为原生发版（含原生代码，无法热更），需要发新原生版本：" + recommend,
+              `  1. applift version bump   或   applift beta ${platform} --bump   声明下一版（写文件 + CHANGELOG + commit）`,
               "  2. 重新构建（产物内嵌新版本）",
-              "  3. 重跑 applift beta " + platform + " 发内测",
-              "（已确认产物是新版本？用 --delivery native 或交互选择「原生包」跳过此引导）",
+              `  3. 重跑 applift beta ${platform} --delivery native 发内测`,
+              "（已构建新版本包？用 --delivery native 或交互选择「原生包」跳过此引导）",
             ].join("\n"),
           );
         }
+        if (
+          decision?.mode === "native" &&
+          decision.explicit &&
+          (cmdOpts.bump !== undefined || projCfg.beta?.autoBump === true)
+        )
+          p.log.warn(
+            "--delivery native 显式走原生发布：--bump / beta.autoBump 不生效（发布以已构建产物为准）",
+          );
       }
 
       const detected = detectBundleIds(cmdOpts.cwd);
@@ -776,6 +854,8 @@ program
                   ...(agcCfg.submit ? { submitTest: "true" } : {}),
                   ...(agcCfg.group ? { testGroup: agcCfg.group } : {}),
                   testType: String(agcCfg.testType),
+                  // cleanup 默认 true（schema 缺省）；'false' 时渠道跳过旧测试版本清理
+                  cleanup: String(agcCfg.cleanup),
                 },
                 artifactPath,
                 cmdOpts.note,
@@ -908,6 +988,8 @@ program
             ...(agcCfg?.submit ? { submitTest: "true" } : {}),
             ...(agcCfg?.group ? { testGroup: agcCfg.group } : {}),
             testType: String(agcCfg?.testType ?? 3),
+            // cleanup 默认 true（schema 缺省）；'false' 时渠道跳过旧测试版本清理
+            cleanup: String(agcCfg?.cleanup ?? true),
           },
           artifactPath,
           cmdOpts.note,
@@ -1412,6 +1494,7 @@ program
           else {
             const r = tagReleaseVersion(opts.cwd, version);
             if (r.tagged) p.log.success(`git tag: v${version}（正式发布）`);
+            else if (r.conflict) p.log.warn(`tag: ${r.reason}`);
             else if (r.reason) p.log.info(pc.dim(`tag: ${r.reason}`));
           }
         }
@@ -1489,6 +1572,7 @@ program
       else if (version) {
         const r = tagReleaseVersion(opts.cwd, version, { dryRun: Boolean(opts.dryRun) });
         if (r.tagged) p.log.success(`git tag: v${version}（正式发布）`);
+        else if (r.conflict && !opts.dryRun) p.log.warn(`tag: ${r.reason}`);
         else if (r.reason && !opts.dryRun) p.log.info(pc.dim(`tag: ${r.reason}`));
       }
     }
