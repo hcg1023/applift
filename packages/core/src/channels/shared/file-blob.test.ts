@@ -42,4 +42,16 @@ describe("fileBlob 错误可定位性", () => {
   it("文件不存在 → 报错含路径（openAsBlob 原生报错不含路径，包装补上）", async () => {
     await expect(fileBlob("/nonexistent/dir/x.apk")).rejects.toThrow(/打开上传文件失败 .*x\.apk/);
   });
+
+  it("openAsBlob 抛非 Error（字符串异常）→ 包装错误仍含路径与原始文案", async () => {
+    const original = fs.openAsBlob;
+    try {
+      Reflect.set(fs, "openAsBlob", () => Promise.reject("enoent-raw"));
+      await expect(fileBlob("/nonexistent/dir/y.apk")).rejects.toThrow(
+        "打开上传文件失败 /nonexistent/dir/y.apk: enoent-raw",
+      );
+    } finally {
+      Reflect.set(fs, "openAsBlob", original);
+    }
+  });
 });

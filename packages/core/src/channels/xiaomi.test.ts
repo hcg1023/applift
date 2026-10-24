@@ -2,14 +2,30 @@
  * 小米渠道契约测试：RSA 分段加密可解密、SIG 结构、submit 全流程（预检拒绝分支/MI_PRIVATE_KEY 别名/错误字段双检）、capabilities/plan。
  * 证书用 openssl 现生成 1024bit 自签证书（v1 selftest 写法），零外部夹具。
  */
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import { execSync } from "node:child_process";
 import { privateDecrypt, constants, createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { XiaomiChannel, rsaEncryptSegmented, generateMiSig } from "./xiaomi.js";
+// 覆盖 rsaEncryptSegmented 的 modulusLength 缺省回退：X509Certificate 子类屏蔽公钥的
+// asymmetricKeyDetails（真实 KeyObject 允许实例级 shadow），迫使 ?? 1024 分支生效
+vi.mock("node:crypto", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("node:crypto")>();
+  const X509NoKeyDetails = class extends orig.X509Certificate {
+    // d.ts 把 publicKey 声明为属性，运行时实为原型 getter——实例级 shadow 合法，TS 报错抑制
+    // @ts-expect-error TS2611 运行时为 getter 可覆写
+    override get publicKey() {
+      // @ts-expect-error TS2855 运行时原型链可达
+      const k = super.publicKey;
+      Object.defineProperty(k, "asymmetricKeyDetails", { value: undefined, configurable: true });
+      return k;
+    }
+  };
+  return { ...orig, X509Certificate: X509NoKeyDetails };
+});
 import { md5String, md5File } from "./shared/sign.js";
+import { XiaomiChannel, rsaEncryptSegmented, generateMiSig } from "./xiaomi.js";
 import { mockFetch, makeTestCtx } from "../test-utils.js";
 import type { ChannelContext } from "../channel.js";
 
@@ -83,6 +99,12 @@ describe("rsaEncryptSegmented", () => {
     expect(hex).toMatch(/^[0-9a-f]+$/);
     expect(hex.length).toBe(3 * 256); // 每段密文 128 字节 = 256 hex
     expect(rsaDecryptSegmented(hex)).toBe(plain);
+  });
+
+  it("公钥 asymmetricKeyDetails 缺失 → keySize 回退 1024bit（chunk 117），加解密仍一致", () => {
+    // 本文件 vi.mock 的 X509Certificate 已屏蔽 asymmetricKeyDetails；1024bit 证书回退后行为不变
+    const plain = "y".repeat(250); // 117+117+16
+    expect(rsaDecryptSegmented(rsaEncryptSegmented(plain, certPem))).toBe(plain);
   });
 
   it("短明文单段加密（含中文 utf8）", () => {
@@ -412,10 +434,13 @@ describe("XiaomiChannel.submit", () => {
       { match: "/dev/push", response: { json: { result: 0 } } },
     ]);
     try {
-      const ctx = makeCtx({ target: { icon: "" } }).ctx;
-      await expect(new XiaomiChannel().submit(ctx)).rejects.toThrow(
+      // 两臂都算“未配置”：空串与键缺失（undefined 走 ?? 回退）
+      const ctxEmpty = makeCtx({ target: { icon: "" } }).ctx;
+      await expect(new XiaomiChannel().submit(ctxEmpty)).rejects.toThrow(
         "小米提审缺少 icon：applift.config.ts → android.stores.xiaomi.icon",
       );
+      const ctxAbsent = makeCtx({ target: { icon: undefined as unknown as string } }).ctx;
+      await expect(new XiaomiChannel().submit(ctxAbsent)).rejects.toThrow("小米提审缺少 icon");
     } finally {
       restore();
     }

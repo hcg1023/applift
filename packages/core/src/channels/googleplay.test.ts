@@ -536,3 +536,52 @@ describe("GooglePlayChannel 补充分支", () => {
     expect(r).toEqual({ ok: true, ref: `${EDIT_ID}:${VERSION_CODE}` });
   });
 });
+
+describe("GooglePlayChannel 补充分支二", () => {
+  it("submit 复用 stagedRef（assignExisting）时创建 edit 缺 id → 报错", async () => {
+    mockFetch([
+      { match: "oauth2.googleapis.com/token", response: { json: { access_token: TOKEN } } },
+      { match: /\/edits$/, response: { json: {} } },
+    ]);
+    const { ctx } = makeCtx();
+    await expect(new GooglePlayChannel().submit(ctx, `${EDIT_ID}:42`)).rejects.toThrow(
+      "Google Play 创建 edit 响应缺少 id",
+    );
+  });
+
+  it("轨道响应无 releases 字段 → 按空轨道追加新 release", async () => {
+    const mock = mockFetch([
+      { match: "oauth2.googleapis.com/token", response: { json: { access_token: TOKEN } } },
+      { match: /\/edits$/, response: { json: { id: EDIT_ID } } },
+      { match: "uploadType=media", response: { json: { versionCode: VERSION_CODE } } },
+      { match: "/tracks/internal", method: "GET", response: { json: {} } },
+      { match: "/tracks/internal", method: "PUT", response: { json: {} } },
+      { match: ":commit", response: { json: {} } },
+    ]);
+    const { ctx } = makeCtx();
+    await new GooglePlayChannel().stage(ctx);
+    expect(JSON.parse(mock.find("/tracks/internal", "PUT")!.body as string)).toEqual({
+      releases: [{ versionCodes: [VERSION_CODE], status: "completed" }],
+    });
+  });
+
+  it("存量 completed release 无 versionCodes → 合并后仅含新 versionCode", async () => {
+    const mock = mockFetch([
+      { match: "oauth2.googleapis.com/token", response: { json: { access_token: TOKEN } } },
+      { match: /\/edits$/, response: { json: { id: EDIT_ID } } },
+      { match: "uploadType=media", response: { json: { versionCode: VERSION_CODE } } },
+      {
+        match: "/tracks/production",
+        method: "GET",
+        response: { json: { releases: [{ status: "completed" }] } },
+      },
+      { match: "/tracks/production", method: "PUT", response: { json: {} } },
+      { match: ":commit", response: { json: {} } },
+    ]);
+    const { ctx } = makeCtx();
+    await new GooglePlayChannel().submit(ctx);
+    expect(JSON.parse(mock.find("/tracks/production", "PUT")!.body as string)).toEqual({
+      releases: [{ status: "completed", versionCodes: [VERSION_CODE] }],
+    });
+  });
+});

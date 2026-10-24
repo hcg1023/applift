@@ -41,6 +41,14 @@ describe("StoresSchema 规范化", () => {
     expect(StoresSchema.safeParse({ huawei: { appId: 123 } }).success).toBe(false);
     expect(StoresSchema.safeParse("huawei").success).toBe(false);
   });
+
+  it("④ 混排数组：字符串渠道 + { 渠道: appId 简写 } 元素 → 后者归一为 { appId }", () => {
+    expect(StoresSchema.parse(["huawei", { yyb: "30001" }, "vivo"])).toEqual({
+      huawei: {},
+      yyb: { appId: "30001" },
+      vivo: {},
+    });
+  });
 });
 
 describe("ProjectConfigSchema 平台段", () => {

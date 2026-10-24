@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { OppoChannel } from "./oppo.js";
+import { OppoChannel, resolveVersionCode } from "./oppo.js";
 import { hmacSign } from "./shared/sign.js";
 import { mockFetch, makeTestCtx } from "../test-utils.js";
 import type { MockResponseSpec } from "../test-utils.js";
@@ -195,6 +195,13 @@ describe("OppoChannel.status", () => {
     expect(params.pkgName).toBeUndefined(); // 旧 camelCase 参数名不再发送
     expect(params.access_token).toBe(TOKEN);
     expectSigned(params);
+  });
+
+  it("auditStatus（旧 camelCase 字段）同样识别 → reviewing", async () => {
+    mockFetch(statusRoutes({ auditStatus: 1 }));
+    await expect(new OppoChannel().status(makeCtx().ctx)).resolves.toEqual({
+      state: "reviewing",
+    });
   });
 
   it("audit_status=1 审核中 → reviewing（现行对照表重写，旧映射 1=待提审 已废弃）", async () => {
@@ -451,6 +458,12 @@ describe("OppoChannel.stage", () => {
 
   it("get-upload-url 响应缺 upload_url/sign 抛错", async () => {
     mockFetch(oppoRoutes({ "get-upload-url": { json: { errno: 0, data: {} } } }));
+    const { ctx } = makeCtx();
+    await expect(new OppoChannel().stage(ctx)).rejects.toThrow("OPPO 上传配置缺失");
+  });
+
+  it("get-upload-url 响应无 data 字段 → 同样报上传配置缺失", async () => {
+    mockFetch(oppoRoutes({ "get-upload-url": { json: { errno: 0 } } }));
     const { ctx } = makeCtx();
     await expect(new OppoChannel().stage(ctx)).rejects.toThrow("OPPO 上传配置缺失");
   });
@@ -925,9 +938,7 @@ describe("OppoChannel.submit", () => {
 
 describe("OPPO version_code 解析分支补齐", () => {
   it("ANDROID_HOME 假 SDK：build-tools 新版优先 + aapt2 dump badging 提取 versionCode", async () => {
-    const os = await import("node:os");
-    const fs = await import("node:fs");
-    const path = await import("node:path");
+    // fs/os/path 已静态导入；局部重绑定为既有测试风格保留——见顶部 import
     const fakeSdk = fs.mkdtempSync(path.join(os.tmpdir(), "applift-sdk-"));
     const bt = path.join(fakeSdk, "build-tools", "34.0.0");
     fs.mkdirSync(bt, { recursive: true });
@@ -937,7 +948,6 @@ describe("OPPO version_code 解析分支补齐", () => {
     fs.writeFileSync(path.join(bt, script), sh, { mode: 0o755 });
     process.env.ANDROID_HOME = fakeSdk;
     try {
-      const { resolveVersionCode } = await import("./oppo.js");
       const { ctx } = makeCtx({
         credentials: { OPPO_CLIENT_ID: "c", OPPO_CLIENT_SECRET: "s" },
         target: { pkgName: "com.x" },
@@ -947,6 +957,91 @@ describe("OPPO version_code 解析分支补齐", () => {
     } finally {
       delete process.env.ANDROID_HOME;
       fs.rmSync(fakeSdk, { recursive: true, force: true });
+    }
+  });
+
+  it("未设 ANDROID_HOME → 回退 ~/Library/Android/sdk 探测 build-tools", async () => {
+    const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "applift-home-"));
+    const bt = path.join(fakeHome, "Library", "Android", "sdk", "build-tools", "34.0.0");
+    fs.mkdirSync(bt, { recursive: true });
+    fs.writeFileSync(
+      path.join(bt, "aapt2"),
+      `#!/bin/sh\necho "package: name=com.x versionCode='501' versionName='2.0.0'"\n`,
+      { mode: 0o755 },
+    );
+    const homeSpy = vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+    const saved = process.env.ANDROID_HOME;
+    delete process.env.ANDROID_HOME;
+    try {
+      const { ctx } = makeCtx({
+        credentials: { OPPO_CLIENT_ID: "c", OPPO_CLIENT_SECRET: "s" },
+        target: { pkgName: "com.x" }, // 无 versionCode 覆盖
+      });
+      expect(resolveVersionCode(ctx)).toBe("501");
+    } finally {
+      homeSpy.mockRestore();
+      if (saved !== undefined) process.env.ANDROID_HOME = saved;
+      fs.rmSync(fakeHome, { recursive: true, force: true });
+    }
+  });
+
+  it("新版 aapt2 输出无 versionCode → 逐工具回退到旧版 aapt 提取", async () => {
+    const fakeSdk = fs.mkdtempSync(path.join(os.tmpdir(), "applift-sdk-"));
+    for (const [ver, tool, out] of [
+      ["35.0.0", "aapt2", "package: name=com.x versionName='2.1.0'"], // 新版无 versionCode
+      ["34.0.0", "aapt", "package: name=com.x versionCode='77' versionName='2.0.0'"],
+    ] as const) {
+      const bt = path.join(fakeSdk, "build-tools", ver);
+      fs.mkdirSync(bt, { recursive: true });
+      fs.writeFileSync(path.join(bt, tool), `#!/bin/sh\necho "${out}"\n`, { mode: 0o755 });
+    }
+    process.env.ANDROID_HOME = fakeSdk;
+    try {
+      const { ctx } = makeCtx({
+        credentials: { OPPO_CLIENT_ID: "c", OPPO_CLIENT_SECRET: "s" },
+        target: { pkgName: "com.x" },
+      });
+      const events: Array<{ type: string; detail?: string }> = [];
+      ctx.emit = ((e: { type: string; detail?: string }) => events.push(e)) as typeof ctx.emit;
+      expect(resolveVersionCode(ctx)).toBe("77");
+      const src = events.find((e) => e.type === "progress")?.detail ?? "";
+      expect(src).toContain("来源: ");
+      expect(src).toContain("34.0.0");
+    } finally {
+      delete process.env.ANDROID_HOME;
+      fs.rmSync(fakeSdk, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("OPPO version_code 解析防御分支", () => {
+  it("build.gradle 存在但无 versionCode → 跳过候选，最终报错含配置指引", () => {
+    const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "applift-home-"));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "applift-gradle-"));
+    // 产物放四层深，使第一个 gradle 候选 = <root>/app/build.gradle（无 versionCode）
+    const apk = path.join(root, "a", "b", "c", "d", "app-release.apk");
+    fs.mkdirSync(path.dirname(apk), { recursive: true });
+    fs.writeFileSync(apk, "fake");
+    fs.mkdirSync(path.join(root, "app"));
+    fs.writeFileSync(path.join(root, "app/build.gradle"), "android { compileSdk 35 }");
+    const homeSpy = vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+    const savedPath = process.env.PATH;
+    const savedHome = process.env.ANDROID_HOME;
+    process.env.PATH = fakeHome; // PATH 上无 aapt2/aapt
+    delete process.env.ANDROID_HOME;
+    try {
+      const { ctx } = makeCtx({
+        credentials: { OPPO_CLIENT_ID: "c", OPPO_CLIENT_SECRET: "s" },
+        target: { pkgName: "com.x" },
+      });
+      ctx.artifactPath = apk;
+      expect(() => resolveVersionCode(ctx)).toThrow(/无法解析 versionCode.*显式指定/s);
+    } finally {
+      homeSpy.mockRestore();
+      process.env.PATH = savedPath;
+      if (savedHome !== undefined) process.env.ANDROID_HOME = savedHome;
+      fs.rmSync(fakeHome, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 });

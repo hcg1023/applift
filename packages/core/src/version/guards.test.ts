@@ -114,3 +114,73 @@ describe("applyBump 状态护栏", () => {
     }
   });
 });
+
+describe("bump 互斥锁与工作区护栏", () => {
+  function setupLockable() {
+    fs.mkdirSync(path.join(dir, "android", "app"), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "android", "app", "build.gradle"),
+      `android { defaultConfig { versionCode 4000; versionName "4.0.0" } }\n`,
+    );
+    fs.writeFileSync(path.join(dir, "package.json"), `{"name":"a","version":"4.0.0"}\n`);
+    sh("git init -q && git config user.email t@t && git config user.name t");
+    sh("git add -A && git commit -qm 'feat: init'");
+  }
+
+  it("锁不可写（.git 目录只读，非 EEXIST 错误）→ 原样抛出不吞", () => {
+    setupLockable();
+    const plan = planBump({ cwd: dir, framework: rnAdapter, level: "patch" });
+    fs.chmodSync(path.join(dir, ".git"), 0o555);
+    try {
+      expect(() => applyBump(dir, plan, rnAdapter, { commit: false, tag: false })).toThrow(
+        /EACCES/,
+      );
+    } finally {
+      fs.chmodSync(path.join(dir, ".git"), 0o755); // afterEach 的 rmSync 需要写权限
+    }
+  }, 30_000);
+
+  it("陈旧锁（>10 分钟）→ 自动接管继续 bump", () => {
+    setupLockable();
+    const lock = path.join(dir, ".git", "applift-bump.lock");
+    fs.writeFileSync(lock, String(process.pid));
+    const stale = new Date(Date.now() - 15 * 60 * 1000);
+    fs.utimesSync(lock, stale, stale);
+    const plan = planBump({ cwd: dir, framework: rnAdapter, level: "patch" });
+    const applied = applyBump(dir, plan, rnAdapter, { commit: false, tag: false });
+    expect(applied.warnings).toHaveLength(0);
+    expect(
+      fs.readFileSync(path.join(dir, "package.json"), "utf8").includes('"version": "4.0.1"'),
+    ).toBe(true);
+  }, 30_000);
+
+  it("新鲜锁冲突 → 明确报错「另一 bump 进程」", () => {
+    setupLockable();
+    fs.writeFileSync(path.join(dir, ".git", "applift-bump.lock"), String(process.pid));
+    const plan = planBump({ cwd: dir, framework: rnAdapter, level: "patch" });
+    expect(() => applyBump(dir, plan, rnAdapter, { commit: false, tag: false })).toThrow(
+      /另一 bump 进程/,
+    );
+  }, 30_000);
+
+  it("脏工作区（计划外未跟踪文件）→ 拒绝代 commit（防混入 release 提交）", () => {
+    setupLockable();
+    fs.writeFileSync(path.join(dir, "unrelated.txt"), "wip");
+    const plan = planBump({ cwd: dir, framework: rnAdapter, level: "patch" });
+    expect(() => applyBump(dir, plan, rnAdapter, { commit: true, tag: false })).toThrow(
+      /计划外未提交变更/,
+    );
+  }, 30_000);
+
+  it("同 plan 重入：无新变更可提交 → commit 降级警告不炸，不再重复打 tag", () => {
+    setupLockable();
+    const plan = planBump({ cwd: dir, framework: rnAdapter, level: "patch" });
+    const first = applyBump(dir, plan, rnAdapter, { commit: true, tag: true });
+    expect(first.tagged).toBe(true); // 首次 commit + tag v4.0.1
+    // 同 plan 重入（如中断后恢复）：文件已就位、无新提交 → git commit 空提交失败 → 降级警告
+    const again = applyBump(dir, plan, rnAdapter, { commit: true, tag: true });
+    expect(again.committed).toBe(false);
+    expect(again.tagged).toBe(false); // commit 失败门控：tag 不重复打
+    expect(again.warnings.join()).toMatch(/git commit 失败/);
+  }, 60_000);
+});

@@ -452,6 +452,22 @@ describe("HonorChannel.submit", () => {
     expect(events.find((e) => e.type === "warn")?.message).toContain("应用详情缺 appName/intro");
   });
 
+  it("get-app-detail 响应无 data 字段 → warn 提示缺 appName/intro（空对象入文案）", async () => {
+    const mf = mockFetch([
+      TOKEN_ROUTE,
+      { match: "get-app-detail", response: { json: { code: 0 } } },
+      { match: "submit-audit", response: { json: { code: 0, data: RELEASE_ID } } },
+    ]);
+    const events: Array<{ type: string; message?: string }> = [];
+    await new HonorChannel().submit(
+      makeCtx({ updateDescription: "新功能上线", emit: (e) => events.push(e as never) }),
+    );
+    expect(mf.find("update-language-info")).toBeUndefined();
+    expect(events.find((e) => e.type === "warn")?.message).toContain(
+      "应用详情缺 appName/intro: {}",
+    );
+  });
+
   it("update-language-info 失败 best-effort：warn 不阻断，仍提审成功", async () => {
     const mf = mockFetch([
       TOKEN_ROUTE,
@@ -640,6 +656,16 @@ describe("HonorChannel.status", () => {
     ]);
     await expect(new HonorChannel().status(makeCtx())).rejects.toThrow(
       "荣耀 查询审核状态失败 code=10003 token 过期",
+    );
+  });
+
+  it("接口 code!=0 且无 msg → 错误文案以空 msg 收尾", async () => {
+    mockFetch([
+      TOKEN_ROUTE,
+      { match: "get-app-current-release", response: { json: { code: 500 } } },
+    ]);
+    await expect(new HonorChannel().status(makeCtx())).rejects.toThrow(
+      /荣耀 查询审核状态失败 code=500 :/,
     );
   });
 

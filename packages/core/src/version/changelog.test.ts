@@ -24,6 +24,12 @@ describe("toChangelogEntries", () => {
     expect(entries[0]).toMatchObject({ type: "feat", scope: "login", breaking: false });
     expect(entries[2]).toMatchObject({ type: "chore", breaking: true });
   });
+
+  it("空消息跳过；普通提交（无 breaking footer）不误标 breaking", () => {
+    const entries = toChangelogEntries(["", "   ", "fix: 普通修复"]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ type: "fix", breaking: false });
+  });
 });
 
 describe("renderChangelogSection", () => {

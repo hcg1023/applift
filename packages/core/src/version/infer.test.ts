@@ -22,6 +22,12 @@ describe("inferBumpLevel", () => {
     expect(inferBumpLevel([]).level).toBe("patch");
     expect(inferBumpLevel(["随便一句话"]).level).toBe("patch");
   });
+
+  it("混合提交（BREAKING 与普通并存）→ 取 major 且普通提交不误触 breaking", () => {
+    const r = inferBumpLevel(["fix: a\n\nBREAKING CHANGE: api 变了", "feat: b", "fix: c"]);
+    expect(r.level).toBe("major");
+    expect(r).toMatchObject({ breaking: 1, feat: 1, fix: 1 }); // breaking 提交不计入 fix
+  });
 });
 
 describe("decideNextVersion", () => {

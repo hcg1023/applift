@@ -348,6 +348,45 @@ describe("stage iTMSTransporter 引擎（装了 Transporter.app 时首选）", (
       fresh.resolveTransporterPath({ credentials: { ASC_TRANSPORTER_PATH: "/no/such/itms" } }),
     ).toThrow(/ASC_TRANSPORTER_PATH 指向的 iTMSTransporter 不存在/);
   });
+  it("ASC_TRANSPORTER_PATH ~/ 前缀展开到 homedir 后校验存在性", () => {
+    const fresh = new AscChannel();
+    expect(() =>
+      fresh.resolveTransporterPath({ credentials: { ASC_TRANSPORTER_PATH: "~/no/such/itms-bin" } }),
+    ).toThrow(
+      `ASC_TRANSPORTER_PATH 指向的 iTMSTransporter 不存在: ${path.join(os.homedir(), "no/such/itms-bin")}`,
+    );
+  });
+
+  it("缺省探测默认安装路径：默认路径不存在 → undefined（回退 altool）", () => {
+    const fresh = new AscChannel();
+    const existsSpy = vi.spyOn(fs, "existsSync").mockReturnValue(false);
+    try {
+      expect(fresh.resolveTransporterPath({ credentials: {} })).toBeUndefined();
+    } finally {
+      existsSpy.mockRestore();
+    }
+    // 默认路径存在（等价装了 Transporter.app）→ 返回默认安装路径
+    const existsSpyInstalled = vi.spyOn(fs, "existsSync").mockReturnValue(true);
+    try {
+      expect(fresh.resolveTransporterPath({ credentials: {} })).toBe(
+        "/Applications/Transporter.app/Contents/itms/bin/iTMSTransporter",
+      );
+    } finally {
+      existsSpyInstalled.mockRestore();
+    }
+  });
+
+  it("stdout/stderr 均缺省（null/undefined）→ 拼接按空串处理，exit 0 成功", async () => {
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: undefined, stderr: undefined } as never);
+    await expect(ch.stage(makeCtx({ artifactPath: ipaFile }))).resolves.toEqual({ ok: true });
+  });
+
+  it("exit null（无 error、无输出）→ 报错文案 exit ? 且提示无输出", async () => {
+    spawnSyncMock.mockReturnValue({ status: null, stdout: "", stderr: "" } as never);
+    await expect(ch.stage(makeCtx({ artifactPath: ipaFile }))).rejects.toThrow(
+      "iTMSTransporter 上传失败（exit ?）: 无输出",
+    );
+  });
 
   it("缺省探测默认安装路径：装了返回路径，未装返回 undefined（回退 altool）", () => {
     const fresh = new AscChannel();
@@ -516,6 +555,17 @@ describe("submit（ASC REST 提审）", () => {
       );
       expect(events.some((e) => e.type === "progress" && e.detail?.includes("出口合规提示"))).toBe(
         true,
+      );
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("bundleId 查不到对应 App → 报错含 bundleId", async () => {
+    const m = mockFetch([{ match: /\/v1\/apps\?/, response: { status: 200, json: { data: [] } } }]);
+    try {
+      await expect(ch.submit(makeCtx())).rejects.toThrow(
+        "ASC 未找到 bundleId=com.example.app 对应的 App",
       );
     } finally {
       m.restore();

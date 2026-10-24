@@ -609,6 +609,21 @@ describe("HuaweiAndroidChannel.updateListing", () => {
     });
   });
 
+  it("仅 description 时只带 appDesc，updated 只记 description", async () => {
+    const mock = mockFetch([
+      { match: "oauth2/v1/token", response: { status: 200, json: TOKEN_BODY } },
+      { match: "app-language-info", response: { status: 200, json: { ret: { code: 0 } } } },
+    ]);
+    const res = await new HuaweiAndroidChannel().updateListing(makeCtx(), {
+      description: "只改描述",
+    });
+    expect(JSON.parse(mock.find("app-language-info")!.body as string)).toEqual({
+      lang: "zh-CN",
+      appDesc: "只改描述",
+    });
+    expect(res.updated).toEqual(["description"]);
+  });
+
   it("iconPath/screenshots 存在时跳过绑定（fileType 未验证），不发 upload-url/app-file-info 请求", async () => {
     const mock = mockFetch([
       { match: "oauth2/v1/token", response: { status: 200, json: TOKEN_BODY } },

@@ -439,3 +439,173 @@ describe("agc beta 旧测试版本自动清理（默认开）", () => {
     expect(fetchMock.calls.some((c) => c.url.includes("test/version/stop"))).toBe(false);
   });
 });
+
+describe("分支覆盖补齐（missed 清单：method/testDesc 回退、versionId/pkgVersion 缺失、群组分页）", () => {
+  it("urlInfo 缺 method → 上传回退 PUT", async () => {
+    const fetchMock = mockFetch([
+      {
+        match: /for-obs\?.*releaseType=6$/,
+        response: {
+          json: {
+            ret: { code: 0 },
+            urlInfo: { url: "https://obs-agc.example.com/nomethod", objectId: OBJECT_ID },
+          },
+        },
+      },
+      ...baseRoutes(),
+    ]);
+    const result = await new AgcHarmonyChannel().stage(
+      makeCtx({ appId: APP_ID, releaseType: "6" }),
+    );
+    expect(result.ok).toBe(true);
+    expect(fetchMock.find("obs-agc.example.com/nomethod")!.method).toBe("PUT");
+  });
+
+  it("updateDescription 缺省 → testDesc 回退「applift 测试发布」", async () => {
+    const fetchMock = mockFetch(baseRoutes());
+    const ctx = { ...makeCtx({ appId: APP_ID, releaseType: "6" }), updateDescription: undefined };
+    await new AgcHarmonyChannel().stage(ctx);
+    expect(JSON.parse(fetchMock.find("test/app/version", "POST")!.body as string)).toMatchObject({
+      testDesc: "applift 测试发布",
+    });
+  });
+
+  it("新建测试版本未返回 versionId → 抛错", async () => {
+    mockFetch([
+      {
+        match: "version/brief-info/list",
+        response: { json: { ret: { code: 0 }, versionList: [] } },
+      },
+      {
+        match: "test/app/version",
+        method: "POST",
+        response: { json: { ret: { code: 0 } } }, // 无 versionId
+      },
+      ...baseRoutes(),
+    ]);
+    await expect(
+      new AgcHarmonyChannel().stage(makeCtx({ appId: APP_ID, releaseType: "6" })),
+    ).rejects.toThrow("AGC 新建测试版本未返回 versionId");
+  });
+
+  it("添加测试软件包未返回 pkgVersion → 抛错", async () => {
+    mockFetch([
+      {
+        match: "version/brief-info/list",
+        response: { json: { ret: { code: 0 }, versionList: [] } },
+      },
+      { match: "test/version/pkg", response: { json: { ret: { code: 0 } } } }, // 无 pkgVersion
+      ...baseRoutes(),
+    ]);
+    await expect(
+      new AgcHarmonyChannel().stage(makeCtx({ appId: APP_ID, releaseType: "6" })),
+    ).rejects.toThrow("AGC 添加测试软件包未返回 pkgVersion");
+  });
+
+  it("清理查询：target 带 bundleName → body 携带 packageName；无 versionId 的测试版本不进清理", async () => {
+    const fetchMock = mockFetch([
+      {
+        match: "version/brief-info/list",
+        response: {
+          json: {
+            ret: { code: 0 },
+            versionList: [
+              { testType: 3 }, // 无 versionId → 跳过
+              { versionId: "old-v1", testType: 4 },
+            ],
+          },
+        },
+      },
+      { match: "test/version/stop", response: { json: { ret: { code: 0 } } } },
+      { match: "test/app/version", method: "DELETE", response: { json: { ret: { code: 0 } } } },
+      ...baseRoutes(),
+    ]);
+    const result = await new AgcHarmonyChannel().stage(
+      makeCtx({ appId: APP_ID, releaseType: "6", bundleName: "com.qy.driver" }),
+    );
+    expect(result.ok).toBe(true);
+    const brief = fetchMock.find("version/brief-info/list")!;
+    expect(JSON.parse(brief.body as string)).toEqual({ packageName: "com.qy.driver" });
+    // 只有带 versionId 的 old-v1 被清理一次
+    expect(fetchMock.calls.filter((c) => c.url.includes("test/version/stop"))).toHaveLength(1);
+    expect(JSON.parse(fetchMock.find("test/version/stop")!.body as string)).toEqual({
+      versionId: "old-v1",
+    });
+  });
+
+  it("查群组 HTTP !ok → 人话报错", async () => {
+    mockFetch([
+      ...baseRoutes(),
+      { match: "test-group/list", response: { status: 500, text: "bad gateway" } },
+    ]);
+    await expect(
+      new AgcHarmonyChannel().stage(
+        makeCtx({ appId: APP_ID, releaseType: "6", submitTest: "true", testGroup: GROUP_NAME }),
+      ),
+    ).rejects.toThrow("AGC 查询测试群组失败 HTTP 500");
+  });
+
+  it("rtnCode 缺失 → rtnCode=? 且无描述尾巴；rtnCode 非 0 无 rtnDesc → 只报码", async () => {
+    mockFetch([...baseRoutes(), { match: "test-group/list", response: { json: {} } }]);
+    await expect(
+      new AgcHarmonyChannel().stage(
+        makeCtx({ appId: APP_ID, releaseType: "6", submitTest: "true", testGroup: GROUP_NAME }),
+      ),
+    ).rejects.toThrow("AGC 查询测试群组失败: rtnCode=?");
+
+    mockFetch([...baseRoutes(), { match: "test-group/list", response: { json: { rtnCode: 7 } } }]);
+    await expect(
+      new AgcHarmonyChannel().stage(
+        makeCtx({ appId: APP_ID, releaseType: "6", submitTest: "true", testGroup: GROUP_NAME }),
+      ),
+    ).rejects.toThrow("AGC 查询测试群组失败: rtnCode=7");
+  });
+
+  it("分页：totalPage 驱动翻页，第 2 页命中群组", async () => {
+    const fetchMock = mockFetch([
+      ...baseRoutes(),
+      {
+        match: "current=1",
+        response: {
+          json: {
+            rtnCode: 0,
+            groups: [{ groupId: "grp-other", groupName: "别的组" }],
+            pageInfo: { current: 1, totalPage: 2 },
+          },
+        },
+      },
+      {
+        match: "current=2",
+        response: {
+          json: { rtnCode: 0, groups: [{ groupId: GROUP_ID, groupName: GROUP_NAME }] },
+        },
+      },
+      {
+        match: "test/app/version/submit",
+        method: "POST",
+        response: { json: { ret: { code: 0 } } },
+      },
+    ]);
+    const result = await new AgcHarmonyChannel().stage(
+      makeCtx({ appId: APP_ID, releaseType: "6", submitTest: "true", testGroup: GROUP_NAME }),
+    );
+    expect(result).toEqual({ ok: true, ref: VERSION_ID });
+    expect(fetchMock.calls.filter((c) => c.url.includes("test-group/list"))).toHaveLength(2);
+    expect(fetchMock.find("current=2")).toBeDefined();
+  });
+
+  it("响应缺 pageInfo → totalPage 回退当前页，找不到群组即止步报错", async () => {
+    mockFetch([
+      ...baseRoutes(),
+      {
+        match: "test-group/list",
+        response: { json: { rtnCode: 0, groups: [{ groupId: "g", groupName: "别的组" }] } },
+      },
+    ]);
+    await expect(
+      new AgcHarmonyChannel().stage(
+        makeCtx({ appId: APP_ID, releaseType: "6", submitTest: "true", testGroup: GROUP_NAME }),
+      ),
+    ).rejects.toThrow(/未找到名为.*测试群组/);
+  });
+});
