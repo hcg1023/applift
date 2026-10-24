@@ -31,18 +31,19 @@ applift：多框架 App 发版工具。**只管发版（产物 → 校验 → �
 
 ## 版本语义（终态）
 
-| 变更        | versionName                                                     | tag                                                   | 取号                                         |
-| ----------- | --------------------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------- |
-| 原生发版    | 三段升（`4.0.0`→`4.1.0`）                                       | `v4.1.0`（release 全渠道提审成功后补；beta 不打 tag） | `applift version bump`                       |
-| 热更发版    | **versionName 不动**                                            | `v4.0.0-patch.N`（beta 热更发布时打，进 CHANGELOG）   | pushy 服务端查询取号（多机安全，本地无状态） |
-| 测试孪生体  | 按 `version.beta` 派生，默认 `patch+1000`（`4.0.0`→`4.0.1000`） | —                                                     | publishToBeta 自动                           |
-| versionCode | **与 versionName 解耦，无公式无偏移**：bump 与项目出包各自 +1   | —                                                     | 工程文件即计数器                             |
+| 变更        | versionName                                                     | tag                                                                             | 取号                                                      |
+| ----------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| 原生发版    | 三段升（`4.0.0`→`4.1.0`）                                       | `v4.1.0`（bump **不打 tag**；release 全渠道提审成功后补，`--tag` 为显式逃生口） | `applift version bump` / `applift beta <platform> --bump` |
+| 热更发版    | **versionName 不动**                                            | `v4.0.0-patch.N`（beta 热更发布时打，进 CHANGELOG）                             | pushy 服务端查询取号（多机安全，本地无状态）              |
+| 测试孪生体  | 按 `version.beta` 派生，默认 `patch+1000`（`4.0.0`→`4.0.1000`） | —                                                                               | publishToBeta 自动                                        |
+| versionCode | **与 versionName 解耦，无公式无偏移**：bump 与项目出包各自 +1   | —                                                                               | 工程文件即计数器                                          |
 
 - 测试/正式隔离靠 **packageVersion 字符串**（pushy 只认原生 versionName，不认 versionCode）：测试孪生体设备收测试热更，正式设备收正式热更，互不污染
 - 策略可配（`offset` / `suffix` / `app-id`），按平台能力校验：`suffix` + iOS 直接报错（TestFlight/App Store 只收 1–3 段整数），`suffix` + 鸿蒙告警。默认 `offset` + patch 段（三段纯数字，三端全通）
 - 热更名带基线（`4.0.1000-patch.1`）：promote 只认测试基线的候选，不会把正式线自发的 `4.0.0-patch.N` 当候选
 - 热更**不参与 version bump**（不动 versionName/versionCode/bump 机制）——这是防复杂化的关键取舍，勿回退
-- tag 后移：release 全渠道提审成功才打（部分成功不打）；beta 不打 tag（追溯走 history.jsonl）；tag 失败不阻断发布
+- **版本声明与交付封板分离**（bump-semantics，2026-10-24 定稿）：bump = 声明（写文件 + CHANGELOG + `chore(release):` commit，默认不打 tag）；tag = 交付标记（release 提审成功后补）。判定锚点 = 最新 semver tag 或最新 `chore(release):` commit 按 committer time 取新者（`latestVersionAnchor`）——去 tag 化后防「bump 写入的版本文件被判为原生改动、连环烧版本号」的关键机制。beta 判定原生为三态：需 bump（引导/`--bump` 自动声明）/ 已声明（工程版本领先发布 tag，只引导重建 + `--delivery native`，不再 bump）/ OTA；`beta.autoBump` 配置 = 永远带 `--bump`
+- tag 后移：release 全渠道提审成功才打（部分成功不打）；beta 不打 tag（追溯走 history.jsonl）；tag 失败不阻断发布；tag 已存在但指向不同 commit → 告警（历史提前 tag / 驳回重提未移动）
 
 ## UpdateProvider 契约（core/src/update.ts）
 
@@ -57,6 +58,10 @@ applift：多框架 App 发版工具。**只管发版（产物 → 校验 → �
 - `--delivery ota` 越过判定可绑到尚无设备的原生版本（用户显式意图范畴）
 - 灰度调比例用 pushy `update` 原生命令/网页后台（applift 暂无子命令）
 - 鸿蒙扫码 DeepLink pushy 官方未支持（仅 Android/iOS）
+- `version bump --no-commit` 不产生锚点（无 `chore(release):` commit）→ 后续 beta 判定停留上一锚点，可能重复建议 bump——调试用途，正常流程勿用
+- 驳回重提的 tag 移动是人工操作：`git tag -d v4.1.0 && git tag v4.1.0`（前提 tag 未 push；applift 从不 push）。已 push 的 tag 移动需 force push，应保留旧 tag + 人工记录
+- squash-merge 会丢 `chore(release):` 标记（合并提交 message 不再匹配）→ 锚点回退旧 tag，判定窗口变大；qy-driver 直推提交不受影响，引入 PR squash 流程时需重估
+- 多端异步发布的锚点盲区（全局版本号模型的固有限制）：harmony 先 release 4.1.0 打全局 tag 后，ios 未发过 4.1.0 也会在下一次原生改动时被推荐 4.2.0——单 versionName 工程的既有行为，非本次引入
 
 ## 开发规范
 
@@ -78,3 +83,4 @@ applift：多框架 App 发版工具。**只管发版（产物 → 校验 → �
 - ASC 渠道升级（2026-10-22，参考蒲公英 ASC CLI 文章做功能审查的产物）：① stage 上传双引擎——装 Transporter.app 时首选 `iTMSTransporter -jwt`（JWT 与 REST API 同源，Apple 官方建议；ipa 复制临时 ASCII 名防删源/多字节名失败），未装回退 altool（altool --upload-app 未被官方弃用，弃用的是其公证功能；勿再以"altool 已弃用"为由单路押注）；② submit 前预检本地化 description（Apple 硬性要求，提前暴露）+ 出口合规提示；③ status 接入（appVersionState 15 枚举 → ReviewStatus，跳过 PREPARE_FOR_SUBMISSION/REPLACED）。upload/submit 真实链路仍未经实机验证（qy-driver iOS release 首发时按"只读验证→预检→提审"顺序灰度）
 - AGC 鸿蒙 status 接入（2026-10-22，安卓/鸿蒙渠道审查的唯一缺口）：`/publish/v3/version/brief-info/list` 查商用版本 state（同 releaseState 全表，与华为安卓同表映射）；只取 testType 缺省/1 的商用版本（测试版本 3/4 不混入），空则 unknown fail-safe。testType=1 为推断值（官方数据模型文档动态加载拿不到枚举），真实链路首用核对。安卓七渠道审查结论：全部进程内 API 无外部工具风险（oppo aapt2 仅解析 versionCode 且三级降级），errorHints 等价预检，status 全接入——无需 iOS 式改造
 - AGC 鸿蒙测试版本自动清理（2026-10-23 定稿，`beta.agc.cleanup` 默认 true）：根因=AGC 测试版本数量约束（在审上限→提交报 204144692；在架上限=邀请测试 3/公开测试 1/总数 100；versionCode 递增只解决"包不可选"维度，不解决数量维度）。实现：uploadBeta 上传完成后、新建测试版本前，`brief-info/list` 反向过滤 testType 3/4 拿旧测试版本 versionId → `POST /publish/v2/test/version/stop`（完全下架）→ `DELETE /publish/v2/test/app/version`，best-effort（单个失败仅告警，提审步骤兜底暴露）；清理范围=该 appId 全部测试版本（含策略切换前遗留线）。**故意不依赖 state 判定**（测试版本 state 枚举与商用表不一致且未实机验证，清理-all 无需解读 state，绕开该风险）。时机选在上传后而非上传前：缩短测试设备不可安装窗口。影响面：已装设备 App 与 pushy 热更均不受影响（stop 只移除 AGC 在架记录）；受影响的只有审核空窗期内想新装的人。未验证点：stop 对"审核中"版本是否有效（官方 stop 文档针对在架版本；若拒 stop 仍尝试 delete，均失败则提审报错提示人工）——真实链路首用核对。qy-driver 零配置升级即生效（applift 升版本即可）
+- bump-semantics 落地（2026-10-24，设计文档 docs/bump-semantics.md）：① `version bump` 默认不打 tag（`--tag` 显式开），tag 只由 release 成功后补；② 判定/推断锚点统一为 `latestVersionAnchor`（tag vs `chore(release):` commit 按 committer time 取新者，同提交优先 tag），collectReleaseDiff/planBump/resolveDeliveryMode 三处同口径；③ beta 三态判定（需 bump / 已声明 / OTA）+ `--bump [level]` 自动声明 + `beta.autoBump` 配置；④ release 补 tag 遇「已存在但指向不同 commit」告警（TagResult.conflict）。配套 docs/build-hook.md（构建钩子提案）结论暂缓，重启条件见其文档

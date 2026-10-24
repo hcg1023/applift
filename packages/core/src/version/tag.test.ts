@@ -34,6 +34,19 @@ describe("tagReleaseVersion（release 成功后补 tag：tag = 实际已发布�
     expect(r.reason).toContain("已存在");
   });
 
+  it("tag 已存在但指向不同 commit → conflict（历史提前 tag / 驳回重提未移动）", () => {
+    spawnSync("git", ["tag", "v4.0.1"], { cwd: dir });
+    fs.writeFileSync(path.join(dir, "b.txt"), "y");
+    spawnSync("git", ["add", "-A"], { cwd: dir });
+    spawnSync("git", ["commit", "-qm", "fix: after"], { cwd: dir });
+    const r = tagReleaseVersion(dir, "4.0.1");
+    expect(r.tagged).toBe(false);
+    expect(r.conflict).toBe(true);
+    expect(r.reason).toContain("≠");
+    expect(r.reason).toContain("请人工确认");
+    expect(r.reason).toContain("错峰"); // 多端错峰发布是 conflict 的第三种合法原因（勿动 tag）
+  });
+
   it("dryRun / 无版本 → 不动 git", () => {
     expect(tagReleaseVersion(dir, "4.0.1", { dryRun: true }).tagged).toBe(false);
     expect(tagReleaseVersion(dir, undefined).tagged).toBe(false);

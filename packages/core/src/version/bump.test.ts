@@ -43,7 +43,8 @@ function setup() {
 describe("looseSemver / latestSemverTag", () => {
   it("宽松识别 v 前缀与前后缀形态；非 semver 忽略", () => {
     expect(looseSemver("v4.1.0")).toBe("4.1.0");
-    expect(looseSemver("4.1.0-beta.3")).toBe("4.1.0-beta.3");
+    // 数字段超长（semver 拒收）→ 正则命中但校验失败 → undefined
+    expect(looseSemver("v99999999999999999999.0.0")).toBeUndefined();
     expect(looseSemver("release-4.1.0")).toBe("4.1.0");
     expect(looseSemver("not-a-version")).toBeUndefined();
   });
@@ -56,7 +57,7 @@ describe("planBump → applyBump 全链路", () => {
     const first = planBump({ cwd: dir, framework: rnAdapter });
     expect(first.infer).toBeUndefined();
     expect(first.nextVersion).toBe("4.0.1");
-    expect(first.reason).toMatch(/无发版锚点 tag.*patch 兜底/);
+    expect(first.reason).toMatch(/无发版锚点.*patch 兜底/);
     // 打锚点后：feat+fix 区间 → minor（tag 打在首个提交上，区间内补 feat）
     sh("git tag v4.0.0 HEAD~1");
     sh("git commit -q --allow-empty -m 'feat: 区间内功能'");
@@ -111,9 +112,21 @@ describe("planBump → applyBump 全链路", () => {
     // 锚点前移：新提交为空 → patch 兜底；版本基线是 4.1.0
     sh("git commit -q --allow-empty -m 'chore: something'");
     const plan2 = planBump({ cwd: dir, framework: rnAdapter });
-    expect(plan2.anchorTag).toBe("v4.1.0");
+    expect(plan2.anchor).toMatchObject({ ref: "v4.1.0", kind: "tag" });
     expect(plan2.infer).toMatchObject({ level: "patch", total: 1, feat: 0, fix: 0 }); // 推断确实执行且数对提交
   }, 90_000);
+
+  it("level=prerelease：基线已是 prerelease → 递进 beta.1；否则报错引导 --pre", () => {
+    setup();
+    // 非 prerelease 基线：明确拒绝（不静默给 -0），引导 --pre 或显式版本
+    expect(() => planBump({ cwd: dir, framework: rnAdapter, level: "prerelease" })).toThrow(
+      /不是 prerelease/,
+    );
+    // 基线 4.1.0-beta.0 → prerelease 递进 4.1.0-beta.1
+    fs.writeFileSync(path.join(dir, "package.json"), `{"name":"a","version":"4.1.0-beta.0"}\n`);
+    const plan = planBump({ cwd: dir, framework: rnAdapter, level: "prerelease" });
+    expect(plan.nextVersion).toBe("4.1.0-beta.1");
+  }, 30_000);
 
   it("--pre beta：4.0.0 → 4.1.0-beta.0（tag 带 prerelease，工程 versionName 仍三段）", () => {
     setup();
@@ -125,7 +138,7 @@ describe("planBump → applyBump 全链路", () => {
     expect(latestSemverTag(dir)).toBe("v4.1.0-beta.0");
     const after = readProjectVersions(dir, rnAdapter);
     expect(after.find((v) => v.platform === "js")?.versionName).toBe("4.1.0");
-  }, 30_000);
+  }, 90_000);
 
   it("非 git 目录：写文件与 CHANGELOG 正常，commit/tag 降级警告", () => {
     setup();

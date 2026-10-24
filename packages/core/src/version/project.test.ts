@@ -76,6 +76,18 @@ describe("readProjectVersions（RN 布局）", () => {
     expect(vs.filter((v) => v.platform === "ios")).toHaveLength(1);
   });
 
+  it("版本文件为空（损坏/占位形态）→ 读取不炸、无版本信息（不猜）", () => {
+    makeRnFixture();
+    // 三端版本文件清空为 0 字节；package.json 保持合法 JSON（js 读取走 JSON.parse）
+    fs.writeFileSync(path.join(dir, "android", "app", "build.gradle"), "");
+    fs.writeFileSync(path.join(dir, "ios", "QyDriver.xcodeproj", "project.pbxproj"), "");
+    fs.writeFileSync(path.join(dir, "ios", "QyDriver", "Info.plist"), "");
+    fs.writeFileSync(path.join(dir, "harmony", "AppScope", "app.json5"), "");
+    fs.writeFileSync(path.join(dir, "package.json"), `{"name":"app"}\n`);
+    const vs = readProjectVersions(dir, rnAdapter);
+    expect(vs.every((v) => v.versionName === undefined && v.versionCode === undefined)).toBe(true);
+  });
+
   it("catalog 引用形态读出但标注 problem（提示改造）", () => {
     fs.mkdirSync(path.join(dir, "android", "app"), { recursive: true });
     fs.writeFileSync(

@@ -101,6 +101,9 @@ export const BetaConfigSchema = z.object({
       note: z.string().optional(),
     })
     .optional(),
+  /** 判定为「原生·需 bump」时自动升版（等价于永远带 --bump；非交互环境须配合 --yes）。
+   *  热更（ota）与「已声明」态不受影响——热更不动版本号，已声明只引导重建 */
+  autoBump: z.boolean().default(false),
 });
 
 /** versionCode 策略："increment"(默认 +1) | 公式（可限定平台） */

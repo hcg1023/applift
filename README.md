@@ -48,15 +48,16 @@ applift history                   # 谁在何时发了什么
 版本管理(可接管:工程文件永远是版本事实源,applift 只代读代写):
 
 ```bash
-applift version                          # 各端版本实况(versionName/versionCode + 锚点 tag)
-applift version bump patch               # 写工程文件 + CHANGELOG + 代 commit + 代 tag v4.0.1
-applift version bump minor --pre beta    # 进入 prerelease:tag v4.1.0-beta.0,商店 versionName 仍 4.1.0
+applift version                          # 各端版本实况(versionName/versionCode + 发版锚点)
+applift version bump patch               # 版本声明:写工程文件 + CHANGELOG + commit(默认不打 tag)
+applift version bump minor --pre beta    # 进入 prerelease 4.1.0-beta.0,商店 versionName 仍 4.1.0
+applift beta harmony --bump              # 判定原生时自动声明版本,完成即引导重建(或 beta.autoBump)
 applift beta --yes                      # 多渠道内测一条命令（构建由项目完成，读最新产物 → 校验 → 分发）
 ````
 
 - 版本决定链:显式指定 > git conventional commits 推断(BREAKING/feat/fix)> patch 兜底;结果展示确认,不静默
 - versionCode 单调策略 max(公式值, 现值+1):config `version: { versionCode: { formula: "major*1000000+minor*1000+patch", platforms: ["harmony"] } }`,默认递增 +1;beta.1→beta.2→正式全程单调,AGC 同版本不能覆盖升级的墙由此规避
-- 升版本显式化(构建/bump 解耦):beta/release 不再代 bump;`applift version bump` 单独升版本后重新构建,再跑发布命令
+- 升版本显式化(构建/bump 解耦):bump 只做版本声明(默认不打 tag,tag 由 release 提审成功后补,`--tag` 显式开);判定原生时 `applift beta <platform> --bump` 自动声明,或 `applift version bump` 单独声明后重新构建,再跑发布命令
 - 热更正式默认全量:promote 灰度比例内置默认 100,`--rollout N` 或 `rnUpdate({ defaultRollout: N })` 显式灰度
 
 ## 配置

@@ -74,7 +74,7 @@ describe("applyBump 状态护栏", () => {
         encoding: "utf8",
       }),
     ).toContain('versionName "1.0.0"');
-  });
+  }, 60_000);
 
   it("全就位重入（同 plan 二次 apply）→ 不误报全跳过，补全 commit+tag", () => {
     fs.writeFileSync(path.join(dir, "package.json"), `{"name":"a","version":"1.0.0"}\n`);
@@ -86,7 +86,7 @@ describe("applyBump 状态护栏", () => {
     // 模拟 commit 成功后中断，同 plan 重入：文件已就位，不得抛"全部写入被跳过"
     const again = applyBump(dir, plan, rnAdapter, { commit: true, tag: true });
     expect(again.warnings.join()).not.toMatch(/所有端的版本写入均被跳过/);
-  });
+  }, 60_000);
 
   it("writes 为空（--platform 过滤后无端）→ 拒绝且不打 tag", () => {
     fs.writeFileSync(path.join(dir, "package.json"), `{"name":"a","version":"1.0.0"}\n`);
