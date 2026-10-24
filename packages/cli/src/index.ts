@@ -776,6 +776,8 @@ program
                   ...(agcCfg.submit ? { submitTest: "true" } : {}),
                   ...(agcCfg.group ? { testGroup: agcCfg.group } : {}),
                   testType: String(agcCfg.testType),
+                  // cleanup 默认 true（schema 缺省）；'false' 时渠道跳过旧测试版本清理
+                  cleanup: String(agcCfg.cleanup),
                 },
                 artifactPath,
                 cmdOpts.note,
@@ -908,6 +910,8 @@ program
             ...(agcCfg?.submit ? { submitTest: "true" } : {}),
             ...(agcCfg?.group ? { testGroup: agcCfg.group } : {}),
             testType: String(agcCfg?.testType ?? 3),
+            // cleanup 默认 true（schema 缺省）；'false' 时渠道跳过旧测试版本清理
+            cleanup: String(agcCfg?.cleanup ?? true),
           },
           artifactPath,
           cmdOpts.note,

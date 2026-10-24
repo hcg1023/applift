@@ -30,7 +30,7 @@ applift beta                             # 多渠道内测：读 applift.config.
 ```ts
 beta: {
   pgyer: { platforms: ["android", "ios"], installPassword: "1234" }, // 蒲公英多平台，缺省只发 android
-  agc: { submit: true, group: "内测组" },                              // AGC 邀请测试；submit=true 自动提审
+  agc: { submit: true, group: "内测组" },                              // AGC 邀请测试；submit=true 自动提审；发布前自动停删旧测试版本（cleanup 默认 true）
   testflight: { note: "TestFlight 备注" },                            // asc 上传 ipa 进 TestFlight
 },
 ```

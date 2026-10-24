@@ -119,7 +119,13 @@ describe("BetaConfigSchema（beta 多渠道）", () => {
     });
     expect(config.beta?.pgyer?.platforms).toEqual(["android", "ios"]);
     expect(config.beta?.pgyer?.installPassword).toBe("1234");
-    expect(config.beta?.agc).toEqual({ submit: true, group: "内测组", testType: 4 });
+    // cleanup 默认 true（AGC 测试版本自动清理）——显式关时才是 false
+    expect(config.beta?.agc).toEqual({
+      submit: true,
+      group: "内测组",
+      testType: 4,
+      cleanup: true,
+    });
     expect(config.beta?.testflight?.note).toBe("TF 备注");
   });
 

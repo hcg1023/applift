@@ -87,6 +87,13 @@ export const BetaConfigSchema = z.object({
       group: z.string().optional(),
       /** 3=邀请测试（默认）4=公开测试 */
       testType: z.union([z.literal(3), z.literal(4)]).default(3),
+      /**
+       * 发布前自动清理旧测试版本（stop+delete，默认 true）：
+       * AGC 测试版本在审/在架数量有上限（在审超限提交报 204144692、在架邀请测试 3 个），
+       * 旧版本不清理会阻塞新版本提审。清理只移除 AGC 在架记录——已装设备与热更均不受影响，
+       * 受影响的仅审核空窗期内想新装的人（期间 AGC 邀请链接装不了）。
+       */
+      cleanup: z.boolean().default(true),
     })
     .optional(),
   testflight: z

@@ -499,6 +499,11 @@ describe("AgcHarmonyChannel.stage（releaseType=6 测试发布）", () => {
   it("走 Testing API 链路：上传→新建测试版本→添加软件包→等编译→绑定，不提审", async () => {
     const { find } = mockFetch([
       TOKEN_ROUTE,
+      // 旧测试版本清理（默认开）：无残留时不影响主链路
+      {
+        match: "version/brief-info/list",
+        response: { json: { ret: { code: 0 }, versionList: [] } },
+      },
       { match: "upload-url", response: { json: { ret: { code: 0 }, urlInfo: obsRoutes() } } },
       { match: "obs.example.com", response: { status: 200, text: "" } },
       {
