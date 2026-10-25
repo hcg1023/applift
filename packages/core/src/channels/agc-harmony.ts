@@ -200,7 +200,7 @@ export class AgcHarmonyChannel implements Channel {
     "204144702": "签名/证书不匹配：检查签名证书指纹（SHA256）与 AGC 后台登记是否一致",
     "204144677": "bundleName 与应用不匹配：确认 appId 对应的应用包名",
     "204144692":
-      "提审前置校验失败（按 msg 判断）：privacyPolicy → 控制台「更多服务→协议服务」登记隐私政策；count of harmony test in audit → 在审测试版本超限（beta.agc.cleanup 默认已自动清理，仍出现请到控制台核对是否有删不掉的旧测试版本）",
+      "提审前置校验失败（按 msg 对症，2026-10-25 实测）：privacyPolicy → 配置 beta.agc.privacyPolicy（Testing API extInfo.privacyPolicy，控制台对应版本创建的「自定义协议」）；displayArea → 邀请测试必填测试专区（CLI 已默认携带，仍报则到控制台核对版本）；count of harmony test in audit → 在审测试版本超限（beta.agc.cleanup 默认已自动清理，仍出现请到控制台核对是否有删不掉的旧测试版本）",
   };
   private async authHeaders(ctx: Pick<ChannelContext, "credentials" | "target">) {
     const clientId = required(ctx, "AGC_CLIENT_ID");
@@ -613,13 +613,25 @@ export class AgcHarmonyChannel implements Channel {
     // step 3：等云端编译完成（官方建议：解析完成后再绑定）
     await this.awaitCompile(ctx, appId, pkgId, headers);
 
-    // step 4：更新测试版本，绑定软件包
+    // step 4：更新测试版本，绑定软件包 + 提审必填元数据
+    // 2026-10-25 qy-driver 实测（204144692 逐字段对因）：
+    //   extInfo.privacyPolicy ——「自定义协议」URL，缺失报 privacyPolicy is necessary
+    //     （配置 beta.agc.privacyPolicy 透传，未配置则不带：老应用不强制，报错走 errorHints 指引）
+    //   languages[].appDesc —— 缺失报 Description is necessary!（语言位固定 zh-CN，
+    //     国内测试分发默认；多语言版本介绍属控制台人工范畴）
+    const privacyPolicy = ctx.target.privacyPolicy?.trim();
+    const desc = (ctx.updateDescription ?? "applift 测试发布").slice(0, 100);
     await agcJson(
       `${BASE}/publish/v2/test/app/version?appId=${encodeURIComponent(appId)}`,
       {
         method: "PUT",
         headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({ versionId, pkgId }),
+        body: JSON.stringify({
+          versionId,
+          pkgId,
+          ...(privacyPolicy ? { extInfo: { privacyPolicy } } : {}),
+          languages: [{ language: "zh-CN", appDesc: desc, newFeatures: desc }],
+        }),
       },
       "绑定测试软件包",
     );
@@ -644,7 +656,11 @@ export class AgcHarmonyChannel implements Channel {
               openTestInfo: {
                 startTime: now,
                 endTime: now + 30 * 24 * 60 * 60 * 1000,
-                testTaskInfo: { groupInfos: [{ groupId, groupName }] },
+                testTaskInfo: {
+                  groupInfos: [{ groupId, groupName }],
+                  // 2026-10-25 实测：邀请测试提审必填 displayArea（1=AppGallery 客户端测试专区）
+                  displayArea: "1",
+                },
               },
             }),
           },

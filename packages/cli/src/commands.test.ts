@@ -253,6 +253,38 @@ describe("全命令冒烟（非交互路径）", () => {
     expect(r.out).toMatch(/未探测到测试包 4\.0\.1000[\s\S]*版本名必须是 4\.0\.1000/);
   });
 
+  it("beta harmony：双产物工程探测必选 .app（AGC 只收 .app，不选 mtime 更新的 internaltesting .hap）", () => {
+    fs.writeFileSync(
+      path.join(proj, "applift.config.ts"),
+      `import { defineConfig } from "@applift/cli";\nimport { rnFramework, rnUpdate } from "@applift/cli/plugins";\nexport default defineConfig({\n  plugins: [rnFramework(), rnUpdate({ harmony: 1 })],\n  artifacts: {\n    harmony: [\n      'harmony/entry/build/default/outputs/**/entry-default-signed.internaltesting.hap',\n      'harmony/build/outputs/**/*-signed.app',\n    ],\n  },\n});\n`,
+    );
+    fs.mkdirSync(path.join(proj, "harmony", "AppScope"), { recursive: true });
+    fs.writeFileSync(
+      path.join(proj, "harmony", "AppScope", "app.json5"),
+      JSON.stringify({ versionName: "4.0.0", versionCode: 4000000 }),
+    );
+    const hapDir = path.join(proj, "harmony", "entry", "build", "default", "outputs", "default");
+    const appDir = path.join(proj, "harmony", "build", "outputs", "default");
+    fs.mkdirSync(hapDir, { recursive: true });
+    fs.mkdirSync(appDir, { recursive: true });
+    // 两产物都是测试孪生体版本（过版本校验），.hap mtime 更新（模拟刚跑完蒲公英轮）
+    const version = JSON.stringify({
+      summary: { app: { version: { name: "4.0.1000", code: 4000001 } } },
+    });
+    fs.writeFileSync(path.join(hapDir, "entry-default-signed.internaltesting.hap"), "hap-bytes");
+    fs.writeFileSync(path.join(hapDir, "pack.info"), version);
+    fs.writeFileSync(path.join(appDir, "harmony-default-signed.app"), "app-bytes");
+    fs.writeFileSync(path.join(appDir, "pack.info"), version);
+    const past = new Date(Date.now() - 3_600_000);
+    fs.utimesSync(path.join(appDir, "harmony-default-signed.app"), past, past);
+    const r = cli(["beta", "harmony", "--delivery", "native", "--yes"]);
+    // 行为断言（spinner 文本非 TTY 不落 stdout）：探测选中 .app 进入 AGC 分流 →
+    // 凭据检查报缺 AGC_CLIENT_ID；若误选 .hap 会先报「需要 .app 整包」（渠道终验）
+    expect(r.out).toContain("AGC_CLIENT_ID");
+    expect(r.out).not.toContain("需要 .app 整包");
+    expect(r.out).not.toContain("internaltesting.hap");
+  });
+
   it("beta harmony：suffix 策略期望派生测试包 4.0.0-beta（默认 patch+1000 之外的策略生效）", () => {
     fs.writeFileSync(
       path.join(proj, "applift.config.ts"),

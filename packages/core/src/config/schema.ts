@@ -88,6 +88,12 @@ export const BetaConfigSchema = z.object({
       /** 3=邀请测试（默认）4=公开测试 */
       testType: z.union([z.literal(3), z.literal(4)]).default(3),
       /**
+       * 隐私政策 URL（提审必填：AGC Testing API 校验 extInfo.privacyPolicy，
+       * 控制台对应版本创建时的「自定义协议」步骤；缺失提审报 204144692
+       * privacyPolicy is necessary——2026-10-25 qy-driver 实测）。透传 target.privacyPolicy。
+       */
+      privacyPolicy: z.string().optional(),
+      /**
        * 发布前自动清理旧测试版本（stop+delete，默认 true）：
        * AGC 测试版本在审/在架数量有上限（在审超限提交报 204144692、在架邀请测试 3 个），
        * 旧版本不清理会阻塞新版本提审。清理只移除 AGC 在架记录——已装设备与热更均不受影响，

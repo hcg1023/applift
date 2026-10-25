@@ -121,7 +121,12 @@ describe("BetaConfigSchema（beta 多渠道）", () => {
     const config = ProjectConfigSchema.parse({
       beta: {
         pgyer: { platforms: ["android", "ios"], installPassword: "1234" },
-        agc: { submit: true, group: "内测组", testType: 4 },
+        agc: {
+          submit: true,
+          group: "内测组",
+          testType: 4,
+          privacyPolicy: "https://x.example/p.pdf",
+        },
         testflight: { note: "TF 备注" },
       },
     });
@@ -132,6 +137,7 @@ describe("BetaConfigSchema（beta 多渠道）", () => {
       submit: true,
       group: "内测组",
       testType: 4,
+      privacyPolicy: "https://x.example/p.pdf",
       cleanup: true,
     });
     expect(config.beta?.testflight?.note).toBe("TF 备注");
