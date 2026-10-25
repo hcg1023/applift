@@ -587,12 +587,53 @@ export function rnUpdate(opts: RnUpdateOptions = {}, cli?: PushyCli): AppliftPlu
         const key = `${platform}:${versionName}`;
         if (uploadedBaselines.has(key)) return;
         uploadedBaselines.add(key);
-        await resolvePushyClient(opts, cli, hookCtx.credentials).uploadApp(
-          appId,
-          result.artifactPath,
-          versionName,
-          readDepVersions(hookCtx.cwd),
-        );
+        const pushy = resolvePushyClient(opts, cli, hookCtx.credentials);
+        try {
+          await pushy.uploadApp(
+            appId,
+            result.artifactPath,
+            versionName,
+            readDepVersions(hookCtx.cwd),
+          );
+        } catch (e) {
+          // 409 = 同名基线已存在（「版本名或包 hash 重复」）。测试孪生体重建场景
+          //（原生依赖修复等，versionName 不变、包内容变）会命中：自动替换旧基线，
+          // 安全前提 = 该基线名下无热更版本绑定（删除被绑定的基线会孤儿化热更）。
+          if ((e as Error & { status?: number }).status !== 409) throw e;
+          const sameName = (await pushy.packages(appId)).filter((p) => p.name === versionName);
+          if (sameName.length === 0)
+            throw new Error(
+              `基线 409 但未发现同名基线（hash 重复？）：${versionName}——请人工核对 pushy 后台`,
+            );
+          const vers = await pushy.versions(appId);
+          const bound = vers.filter(
+            (v) =>
+              v.packageVersion === versionName ||
+              (v.packageVersion === undefined &&
+                sameName.some((p) => v.hash === p.hash && v.name === versionName)),
+          );
+          if (vers.length > 0 && bound.length > 0)
+            throw new Error(
+              `基线 ${versionName} 已绑定 ${bound.length} 个热更版本，自动替换会使热更孤儿化——` +
+                `请人工处理（pushy 后台迁移热更或删除后重发）`,
+            );
+          if (vers.length > 0 && vers.every((v) => v.packageVersion === undefined))
+            throw new Error(
+              `服务端未回显热更绑定关系，无法确认 ${versionName} 基线可安全替换——请人工核对后删除重传`,
+            );
+          for (const p of sameName) await pushy.deletePackage(appId, p.id);
+          process.stderr.write(
+            `⚠ pushy 基线 ${versionName} 内容已变（同版本名重建），自动删除旧基线 ${sameName
+              .map((p) => `#${p.id}(${p.hash})`)
+              .join(",")} 并重传\n`,
+          );
+          await pushy.uploadApp(
+            appId,
+            result.artifactPath,
+            versionName,
+            readDepVersions(hookCtx.cwd),
+          );
+        }
       } catch (e) {
         uploadedBaselines.delete(
           `${platform}:${readArtifactVersion(result.artifactPath)?.versionName ?? ""}`,

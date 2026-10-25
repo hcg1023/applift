@@ -36,10 +36,18 @@ function mkCli(over: Partial<PushyCli> = {}) {
   }));
   const rebind = vi.fn(async (_input: Parameters<PushyCli["rebind"]>[0]) => {});
   const versions = vi.fn(
-    async (_appId: number): Promise<Array<{ id: number; hash: string; name: string }>> => [],
+    async (
+      _appId: number,
+    ): Promise<Array<{ id: number; hash: string; name: string; packageVersion?: string }>> => [],
   );
-  const cli: PushyCli = { publish, uploadApp, rebind, versions, ...over };
-  return { cli, calls: { publish, uploadApp, rebind, versions } };
+  const packages = vi.fn(
+    async (
+      _appId: number,
+    ): Promise<Array<{ id: number; hash: string; name: string; status: string }>> => [],
+  );
+  const deletePackage = vi.fn(async (_appId: number, _packageId: number) => {});
+  const cli: PushyCli = { publish, uploadApp, rebind, versions, packages, deletePackage, ...over };
+  return { cli, calls: { publish, uploadApp, rebind, versions, packages, deletePackage } };
 }
 
 /** ppk 产物 fixture：.pushy/output/harmony.<time>.ppk（pushy 官方输出约定），返回绝对路径 */
@@ -714,6 +722,96 @@ describe("stage:after 自动基线（原生路径发版成功后 pushy uploadApp
     ]);
     expect(calls.uploadApp).toHaveBeenCalledTimes(1);
     expect(calls.uploadApp.mock.calls[0]![1]).toBe(artifact);
+  });
+
+  it("uploadApp 409 同名基线且无热更绑定 → 自动删除旧基线并重传（孪生体重建场景）", async () => {
+    const artifact = appArtifact();
+    const conflict = Object.assign(
+      new Error("pushy API /app/34166/package/create 失败（HTTP 409）：原生包已存在"),
+      { status: 409 },
+    );
+    let calls409 = 0;
+    const m = mkCli({
+      uploadApp: vi.fn(async () => {
+        if (++calls409 === 1) throw conflict;
+        return { packageId: 100779, version: "4.0.0" };
+      }),
+      packages: vi.fn(async () => [
+        { id: 100778, hash: "OLD", name: "4.0.0", status: "normal" },
+        { id: 100700, hash: "X", name: "3.9.0", status: "normal" },
+      ]),
+      versions: vi.fn(async () => []),
+    });
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const plugin = rnUpdate({ harmony: 34166 }, m.cli);
+      await plugin["stage:after"]!(
+        { channel: "agc", ok: true, artifactPath: artifact },
+        { cwd: "/tmp", channel: "agc" },
+      );
+      expect(vi.mocked(m.cli.uploadApp)).toHaveBeenCalledTimes(2);
+      expect(m.calls.deletePackage).toHaveBeenCalledWith(34166, 100778);
+      expect(m.calls.deletePackage).toHaveBeenCalledTimes(1); // 只删同名，不碰 3.9.0
+      expect(vi.mocked(m.cli.packages).mock.calls[0]![0]).toBe(34166);
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("自动删除旧基线 #100778(OLD)"));
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it("uploadApp 409 但同名基线已绑定热更版本 → 拒绝自动替换，提示人工（不删不重传）", async () => {
+    const artifact = appArtifact();
+    const conflict = Object.assign(new Error("HTTP 409"), { status: 409 });
+    let calls409 = 0;
+    const m = mkCli({
+      uploadApp: vi.fn(async () => {
+        if (++calls409 === 1) throw conflict;
+        return { packageId: 1, version: "4.0.0" };
+      }),
+      packages: vi.fn(async () => [{ id: 100778, hash: "OLD", name: "4.0.0", status: "normal" }]),
+      versions: vi.fn(async () => [
+        { id: 9001, hash: "", name: "4.0.0-patch.1", packageVersion: "4.0.0" },
+      ]),
+    });
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const plugin = rnUpdate({ harmony: 34166 }, m.cli);
+      await plugin["stage:after"]!(
+        { channel: "agc", ok: true, artifactPath: artifact },
+        { cwd: "/tmp", channel: "agc" },
+      );
+      expect(m.calls.deletePackage).not.toHaveBeenCalled();
+      expect(vi.mocked(m.cli.uploadApp)).toHaveBeenCalledTimes(1);
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("孤儿化"));
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it("uploadApp 409 但热更绑定关系未知（服务端未回显 packageVersion）→ 保守拒绝人工核对", async () => {
+    const artifact = appArtifact();
+    const conflict = Object.assign(new Error("HTTP 409"), { status: 409 });
+    let calls409 = 0;
+    const m = mkCli({
+      uploadApp: vi.fn(async () => {
+        if (++calls409 === 1) throw conflict;
+        return { packageId: 1, version: "4.0.0" };
+      }),
+      packages: vi.fn(async () => [{ id: 100778, hash: "OLD", name: "4.0.0", status: "normal" }]),
+      versions: vi.fn(async () => [{ id: 9001, hash: "", name: "4.0.0-patch.1" }]),
+    });
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const plugin = rnUpdate({ harmony: 34166 }, m.cli);
+      await plugin["stage:after"]!(
+        { channel: "agc", ok: true, artifactPath: artifact },
+        { cwd: "/tmp", channel: "agc" },
+      );
+      expect(m.calls.deletePackage).not.toHaveBeenCalled();
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("无法确认"));
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 });
 

@@ -619,8 +619,18 @@ export class AgcHarmonyChannel implements Channel {
     //     （配置 beta.agc.privacyPolicy 透传，未配置则不带：老应用不强制，报错走 errorHints 指引）
     //   languages[].appDesc —— 缺失报 Description is necessary!（语言位固定 zh-CN，
     //     国内测试分发默认；多语言版本介绍属控制台人工范畴）
+    //   appDesc / newFeatures / 线上 briefInfo 三者不得相同 —— 同值报
+    //     "description and briefInfo and new Features cant be the same"（2026-10-25
+    //     qy-driver 实测，204144692）。newFeatures 用本次更新说明（--note），
+    //     appDesc 取 beta.agc.appDesc 配置；缺省用与 note 来源无关的通用基线
+    //     文案，天然互异（注意自定义 appDesc 不要与 note / 控制台应用简介同文）。
     const privacyPolicy = ctx.target.privacyPolicy?.trim();
-    const desc = (ctx.updateDescription ?? "applift 测试发布").slice(0, 100);
+    const note = ctx.updateDescription ?? "applift 测试发布";
+    const appDesc = (
+      ctx.target.appDesc?.trim() ||
+      "内测验证版本（internal test build），更新内容以新特性说明为准。"
+    ).slice(0, 100);
+    const newFeatures = note.slice(0, 100);
     await agcJson(
       `${BASE}/publish/v2/test/app/version?appId=${encodeURIComponent(appId)}`,
       {
@@ -630,7 +640,7 @@ export class AgcHarmonyChannel implements Channel {
           versionId,
           pkgId,
           ...(privacyPolicy ? { extInfo: { privacyPolicy } } : {}),
-          languages: [{ language: "zh-CN", appDesc: desc, newFeatures: desc }],
+          languages: [{ language: "zh-CN", appDesc, newFeatures }],
         }),
       },
       "绑定测试软件包",
@@ -763,9 +773,15 @@ export class AgcHarmonyChannel implements Channel {
           "停止测试版本",
         );
       } catch (e) {
+        const msg = (e as Error).message;
+        // state 9998 = 版本在审中，AGC 平台不允许停/删（2026-10-25 qy-driver 实测）——
+        // API 层无解，给可行动指引：控制台撤回审核或等审毕后重发清理
+        const hint = msg.includes("state is 9998")
+          ? "——该版本在审中，AGC 不允许停/删：到控制台撤回该审核或等审毕后下次发版自动清理"
+          : "";
         ctx.emit({
           type: "warn",
-          message: `停止测试版本 ${label}失败（继续尝试删除）: ${(e as Error).message}`,
+          message: `停止测试版本 ${label}失败（继续尝试删除）: ${msg}${hint}`,
         });
       }
       try {
