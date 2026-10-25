@@ -856,6 +856,7 @@ program
                   testType: String(agcCfg.testType),
                   // cleanup 默认 true（schema 缺省）；'false' 时渠道跳过旧测试版本清理
                   ...(agcCfg.privacyPolicy ? { privacyPolicy: agcCfg.privacyPolicy } : {}),
+                  ...(agcCfg.appDesc ? { appDesc: agcCfg.appDesc } : {}),
                 },
                 artifactPath,
                 cmdOpts.note,
@@ -999,6 +1000,7 @@ program
             testType: String(agcCfg?.testType ?? 3),
             // cleanup 默认 true（schema 缺省）；'false' 时渠道跳过旧测试版本清理
             ...(agcCfg?.privacyPolicy ? { privacyPolicy: agcCfg.privacyPolicy } : {}),
+            ...(agcCfg?.appDesc ? { appDesc: agcCfg.appDesc } : {}),
           },
           artifactPath,
           cmdOpts.note,

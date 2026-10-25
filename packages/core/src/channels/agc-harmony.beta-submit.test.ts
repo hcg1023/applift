@@ -142,7 +142,15 @@ describe("agc beta 自动提审（submitTest）", () => {
     expect(JSON.parse(putCalls[0]!.body as string)).toEqual({
       versionId: VERSION_ID,
       pkgId: PKG_ID,
-      languages: [{ language: "zh-CN", appDesc: "内测修复", newFeatures: "内测修复" }],
+      // appDesc 固定基线（AGC 校验 appDesc/newFeatures/briefInfo 三者互异），
+      // newFeatures 用 --note
+      languages: [
+        {
+          language: "zh-CN",
+          appDesc: "内测验证版本（internal test build），更新内容以新特性说明为准。",
+          newFeatures: "内测修复",
+        },
+      ],
     });
     const groupBind = JSON.parse(putCalls[1]!.body as string) as {
       versionId: string;
@@ -189,7 +197,7 @@ describe("agc beta 自动提审（submitTest）", () => {
     });
   });
 
-  it("updateDescription 缺省：languages.appDesc 回退「applift 测试发布」", async () => {
+  it("updateDescription 缺省：newFeatures 回退「applift 测试发布」，appDesc 用固定基线（三者互异）", async () => {
     const fetchMock = mockFetch(baseRoutes());
     const ctx = { ...makeCtx({ appId: APP_ID, releaseType: "6" }), updateDescription: undefined };
     await new AgcHarmonyChannel().stage(ctx);
@@ -197,7 +205,26 @@ describe("agc beta 自动提审（submitTest）", () => {
       (c) => c.url.includes("test/app/version") && c.method === "PUT",
     )!;
     expect(JSON.parse(put.body as string)).toMatchObject({
-      languages: [{ language: "zh-CN", appDesc: "applift 测试发布" }],
+      languages: [
+        {
+          language: "zh-CN",
+          appDesc: "内测验证版本（internal test build），更新内容以新特性说明为准。",
+          newFeatures: "applift 测试发布",
+        },
+      ],
+    });
+  });
+
+  it("配置 beta.agc.appDesc：languages.appDesc 透传自定义文案", async () => {
+    const fetchMock = mockFetch(baseRoutes());
+    await new AgcHarmonyChannel().stage(
+      makeCtx({ appId: APP_ID, releaseType: "6", appDesc: "自定义内测描述文案" }),
+    );
+    const put = fetchMock.calls.find(
+      (c) => c.url.includes("test/app/version") && c.method === "PUT",
+    )!;
+    expect(JSON.parse(put.body as string)).toMatchObject({
+      languages: [{ language: "zh-CN", appDesc: "自定义内测描述文案" }],
     });
   });
 

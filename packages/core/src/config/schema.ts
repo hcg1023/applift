@@ -94,6 +94,12 @@ export const BetaConfigSchema = z.object({
        */
       privacyPolicy: z.string().optional(),
       /**
+       * 测试版本描述（languages[].appDesc）：AGC 校验 appDesc/newFeatures/线上 briefInfo
+       * 三者不得相同（2026-10-25 实测），appDesc 与 newFeatures（--note）来源必须互异。
+       * 未配置时用通用基线文案；透传 target.appDesc。
+       */
+      appDesc: z.string().optional(),
+      /**
        * 发布前自动清理旧测试版本（stop+delete，默认 true）：
        * AGC 测试版本在审/在架数量有上限（在审超限提交报 204144692、在架邀请测试 3 个），
        * 旧版本不清理会阻塞新版本提审。清理只移除 AGC 在架记录——已装设备与热更均不受影响，

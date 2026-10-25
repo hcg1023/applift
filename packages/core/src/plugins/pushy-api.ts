@@ -56,8 +56,18 @@ export interface PushyCli {
     packageVersion: string;
     rollout?: number;
   }): Promise<void>;
-  /** 版本列表（取号与状态展示用） */
-  versions(appId: number): Promise<Array<{ id: number; hash: string; name: string }>>;
+  /** 版本列表（取号与状态展示用）。packageVersion：该热更绑定的原生基线版本名
+   *  （基线自动替换的安全判据；服务端未回显时字段缺省，调用方按无法确认处理） */
+  versions(
+    appId: number,
+  ): Promise<Array<{ id: number; hash: string; name: string; packageVersion?: string }>>;
+  /** 基线包列表（GET /app/:id/package/list；409 自动替换的发现手段） */
+  packages(
+    appId: number,
+  ): Promise<Array<{ id: number; hash: string; name: string; status: string }>>;
+  /** 删除基线包（DELETE /app/:id/package/:packageId，2026-10-25 实测端点存在）。
+   *  调用方必须先确认该基线无热更版本绑定（删除被绑定的基线会孤儿化热更）。 */
+  deletePackage(appId: number, packageId: number): Promise<void>;
 }
 
 /** credentials.json 中的 pushy token 键名 */
@@ -129,11 +139,14 @@ async function query<T>(
   if (!res.ok) {
     const msg =
       (json as { message?: string } | undefined)?.message || res.statusText || `HTTP ${res.status}`;
-    throw new Error(
+    const err = new Error(
       res.status === 401
         ? `pushy API 鉴权失败（token 无效或过期）：请更新 credentials.json 的 ${PUSHY_TOKEN_KEY}`
         : `pushy API ${api} 失败（HTTP ${res.status}）：${msg}`,
     );
+    // 结构化 status：调用方（基线 409 自动替换等）按状态码分支，不靠 message 匹配
+    (err as Error & { status?: number }).status = res.status;
+    throw err;
   }
   return (json ?? {}) as T;
 }
@@ -373,17 +386,44 @@ export function createPushyApi(opts: PushyApiOptions): PushyCli {
     },
 
     async versions(appId) {
-      const out: Array<{ id: number; hash: string; name: string }> = [];
+      const out: Array<{ id: number; hash: string; name: string; packageVersion?: string }> = [];
       const limit = 100;
       for (let offset = 0; offset < limit * PAGES_HARD_CAP; offset += limit) {
-        const { data } = await q<{ data?: Array<{ id: number; hash?: string; name: string }> }>(
-          `/app/${appId}/version/list?offset=${offset}&limit=${limit}`,
-        );
+        const { data } = await q<{
+          data?: Array<{ id: number; hash?: string; name: string; packageVersion?: string }>;
+        }>(`/app/${appId}/version/list?offset=${offset}&limit=${limit}`);
         if (!data?.length) break;
-        for (const v of data) out.push({ id: v.id, hash: v.hash ?? "", name: v.name });
+        for (const v of data)
+          out.push({
+            id: v.id,
+            hash: v.hash ?? "",
+            name: v.name,
+            // 服务端回显才有（基线自动替换的安全判据；缺失时调用方按无法确认处理）
+            ...(v.packageVersion !== undefined ? { packageVersion: v.packageVersion } : {}),
+          });
         if (data.length < limit) break;
       }
       return out;
+    },
+
+    async packages(appId) {
+      const out: Array<{ id: number; hash: string; name: string; status: string }> = [];
+      const limit = 100;
+      for (let offset = 0; offset < limit * PAGES_HARD_CAP; offset += limit) {
+        const { data } = await q<{
+          data?: Array<{ id: number; hash?: string; name: string; status?: string }>;
+        }>(`/app/${appId}/package/list?offset=${offset}&limit=${limit}`);
+        if (!data?.length) break;
+        for (const p of data)
+          out.push({ id: p.id, hash: p.hash ?? "", name: p.name, status: p.status ?? "" });
+        if (data.length < limit) break;
+      }
+      return out;
+    },
+
+    async deletePackage(appId, packageId) {
+      // 2026-10-25 实测：DELETE /app/:id/package/:pid 存在且对不存在 id 也 200（宽松语义）
+      await q(`/app/${appId}/package/${packageId}`, { method: "DELETE" });
     },
   };
 }
