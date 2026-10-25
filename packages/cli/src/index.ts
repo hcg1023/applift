@@ -855,7 +855,7 @@ program
                   ...(agcCfg.group ? { testGroup: agcCfg.group } : {}),
                   testType: String(agcCfg.testType),
                   // cleanup 默认 true（schema 缺省）；'false' 时渠道跳过旧测试版本清理
-                  cleanup: String(agcCfg.cleanup),
+                  ...(agcCfg.privacyPolicy ? { privacyPolicy: agcCfg.privacyPolicy } : {}),
                 },
                 artifactPath,
                 cmdOpts.note,
@@ -941,7 +941,16 @@ program
         const framework = requireFramework(cmdOpts.cwd, pluginFrameworks);
         const patterns =
           projCfg.artifacts?.[platform] ?? framework?.artifactPatterns(platform) ?? [];
-        const found = findArtifacts(cmdOpts.cwd, patterns);
+        // 双产物工程防串包（与 release 探测同口径）：AGC 测试发布只收 .app（渠道终验同判），
+        // mtime 更新的 internaltesting .hap（刚跑完蒲公英轮）不得抢位——2026-10-25 实测踩坑
+        const viaExts = platform === "harmony" && cmdOpts.via !== "pgyer" ? [".app"] : undefined;
+        const found = (
+          viaExts
+            ? findArtifacts(cmdOpts.cwd, patterns).filter((f) =>
+                viaExts.includes(path.extname(f).toLowerCase()),
+              )
+            : findArtifacts(cmdOpts.cwd, patterns)
+        ) as string[];
         // 版本语义：热更平台的 beta 吃派生测试包（测试设备收测试线热更）
         const providers: UpdateProvider[] = [];
         await host?.broadcast("update:register", { cwd: cmdOpts.cwd }, providers);
@@ -989,7 +998,7 @@ program
             ...(agcCfg?.group ? { testGroup: agcCfg.group } : {}),
             testType: String(agcCfg?.testType ?? 3),
             // cleanup 默认 true（schema 缺省）；'false' 时渠道跳过旧测试版本清理
-            cleanup: String(agcCfg?.cleanup ?? true),
+            ...(agcCfg?.privacyPolicy ? { privacyPolicy: agcCfg.privacyPolicy } : {}),
           },
           artifactPath,
           cmdOpts.note,

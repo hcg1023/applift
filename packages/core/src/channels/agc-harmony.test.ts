@@ -543,9 +543,13 @@ describe("AgcHarmonyChannel.stage（releaseType=6 测试发布）", () => {
       distributeMode: 1,
       file: { fileName: "applift-test-agc-harmony.app", objectId: "obj-1" },
     });
-    // 绑定：PUT test/app/version {versionId, pkgId}
+    // 绑定：PUT test/app/version {versionId, pkgId} + 提审必填描述（languages，取 updateDescription）
     const bindCall = find("test/app/version", "PUT")!;
-    expect(JSON.parse(String(bindCall.body))).toEqual({ versionId: "ver-9", pkgId: "pkg-9" });
+    expect(JSON.parse(String(bindCall.body))).toEqual({
+      versionId: "ver-9",
+      pkgId: "pkg-9",
+      languages: [{ language: "zh-CN", appDesc: "beta 说明", newFeatures: "beta 说明" }],
+    });
     // 无提审请求
     expect(find("app-submit")).toBeUndefined();
     expect(events.at(-1)).toMatchObject({ type: "phase", phase: "done" });

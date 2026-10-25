@@ -134,7 +134,7 @@ describe("agc beta 自动提审（submitTest）", () => {
     expect(groupCall.headers.appId).toBe(APP_ID);
     expect(groupCall.headers.Authorization).toBe("Bearer agc-token");
 
-    // 群组绑定 PUT：openTestInfo.testTaskInfo.groupInfos 只含 groupId/groupName
+    // 群组绑定前先有绑定包 PUT：提审必填元数据（languages 描述；privacyPolicy 未配置不带）
     const putCalls = fetchMock.calls.filter(
       (c) => c.url.includes("test/app/version") && c.method === "PUT",
     );
@@ -142,6 +142,7 @@ describe("agc beta 自动提审（submitTest）", () => {
     expect(JSON.parse(putCalls[0]!.body as string)).toEqual({
       versionId: VERSION_ID,
       pkgId: PKG_ID,
+      languages: [{ language: "zh-CN", appDesc: "内测修复", newFeatures: "内测修复" }],
     });
     const groupBind = JSON.parse(putCalls[1]!.body as string) as {
       versionId: string;
@@ -157,6 +158,8 @@ describe("agc beta 自动提审（submitTest）", () => {
     );
     expect(groupBind.openTestInfo.testTaskInfo).toEqual({
       groupInfos: [{ groupId: GROUP_ID, groupName: GROUP_NAME }],
+      // 邀请/公开测试提审必填：1=AppGallery 客户端测试专区（2026-10-25 实测）
+      displayArea: "1",
     });
 
     // 提审：POST submit?appId=xx，body 只有 versionId，且在群组绑定之后
@@ -166,6 +169,36 @@ describe("agc beta 自动提审（submitTest）", () => {
     expect(fetchMock.calls.indexOf(submitCall)).toBeGreaterThan(
       fetchMock.calls.indexOf(putCalls[1]!),
     );
+  });
+
+  it("配置 privacyPolicy：绑定 PUT 带 extInfo.privacyPolicy（提审必填「自定义协议」）", async () => {
+    const fetchMock = mockFetch(baseRoutes());
+    const channel = new AgcHarmonyChannel();
+    await channel.stage(
+      makeCtx({
+        appId: APP_ID,
+        releaseType: "6",
+        privacyPolicy: "https://dl.qy566.com/d/wlydyszc.pdf",
+      }),
+    );
+    const put = fetchMock.calls.find(
+      (c) => c.url.includes("test/app/version") && c.method === "PUT",
+    )!;
+    expect(JSON.parse(put.body as string)).toMatchObject({
+      extInfo: { privacyPolicy: "https://dl.qy566.com/d/wlydyszc.pdf" },
+    });
+  });
+
+  it("updateDescription 缺省：languages.appDesc 回退「applift 测试发布」", async () => {
+    const fetchMock = mockFetch(baseRoutes());
+    const ctx = { ...makeCtx({ appId: APP_ID, releaseType: "6" }), updateDescription: undefined };
+    await new AgcHarmonyChannel().stage(ctx);
+    const put = fetchMock.calls.find(
+      (c) => c.url.includes("test/app/version") && c.method === "PUT",
+    )!;
+    expect(JSON.parse(put.body as string)).toMatchObject({
+      languages: [{ language: "zh-CN", appDesc: "applift 测试发布" }],
+    });
   });
 
   it("submitTest 不配 testGroup：跳过群组查询直接提审", async () => {
