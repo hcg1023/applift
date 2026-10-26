@@ -12,9 +12,11 @@
  * cresc/自建服务差异仅在 baseUrl（同一套服务端代码），serverUrl 由 rnUpdate 配置注入。
  * uploadApp 相对官方 CLI 的有意降级（记录在案）：传原始产物而非 slim 包、不带 bundleHash/
  * bytecodeVersion/bundleLocation（服务端无法将该基线用作 hermes-base 或 package-origin diff）、
- * buildTime 为上传时刻而非包内提取、不校验包内 appId 与目标 app 一致（配错 appId 会传到别的 app——
- * 由配置审查保证）、不做 maxSize 预检（超限撞对象存储错误）。需要 hermes-base 能力时在此补齐。
- */
+ * 不校验包内 appId 与目标 app 一致（配错 appId 会传到别的 app——由配置审查保证）、
+ * 不做 maxSize 预检（超限撞对象存储错误）。需要 hermes-base 能力时在此补齐。
+ * buildTime 已对齐官方语义：由调用方从产物内提取真实构建时间戳传入（2026-10-26 qy-driver
+ * 实证：服务端按 buildTime 精确匹配设备上报，写入上传时刻会让该基线下的设备全部
+ * checkUpdate 吃「编译时间戳不匹配」+ 封锁 6h，热更永远发不下去）。 */
 import fs from "node:fs";
 import path from "node:path";
 import nodeHttp from "node:http";
@@ -42,12 +44,14 @@ export interface PushyCli {
     rollout?: number;
     deps: Record<string, string>;
   }): Promise<{ versionId: number }>;
-  /** 上传原生基线（versionName 由调用方从产物读取后显式传入；deps 同 publish） */
+  /** 上传原生基线（versionName 与 buildTime 均由调用方从产物内读取后显式传入；
+   *  buildTime 必须与设备上报的编译时间戳精确一致，读不出时调用方应拒绝上传。deps 同 publish） */
   uploadApp(
     appId: number,
     appFile: string,
     versionName: string,
     deps: Record<string, string>,
+    buildTime: string,
   ): Promise<{ packageId: number; version: string }>;
   /** 版本重绑（promote 语义：测试通道版本重绑正式原生版本 + 灰度） */
   rebind(input: {
@@ -367,14 +371,14 @@ export function createPushyApi(opts: PushyApiOptions): PushyCli {
       return { versionId: id };
     },
 
-    async uploadApp(appId, appFile, versionName, deps) {
+    async uploadApp(appId, appFile, versionName, deps, buildTime) {
       const hash = await uploadFile(f, baseUrl, opts.token, appId, appFile, opts.httpUpload);
       const { id } = await q<{ id: number }>(`/app/${appId}/package/create`, {
         method: "POST",
         body: JSON.stringify({
           name: versionName,
           hash,
-          buildTime: String(Date.now()),
+          buildTime,
           deps,
         }),
       });
