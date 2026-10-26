@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { readProjectVersions } from "../version/project.js";
-import { readArtifactVersion } from "../version/artifact.js";
+import { readArtifactBuildTime, readArtifactVersion } from "../version/artifact.js";
 import {
   assertBetaVersionSupported,
   betaVersionName,
@@ -580,6 +580,13 @@ export function rnUpdate(opts: RnUpdateOptions = {}, cli?: PushyCli): AppliftPlu
           throw new Error(
             `未能从产物读出 versionName：${result.artifactPath}（readArtifactVersion 不支持该格式？）`,
           );
+        // buildTime 必须与设备上报的编译时间戳精确一致（pushy 服务端不匹配即封锁 6h，
+        // 2026-10-26 qy-driver 实证）——读不出时拒绝上传，绝不猜测/使用上传时刻。
+        const buildTime = readArtifactBuildTime(result.artifactPath);
+        if (!buildTime)
+          throw new Error(
+            `未能从产物读出 pushy 构建时间戳：${result.artifactPath}（包内缺 meta.json / pushy_build_time？请人工用 pushy CLI 补传基线）`,
+          );
         // 显式 target 优先（CLI 的 beta 路径与 release pipeline 都会透传）；
         // 老载荷没有 target 时才退回「版本名 ≠ 工程版本名」的启发式
         const target = result.target ?? baselineChannel(versionName, platform, hookCtx.cwd);
@@ -594,6 +601,7 @@ export function rnUpdate(opts: RnUpdateOptions = {}, cli?: PushyCli): AppliftPlu
             result.artifactPath,
             versionName,
             readDepVersions(hookCtx.cwd),
+            buildTime,
           );
         } catch (e) {
           // 409 = 同名基线已存在（「版本名或包 hash 重复」）。测试孪生体重建场景
@@ -632,6 +640,7 @@ export function rnUpdate(opts: RnUpdateOptions = {}, cli?: PushyCli): AppliftPlu
             result.artifactPath,
             versionName,
             readDepVersions(hookCtx.cwd),
+            buildTime,
           );
         }
       } catch (e) {

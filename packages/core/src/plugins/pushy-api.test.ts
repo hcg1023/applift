@@ -170,7 +170,7 @@ describe("uploadApp（原生基线上传）", () => {
       () => 204,
     );
     const cli = createPushyApi({ token: "t", fetchImpl, httpUpload });
-    const r = await cli.uploadApp(34166, file, "4.0.0", {});
+    const r = await cli.uploadApp(34166, file, "4.0.0", {}, "1792939052087");
     expect(r).toEqual({ packageId: 100266, version: "4.0.0" });
     const create = calls.find((c) => c.url.endsWith("/package/create"))!;
     const body = JSON.parse(String(create.body)) as {
@@ -180,7 +180,7 @@ describe("uploadApp（原生基线上传）", () => {
     };
     expect(body.name).toBe("4.0.0");
     expect(body.hash).toBe("hashKey123");
-    expect(body.buildTime).toMatch(/^\d+$/);
+    expect(body.buildTime).toBe("1792939052087");
   });
 
   it("自托管节点预签名 PUT 直传 → 返回指令 key 作为 hash", async () => {
@@ -193,7 +193,7 @@ describe("uploadApp（原生基线上传）", () => {
       (url) => (url.startsWith("https://s3.example.com") ? 200 : 500),
     );
     const cli = createPushyApi({ token: "t", fetchImpl, httpUpload });
-    await cli.uploadApp(34166, file, "4.0.0", {});
+    await cli.uploadApp(34166, file, "4.0.0", {}, "1792939052087");
     const [putMethod, putUrl, , putBody] = httpUpload.mock.calls[0]!;
     expect(putMethod).toBe("PUT");
     expect(putUrl).toBe("https://s3.example.com/presigned");
@@ -314,7 +314,7 @@ describe("错误语义与配置", () => {
       (url) => (url.startsWith("https://s3.example.com") ? 200 : 500),
     );
     const cli = createPushyApi({ token: "t", fetchImpl, httpUpload });
-    await cli.uploadApp(1, file, "4.0.0", {});
+    await cli.uploadApp(1, file, "4.0.0", {}, "1792939052087");
     const [, , putHeaders] = httpUpload.mock.calls[0]!;
     expect(putHeaders["x-amz-server-side-encryption"]).toBe("AES256");
     expect(putHeaders["content-length"]).toBe("9");
@@ -329,7 +329,7 @@ describe("错误语义与配置", () => {
       () => 204,
     );
     const cli = createPushyApi({ token: "t", fetchImpl, httpUpload });
-    await cli.uploadApp(1, file, "4.0.0", {});
+    await cli.uploadApp(1, file, "4.0.0", {}, "1792939052087");
     const ossBody = httpUpload.mock.calls[0]![3]!;
     expect(ossBody.toString()).toContain("Content-Type: application/json");
   });
@@ -406,7 +406,9 @@ describe("错误语义与配置", () => {
       () => 403,
     );
     const cli = createPushyApi({ token: "t", fetchImpl, httpUpload });
-    await expect(cli.uploadApp(1, file, "4.0.0", {})).rejects.toThrow(/基线直传失败（HTTP 403）/);
+    await expect(cli.uploadApp(1, file, "4.0.0", {}, "1792939052087")).rejects.toThrow(
+      /基线直传失败（HTTP 403）/,
+    );
   });
 
   it("文件 part 的 Content-Type 按扩展名映射（.apk → android 包类型）", async () => {
@@ -418,7 +420,7 @@ describe("错误语义与配置", () => {
       () => 204,
     );
     const cli = createPushyApi({ token: "t", fetchImpl, httpUpload });
-    await cli.uploadApp(1, file, "4.0.0", {});
+    await cli.uploadApp(1, file, "4.0.0", {}, "1792939052087");
     const apkBody = httpUpload.mock.calls[0]![3]!;
     expect(apkBody.toString()).toContain("Content-Type: application/vnd.android.package-archive");
   });
@@ -432,7 +434,7 @@ describe("错误语义与配置", () => {
       () => 204,
     );
     const cli = createPushyApi({ token: "t", fetchImpl, httpUpload });
-    await cli.uploadApp(1, file, "4.0.0", {});
+    await cli.uploadApp(1, file, "4.0.0", {}, "1792939052087");
     const ossBody = httpUpload.mock.calls[0]![3]!;
     expect(ossBody.toString()).toContain("Content-Type: application/zip");
   });
@@ -596,7 +598,7 @@ describe("分支补缺（错误语义/载荷边界）", () => {
       () => 204,
     );
     const cli = createPushyApi({ token: "t", fetchImpl, httpUpload });
-    await cli.uploadApp(1, file, "4.0.0", {});
+    await cli.uploadApp(1, file, "4.0.0", {}, "1792939052087");
     expect(httpUpload.mock.calls[0]![3]!.toString()).toContain("Content-Type: application/json");
   });
 });

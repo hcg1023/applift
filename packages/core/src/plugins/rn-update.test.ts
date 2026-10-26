@@ -10,6 +10,14 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { judgeDelivery, makeRnUpdateProvider, rnUpdate } from "./rn-update.js";
+import { readArtifactBuildTime } from "../version/artifact.js";
+import type * as ArtifactModule from "../version/artifact.js";
+
+// buildTime 读取依赖产物 zip 内容（unzip）：单测统一 mock（真实解析见 artifact.test.ts）
+vi.mock("../version/artifact.js", async (importOriginal) => {
+  const mod = await importOriginal<typeof ArtifactModule>();
+  return { ...mod, readArtifactBuildTime: vi.fn(() => "1792939052087") };
+});
 import type { UpdateProvider } from "../update.js";
 import type { PushyCli } from "./pushy-api.js";
 import type { FrameworkAdapter } from "../framework.js";
@@ -589,7 +597,7 @@ describe("stage:after 自动基线（原生路径发版成功后 pushy uploadApp
       { channel: "agc", ok: true, artifactPath: artifact },
       { cwd: "/tmp", channel: "agc" },
     );
-    expect(calls.uploadApp).toHaveBeenCalledWith(34166, artifact, "4.0.0", {});
+    expect(calls.uploadApp).toHaveBeenCalledWith(34166, artifact, "4.0.0", {}, "1792939052087");
   });
 
   it("旧载荷无 target 且工程版本文件损坏（读版本抛错）→ 按正式线上传（fail-safe 不抛）", async () => {
@@ -607,7 +615,7 @@ describe("stage:after 自动基线（原生路径发版成功后 pushy uploadApp
         { cwd: dir, channel: "agc" },
       ),
     ).resolves.toBeUndefined();
-    expect(m.calls.uploadApp).toHaveBeenCalledWith(34166, artifact, "4.0.0", {});
+    expect(m.calls.uploadApp).toHaveBeenCalledWith(34166, artifact, "4.0.0", {}, "1792939052087");
   });
 
   it("产物读不出版本号（无 pack.info 的 .app）→ 不上传，stderr 提醒人工补传", async () => {
@@ -628,6 +636,26 @@ describe("stage:after 自动基线（原生路径发版成功后 pushy uploadApp
     } finally {
       errSpy.mockRestore();
       fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("产物读不出 buildTime → 拒绝上传基线（时间戳不可猜测），stderr 提醒人工补传", async () => {
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const artifact = appArtifact(); // versionName 可读（sidecar pack.info）
+    vi.mocked(readArtifactBuildTime).mockReturnValueOnce(undefined);
+    const m = mkCli();
+    const plugin = rnUpdate({ harmony: 34166 }, m.cli);
+    try {
+      await expect(
+        plugin["stage:after"]!(
+          { channel: "agc", ok: true, artifactPath: artifact },
+          { cwd: "/tmp", channel: "agc" },
+        ),
+      ).resolves.toBeUndefined();
+      expect(m.calls.uploadApp).not.toHaveBeenCalled();
+      expect(errSpy.mock.calls.flat().join(" ")).toContain("未能从产物读出 pushy 构建时间戳");
+    } finally {
+      errSpy.mockRestore();
     }
   });
 
