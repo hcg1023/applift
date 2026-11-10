@@ -61,6 +61,7 @@ function makeCtx(
     target?: Record<string, string>;
     releaseTime?: string;
     artifactPath?: string;
+    updateDescription?: string;
   } = {},
 ): ChannelContext {
   return {
@@ -72,6 +73,7 @@ function makeCtx(
     target: overrides.target ?? { bundleId: "com.example.app" },
     artifactPath: overrides.artifactPath ?? "/tmp/app-release.ipa",
     releaseTime: overrides.releaseTime,
+    updateDescription: overrides.updateDescription,
     emit: () => {},
   } as unknown as ChannelContext;
 }
@@ -448,6 +450,7 @@ describe("submit（ASC REST 提审）", () => {
       },
       {
         match: /appStoreVersionLocalizations/,
+        method: "GET",
         response: {
           status: 200,
           json: overrides.localizations ?? {
@@ -466,6 +469,12 @@ describe("submit（ASC REST 提审）", () => {
             ],
           },
         },
+      },
+      {
+        // whatsNew 写入：PATCH appStoreVersionLocalizations/{id}
+        match: /\/v1\/appStoreVersionLocalizations\/[^/]+$/,
+        method: "PATCH",
+        response: { status: 200, json: { data: { id: "L1" } } },
       },
       { match: /relationships\/builds/, response: { status: 200, json: { data: [] } } },
       {
@@ -556,6 +565,60 @@ describe("submit（ASC REST 提审）", () => {
       expect(events.some((e) => e.type === "progress" && e.detail?.includes("出口合规提示"))).toBe(
         true,
       );
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("--note 提供时：PATCH 每个本地化的 whatsNew（版本更新说明），预检与绑构建之间执行", async () => {
+    const m = mockFetch(submitRoutes());
+    try {
+      const events: Ev[] = [];
+      const ctx = makeCtx({ updateDescription: "修复若干问题，优化体验" });
+      ctx.emit = evCollector(events) as typeof ctx.emit;
+      await ch.submit(ctx);
+
+      // 两条本地化各一次 PATCH，body 形状 = JSON:API whatsNew
+      const patches = m.calls.filter(
+        (c) => c.method === "PATCH" && /\/v1\/appStoreVersionLocalizations\/[^/]+$/.test(c.url),
+      );
+      expect(patches.map((c) => c.url)).toEqual([
+        expect.stringContaining("/v1/appStoreVersionLocalizations/L1"),
+        expect.stringContaining("/v1/appStoreVersionLocalizations/L2"),
+      ]);
+      for (const p of patches) {
+        expect(JSON.parse(p.body as string)).toEqual({
+          data: {
+            type: "appStoreVersionLocalizations",
+            id: p.url.split("/").pop(),
+            attributes: { whatsNew: "修复若干问题，优化体验" },
+          },
+        });
+      }
+      // emit 逐本地化确认（无 locale 兜底显示 id）
+      expect(events.some((e) => e.detail?.includes("zh-Hans"))).toBe(true);
+      expect(events.some((e) => e.detail?.includes("L2"))).toBe(true);
+      // 顺序：whatsNew 写入在预检之后、绑构建之前
+      const idxPatch = m.calls.findIndex(
+        (c) => c.method === "PATCH" && c.url.includes("/v1/appStoreVersionLocalizations/"),
+      );
+      const idxBind = m.calls.findIndex((c) => c.url.includes("relationships/builds"));
+      expect(idxPatch).toBeGreaterThan(-1);
+      expect(idxPatch).toBeLessThan(idxBind);
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("未提供 --note：不产生 whatsNew PATCH（不动 ASC 后台手填文案）", async () => {
+    const m = mockFetch(submitRoutes());
+    try {
+      await ch.submit(makeCtx());
+      expect(
+        m.calls.filter(
+          (c) => c.method === "PATCH" && /\/v1\/appStoreVersionLocalizations\/[^/]+$/.test(c.url),
+        ),
+      ).toHaveLength(0);
     } finally {
       m.restore();
     }

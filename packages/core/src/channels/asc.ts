@@ -14,7 +14,7 @@
  *   凭据 ASC_TRANSPORTER_PATH 可显式指定 iTMSTransporter 路径（校验存在性）；
  *   缺省探测默认安装路径，不存在则回退 altool。
  *   约定 p8 私钥：凭据 ASC_P8_PATH（支持 ~ 前缀）或 ~/.applift/private_keys/AuthKey_<ASC_KEY_ID>.p8
- * - submit: ASC REST API 提审（含提审前预检：本地化描述完备性），按 ASC 官方文档实现，未经真实链路验证
+ * - submit: ASC REST API 提审（--note 写入各本地化 whatsNew「版本更新说明」；提审前预检：本地化描述完备性），按 ASC 官方文档实现，未经真实链路验证
  *   官方文档: https://developer.apple.com/documentation/appstoreconnectapi
  * - status: 查最新 appStoreVersion 的 appVersionState（AppVersionState 15 枚举 → ReviewStatus）
  */
@@ -62,7 +62,7 @@ type AscBuildAttrs = { version?: string; uploadedDate?: string; processingState?
 type AscPreReleaseAttrs = { version?: string };
 /** appStoreVersions 资源属性（appVersionState 枚举见 AppVersionState；releaseType: MANUAL / AFTER_APPROVAL / SCHEDULED） */
 type AscVersionAttrs = { versionString?: string; appVersionState?: string; releaseType?: string };
-/** appStoreVersionLocalizations 资源属性（description 为提审硬性要求） */
+/** appStoreVersionLocalizations 资源属性（description 为提审硬性要求；whatsNew 即「版本更新说明」） */
 type AscVersionLocAttrs = { locale?: string; description?: string };
 
 export class AscChannel implements Channel {
@@ -367,6 +367,8 @@ export class AscChannel implements Channel {
 
     // 3.5) 提审前预检：本地化描述是 Apple 提审硬性要求，缺失会在提交最后一步被拒（提前到提交前暴露）
     await this.preflightLocalizations(jwt, versionId, ctx);
+    // 3.6) 写入版本更新说明（--note → 各本地化 whatsNew；未提供时不动线上文案）
+    await this.applyWhatsNew(jwt, versionId, ctx);
 
     // 4) 把构建绑定到版本（builds 为 to-many 关系，data 传数组）
     await ascRequest(jwt, `/v1/appStoreVersions/${versionId}/relationships/builds`, "PATCH", {
@@ -498,6 +500,38 @@ export class AscChannel implements Channel {
       detail:
         "出口合规提示：Info.plist 声明 ITSAppUsesNonExemptEncryption（按实际加密用途取值）可免每次提审被问询",
     });
+  }
+
+  /**
+   * 写入「版本更新说明」（What's New）：ctx.updateDescription 提供时，PATCH 该版本
+   * 全部本地化记录的 whatsNew（与其他渠道消费 --note 的方式对齐：AGC newFeatures /
+   * Google Play releaseNotes / 荣耀 newFeature）。仅在 PREPARE_FOR_SUBMISSION 状态可写；
+   * IN_REVIEW 起锁定。未提供时不动线上文案（保留 ASC 后台手填的值）。
+   */
+  private async applyWhatsNew(
+    jwt: string,
+    versionId: string,
+    ctx: Pick<ChannelContext, "updateDescription" | "emit">,
+  ): Promise<void> {
+    const note = ctx.updateDescription?.trim();
+    if (!note) return;
+    const locs = await ascGet<AscListResponse<AscVersionLocAttrs>>(
+      jwt,
+      `/v1/appStoreVersions/${versionId}/appStoreVersionLocalizations?limit=50`,
+    );
+    for (const loc of locs.data) {
+      await ascRequest(jwt, `/v1/appStoreVersionLocalizations/${loc.id}`, "PATCH", {
+        data: {
+          type: "appStoreVersionLocalizations",
+          id: loc.id,
+          attributes: { whatsNew: note },
+        },
+      });
+      ctx.emit({
+        type: "progress",
+        detail: `已写入版本更新说明（What's New）：${loc.attributes?.locale ?? loc.id}`,
+      });
+    }
   }
 }
 
