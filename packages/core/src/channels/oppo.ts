@@ -11,6 +11,7 @@ import { spawnSync } from "node:child_process";
 import { hmacSign, tsSeconds } from "./shared/sign.js";
 import { fileBlob } from "./shared/file-blob.js";
 import { sleep } from "../util.js";
+import { pollUntil, PollTimeoutError } from "./shared/poll.js";
 import type {
   Channel,
   ChannelCapabilities,
@@ -396,43 +397,60 @@ export class OppoChannel implements Channel {
     auth: { clientId: string; clientSecret: string; pkgName: string; token: string },
     versionCode: string,
   ): Promise<void> {
-    for (let attempt = 1; attempt <= TASK_STATE_MAX_POLLS; attempt++) {
-      await sleep(TASK_STATE_POLL_INTERVAL_MS);
-      const st = checkErrno(
-        await oppoApi(
-          "/resource/v1/app/task-state",
-          auth,
-          { pkg_name: auth.pkgName, version_code: versionCode },
-          "POST",
-          "查询任务状态",
-        ),
-        "查询任务状态",
-      );
-      const taskState = st.data?.["task_state"];
-      if (taskState === 2) {
+    let attempt = 0; // 进度文案保留「第 N/M 次」序号：pollUntil 的内部计数不可见，用闭包恢复
+    try {
+      await pollUntil({
+        label: "OPPO 任务状态",
+        intervalMs: 0, // 先 sleep 后查语义：间隔在 attempt 内自理（sleep 仍来自 util，可被测试打桩）
+        maxAttempts: TASK_STATE_MAX_POLLS,
+        attempt: async () => {
+          attempt += 1;
+          await sleep(TASK_STATE_POLL_INTERVAL_MS);
+          const st = checkErrno(
+            await oppoApi(
+              "/resource/v1/app/task-state",
+              auth,
+              { pkg_name: auth.pkgName, version_code: versionCode },
+              "POST",
+              "查询任务状态",
+            ),
+            "查询任务状态",
+          );
+          const taskState = st.data?.["task_state"];
+          if (taskState === 2) {
+            ctx.emit({
+              type: "progress",
+              detail: `任务处理成功（task_state=2，第 ${attempt} 次轮询确认）`,
+            });
+            return { done: true as const, value: undefined };
+          }
+          if (taskState === 3) {
+            const errMsg = st.data?.["err_msg"];
+            throw new Error(
+              `OPPO 发布任务处理失败（task_state=3）: ${
+                typeof errMsg === "string" && errMsg
+                  ? errMsg
+                  : JSON.stringify(st.data).slice(0, 200)
+              }`,
+            );
+          }
+          ctx.emit({
+            type: "progress",
+            detail: `任务处理中（task_state=${String(taskState)}，第 ${attempt}/${TASK_STATE_MAX_POLLS} 次）`,
+          });
+          return { done: false as const };
+        },
+      });
+    } catch (e) {
+      if (e instanceof PollTimeoutError) {
         ctx.emit({
-          type: "progress",
-          detail: `任务处理成功（task_state=2，第 ${attempt} 次轮询确认）`,
+          type: "warn",
+          message: `任务状态轮询 ${TASK_STATE_MAX_POLLS} 次未到终态：app/upd 已受理但异步处理结果未知，请稍后用 status 查询审核状态`,
         });
         return;
       }
-      if (taskState === 3) {
-        const errMsg = st.data?.["err_msg"];
-        throw new Error(
-          `OPPO 发布任务处理失败（task_state=3）: ${
-            typeof errMsg === "string" && errMsg ? errMsg : JSON.stringify(st.data).slice(0, 200)
-          }`,
-        );
-      }
-      ctx.emit({
-        type: "progress",
-        detail: `任务处理中（task_state=${String(taskState)}，第 ${attempt}/${TASK_STATE_MAX_POLLS} 次）`,
-      });
+      throw e;
     }
-    ctx.emit({
-      type: "warn",
-      message: `任务状态轮询 ${TASK_STATE_MAX_POLLS} 次未到终态：app/upd 已受理但异步处理结果未知，请稍后用 status 查询审核状态`,
-    });
   }
 
   /**

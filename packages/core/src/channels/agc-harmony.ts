@@ -27,6 +27,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { sha256File, formatSize, sleep } from "../util.js";
 import { getAgcToken } from "./shared/agc-token.js";
+import { pollUntil, PollTimeoutError } from "./shared/poll.js";
 import type {
   Channel,
   ChannelCapabilities,
@@ -349,32 +350,42 @@ export class AgcHarmonyChannel implements Channel {
     headers: Record<string, string>,
   ): Promise<void> {
     ctx.emit({ type: "phase", phase: "wait", message: `等待 AGC 云端编译（pkgId: ${pkgId}）` });
-    const deadline = Date.now() + COMPILE_TIMEOUT_MS;
-    for (;;) {
-      const stQs = new URLSearchParams({ appId, pkgIds: pkgId });
-      const st = await agcJson<CompileStatusResp>(
-        `${BASE}/publish/v3/package/compile/status?${stQs}`,
-        { headers },
-        "查询编译状态",
-      );
-      const state = st.pkgStateList?.find((p) => p.pkgId === pkgId) ?? st.pkgStateList?.[0];
-      const s = state?.successStatus;
-      if (s === 0) {
-        ctx.emit({ type: "progress", detail: "软件包编译完成" });
-        return;
-      }
-      if (s === 2) {
-        throw new Error(
-          `AGC 编译拒绝（pkgId ${pkgId}）：签名/证书/bundleName 不匹配，到 AGC 控制台核对`,
-        );
-      }
-      if (Date.now() > deadline)
-        throw new Error(`AGC 编译超时（${COMPILE_TIMEOUT_MS / 60000} 分钟，pkgId ${pkgId}）`);
-      ctx.emit({
-        type: "progress",
-        detail: `编译中（successStatus=${s}），${COMPILE_POLL_MS / 1000}s 后重查…`,
+    try {
+      await pollUntil({
+        label: "AGC 云端编译",
+        intervalMs: COMPILE_POLL_MS,
+        timeoutMs: COMPILE_TIMEOUT_MS,
+        onWait: () =>
+          ctx.emit({ type: "progress", detail: `编译中，${COMPILE_POLL_MS / 1000}s 后重查…` }),
+        attempt: async () => {
+          const stQs = new URLSearchParams({ appId, pkgIds: pkgId });
+          const st = await agcJson<CompileStatusResp>(
+            `${BASE}/publish/v3/package/compile/status?${stQs}`,
+            { headers },
+            "查询编译状态",
+          );
+          const state = st.pkgStateList?.find((p) => p.pkgId === pkgId) ?? st.pkgStateList?.[0];
+          const s = state?.successStatus;
+          if (s === 0) {
+            ctx.emit({ type: "progress", detail: "软件包编译完成" });
+            return { done: true as const, value: undefined };
+          }
+          if (s === 2) {
+            throw new Error(
+              `AGC 编译拒绝（pkgId ${pkgId}）：签名/证书/bundleName 不匹配，到 AGC 控制台核对`,
+            );
+          }
+          ctx.emit({
+            type: "progress",
+            detail: `编译中（successStatus=${s}），${COMPILE_POLL_MS / 1000}s 后重查…`,
+          });
+          return { done: false as const };
+        },
       });
-      await sleep(COMPILE_POLL_MS);
+    } catch (e) {
+      if (e instanceof PollTimeoutError)
+        throw new Error(`AGC 编译超时（${COMPILE_TIMEOUT_MS / 60000} 分钟，pkgId ${pkgId}）`);
+      throw e;
     }
   }
 
