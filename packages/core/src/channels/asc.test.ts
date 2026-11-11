@@ -422,7 +422,7 @@ describe("submit（ASC REST 提审）", () => {
     attributes: { version: "42", processingState: "VALID" },
     relationships: { preReleaseVersion: { data: { type: "preReleaseVersions", id: "PR1" } } },
   };
-  const buildProcessing = {
+  const _buildProcessing = {
     type: "builds",
     id: "B1",
     attributes: { version: "41", processingState: "PROCESSING" },
