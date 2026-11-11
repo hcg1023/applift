@@ -8,6 +8,7 @@ import path from "node:path";
 import {
   saveCredentials,
   loadProjectConfig,
+  loadGlobalConfig,
   loadProjectProfileMap,
   resolveProfileFor,
   setProjectProfile,
@@ -224,13 +225,18 @@ export default defineConfig({
       const target = profile?.trim();
       if (!target) {
         const { config } = await loadProjectConfig(cwd);
+        const globalDefault = loadGlobalConfig().config.defaultProfile;
         const source = loadProjectProfileMap()[cwd]
           ? "个人选择 ~/.applift/projects.json"
           : config.profile !== "default"
             ? `项目默认 applift.config.ts → profile: ${config.profile}`
-            : "全局默认";
+            : globalDefault !== "default"
+              ? `全局默认 ~/.applift/config.toml → defaultProfile: ${globalDefault}`
+              : "全局默认";
         p.log.message(
-          `当前生效 profile: ${pc.bold(resolveProfileFor(cwd, config.profile))} ${pc.dim(`（来源: ${source}）`)}`,
+          `当前生效 profile: ${pc.bold(
+            resolveProfileFor(cwd, config.profile, undefined, globalDefault),
+          )} ${pc.dim(`（来源: ${source}）`)}`,
         );
         p.log.message(
           available.length > 0
@@ -265,7 +271,12 @@ export default defineConfig({
       const creds = loadCredentialsLayered(cmdOpts.cwd);
       const profile = resolveProfile(
         creds,
-        resolveProfileFor(cmdOpts.cwd, config.profile),
+        resolveProfileFor(
+          cmdOpts.cwd,
+          config.profile,
+          undefined,
+          loadGlobalConfig().config.defaultProfile,
+        ),
         KNOWN_CREDENTIAL_KEYS,
       );
       const storeIds = (

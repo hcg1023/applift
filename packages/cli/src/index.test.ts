@@ -92,6 +92,27 @@ describe("makeContext emit 脱敏（SEC-002）", () => {
   });
 });
 
+describe("makeContext emit progress 渲染（长任务进度可见性）", () => {
+  it("progress 事件写 stderr（脱敏）——ASC 等构建/AGC 编译轮询不再静默", () => {
+    const ctx = makeContext(stubChannel, {}, {}, "/tmp/a.apk", undefined);
+    const writes: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((b) => {
+      writes.push(String(b));
+      return true;
+    });
+    try {
+      ctx.emit?.({ type: "progress", detail: "构建处理中（已等 5 分钟，第 10 次探测）" });
+      ctx.emit?.({ type: "progress", detail: "COS 上传完成 url?token=abc123secret 已入库" });
+    } finally {
+      spy.mockRestore();
+    }
+    const text = writes.join("");
+    expect(text).toContain("构建处理中（已等 5 分钟，第 10 次探测）");
+    expect(text).toContain("[REDACTED]");
+    expect(text).not.toContain("abc123secret");
+  });
+});
+
 describe("CLI 旗标面（P2-2 入口）", () => {
   it("release 暴露 --release-time/--remark；beta 暴露 --install-password", () => {
     const release = program.commands.find((c) => c.name() === "release");

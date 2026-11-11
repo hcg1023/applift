@@ -63,6 +63,33 @@ describe("resolveProfileSource（profile 来源诊断）", () => {
   });
 });
 
+describe("resolveProfileSource 全局 defaultProfile 层（config.toml 接线）", () => {
+  it("前两级缺省 + 全局非默认 → 取全局值，来源=全局 defaultProfile", () => {
+    expect(resolveProfileSource("/proj/none", undefined, tmpMap("g1"), "company-b")).toEqual({
+      profile: "company-b",
+      source: "全局 defaultProfile",
+    });
+  });
+
+  it("全局层优先级低于项目配置：项目 profile 命中时不看全局", () => {
+    expect(resolveProfileSource("/proj/none", "team", tmpMap("g2"), "company-b")).toEqual({
+      profile: "team",
+      source: "项目配置 profile（团队默认）",
+    });
+  });
+
+  it("全局值为 default 或未传 → 落默认层（与旧行为一致）", () => {
+    expect(resolveProfileSource("/proj/x", undefined, tmpMap("g3"), "default")).toEqual({
+      profile: "default",
+      source: "默认 default",
+    });
+    expect(resolveProfileSource("/proj/x", undefined, tmpMap("g4"))).toEqual({
+      profile: "default",
+      source: "默认 default",
+    });
+  });
+});
+
 describe("loadProjectProfileMap 容错", () => {
   it("文件不存在 → 空映射", () => {
     expect(loadProjectProfileMap(tmpMap("nonexist"))).toEqual({});

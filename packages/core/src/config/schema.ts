@@ -235,8 +235,6 @@ export const GlobalConfigSchema = z.object({
   defaultProfile: z.string().default("default"),
   /** 渠道并发数（≥1 整数，无上限——worker 池自限于渠道数；项目级 applift.config.ts concurrency 优先于此） */
   concurrency: z.number().int().min(1).default(4),
-  /** 上传超时（毫秒） */
-  uploadTimeoutMs: z.number().default(900_000),
   /** CI 无人值守豁免确认（等价把 L3 闸门前置到 CI 审批） */
   assumeYes: z.boolean().default(false),
 });

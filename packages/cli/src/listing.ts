@@ -8,6 +8,7 @@ import type { Command } from "commander";
 import {
   loadCredentialsLayered,
   loadProjectConfig,
+  loadGlobalConfig,
   resolveProfile,
   resolveListing,
   resolveProfileFor,
@@ -72,7 +73,7 @@ export function registerListingCommand(
       const creds = loadCredentialsLayered(cwd);
       const profile = resolveProfile(
         creds,
-        resolveProfileFor(cwd, config.profile),
+        resolveProfileFor(cwd, config.profile, undefined, loadGlobalConfig().config.defaultProfile),
         KNOWN_CREDENTIAL_KEYS,
       );
 

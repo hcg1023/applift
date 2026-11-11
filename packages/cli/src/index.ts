@@ -273,6 +273,9 @@ export function makeContext(
       process.stderr.write(
         `  ${label} ${phaseText}${event.message ? pc.dim(` — ${redactText(event.message)}`) : ""}\n`,
       );
+    } else if (event.type === "progress") {
+      // 渠道轮询/等待进度（ASC 等构建 30min 级、AGC 编译等）——无此分支时终端静默至超时
+      process.stderr.write(`  ${label} ${pc.dim(redactText(event.detail))}\n`);
     } else if (event.type === "warn") {
       process.stderr.write(`  ${label} ⚠ ${redactText(event.message)}\n`);
     }
@@ -448,8 +451,11 @@ async function runBumpOrchestration(args: {
     throw new Error(
       "非交互环境（CI/管道）bump 需 --yes 跳过确认；疑似失败重跑请显式指定 level 或版本号",
     );
+  if (!commit)
+    p.log.warn(
+      "--no-commit 不产生发版锚点（无 chore(release): commit）——后续 beta 判定将停留上一锚点，可能重复建议 bump（调试用途，正常流程勿用）",
+    );
   if (!(args.yes || args.assumeYes)) {
-    // 文案如实反映将发生的动作：--tag 时会打 tag，默认不打须提示去向
     const effects = commit
       ? tag
         ? "并代 commit + tag"
@@ -590,6 +596,7 @@ program
         extraFrameworks: pluginFrameworks,
         config: projCfg,
       } = await loadPluginHost(cmdOpts.cwd);
+      const globalCfg = loadGlobalConfig().config;
 
       // profile 解析链：projects.json 个人选择（applift use）> 项目配置团队默认。
       // 提到热更路由之前：OTA 路径 publishToBeta 的 ctx 也要带凭据（PUSHY_API_TOKEN）。
@@ -599,7 +606,7 @@ program
       try {
         creds = resolveProfile(
           loadCredentialsLayered(cmdOpts.cwd),
-          resolveProfileFor(cmdOpts.cwd, projCfg.profile),
+          resolveProfileFor(cmdOpts.cwd, projCfg.profile, undefined, globalCfg.defaultProfile),
           KNOWN_CREDENTIAL_KEYS,
         );
       } catch {
@@ -865,7 +872,8 @@ program
                   ...(agcCfg.submit ? { submitTest: "true" } : {}),
                   ...(agcCfg.group ? { testGroup: agcCfg.group } : {}),
                   testType: String(agcCfg.testType),
-                  // cleanup 默认 true（schema 缺省）；'false' 时渠道跳过旧测试版本清理
+                  // cleanup 默认 true（schema 缺省）；显式 false 时渠道跳过旧测试版本清理（stop+delete）
+                  ...(agcCfg.cleanup === false ? { cleanup: "false" } : {}),
                   ...(agcCfg.privacyPolicy ? { privacyPolicy: agcCfg.privacyPolicy } : {}),
                   ...(agcCfg.appDesc ? { appDesc: agcCfg.appDesc } : {}),
                 },
@@ -1009,7 +1017,8 @@ program
             ...(agcCfg?.submit ? { submitTest: "true" } : {}),
             ...(agcCfg?.group ? { testGroup: agcCfg.group } : {}),
             testType: String(agcCfg?.testType ?? 3),
-            // cleanup 默认 true（schema 缺省）；'false' 时渠道跳过旧测试版本清理
+            // cleanup 默认 true（schema 缺省）；显式 false 时渠道跳过旧测试版本清理（stop+delete）
+            ...(agcCfg?.cleanup === false ? { cleanup: "false" } : {}),
             ...(agcCfg?.privacyPolicy ? { privacyPolicy: agcCfg.privacyPolicy } : {}),
             ...(agcCfg?.appDesc ? { appDesc: agcCfg.appDesc } : {}),
           },
@@ -1020,6 +1029,7 @@ program
           ...ctx,
           emit: (e) => {
             if (e.type === "warn") s.message(pc.yellow(`⚠ ${redactText(e.message)}`));
+            else if (e.type === "progress") s.message(pc.dim(redactText(e.detail)));
           },
         });
         await notifyStageAfter(host, "agc", platform, ctx, r, cmdOpts.cwd);
@@ -1052,6 +1062,7 @@ program
         ...ctx,
         emit: (e) => {
           if (e.type === "warn") s.message(pc.yellow(`⚠ ${redactText(e.message)}`));
+          else if (e.type === "progress") s.message(pc.dim(redactText(e.detail)));
         },
       });
       await notifyStageAfter(host, "pgyer", platform, ctx, r, cmdOpts.cwd);
@@ -1105,7 +1116,9 @@ program
       opts.releaseMode !== "auto" &&
       opts.releaseMode !== "manual"
     )
-      throw new Error(`--release-mode 只支持 auto | manual，收到 "${opts.releaseMode}"`);
+      throw new Error(
+        `--release-mode 只支持 auto | manual，收到 "${opts.releaseMode}"（定时上架请用 --release-time <rfc3339>）`,
+      );
     if (opts.releaseMode !== undefined && opts.releaseTime !== undefined)
       throw new Error("--release-mode 与 --release-time 互斥（定时上架请只传 --release-time）");
     const KNOWN_PLATFORMS = ["android", "harmony", "ios", "windows", "macos", "linux"];
@@ -1140,7 +1153,8 @@ program
       ? {}
       : resolveProfile(
           loadCredentialsLayered(opts.cwd),
-          opts.profile ?? resolveProfileFor(opts.cwd, config.profile),
+          opts.profile ??
+            resolveProfileFor(opts.cwd, config.profile, undefined, global.defaultProfile),
           KNOWN_CREDENTIAL_KEYS,
         );
 
@@ -1384,6 +1398,21 @@ program
     // 渠道 target 取值链：stores 渠道配置 > 平台段配置 > 包名自动推导（项目配置 > 自动推导）
     // 小米特例：icon 未配置时从工程 mipmap 自动发现（配置覆盖优先）
     const detected = detectBundleIds(opts.cwd);
+    // 参数给了却无人消费必须可见（--rollout 同款原则）：--release-mode 仅 iOS（asc）生效；
+    // --release-time 仅 capabilities.scheduled 渠道生效——混渠道定时发布时逐渠道点名，防"以为全渠道定时"
+    if (opts.releaseMode !== undefined && platform !== "ios") {
+      const msg = `--release-mode 仅 iOS（asc 渠道）生效，${platform} 渠道审核通过即自动上架，已忽略`;
+      if (isJson) process.stderr.write(`${pc.yellow(`⚠ ${msg}`)}\n`);
+      else p.log.warn(msg);
+    }
+    if (opts.releaseTime !== undefined) {
+      for (const c of channels) {
+        if (c.capabilities.scheduled) continue;
+        const msg = `「${c.label}」不支持定时上架（--release-time 已忽略），该渠道审核通过即自动上架`;
+        if (isJson) process.stderr.write(`${pc.yellow(`⚠ ${msg}`)}\n`);
+        else p.log.warn(msg);
+      }
+    }
     const contexts = new Map<string, ChannelContext>();
     for (const c of channels) {
       let target = resolveChannelTarget(c.id, config, detected);
@@ -1510,8 +1539,19 @@ program
       }
       // 交互式两段线第二步：草稿就绪后询问是否继续提审（--submit 缺省时的引导；--yes/CI 跳过）
       if (interactive) {
+        // 按渠道实际上架方式（plan.afterApproval）聚合展示——iOS manual 时代"审核通过即自动上架"的旧文案
+        // 对 manual/scheduled 用户是误导；plan 表此时已在上方渲染（renderSummary），此处只纠正语义
+        const modes = [
+          ...new Set(summary.stage.map((e) => e.plan?.afterApproval ?? "auto-publish")),
+        ];
+        const modeText =
+          modes.length === 1 && modes[0] === "manual"
+            ? "审核通过后需手动上架"
+            : modes.length === 1 && modes[0] === "scheduled"
+              ? "审核通过后定时上架"
+              : "审核通过即自动上架（不可撤回）";
         const goSubmit = await p.confirm({
-          message: `草稿已就绪。${pc.red("现在提审？")}（审核通过即自动上架，不可撤回）`,
+          message: `草稿已就绪。${pc.red("现在提审？")}（${modeText}）`,
         });
         if (p.isCancel(goSubmit) || !goSubmit) {
           p.outro(
@@ -1700,13 +1740,17 @@ program
     else p.log.error("无凭据（~/.applift/credentials.json）");
     if (profileNames.length === 0) healthy = false;
     const { config } = await loadProjectConfig(cmdOpts.cwd);
-    // 与 release 同链解析：projects.json 个人选择（applift use）> 项目配置团队默认
-    const { profile, source: profileSource } = resolveProfileSource(cmdOpts.cwd, config.profile);
+    // 与 release 同链解析：projects.json 个人选择（applift use）> 项目配置团队默认 > 全局 defaultProfile
+    const { profile, source: profileSource } = resolveProfileSource(
+      cmdOpts.cwd,
+      config.profile,
+      undefined,
+      loadGlobalConfig().config.defaultProfile,
+    );
     const stores = Object.keys(config.android?.stores ?? {});
     if (stores.length > 0)
       p.log.success(`项目渠道: ${stores.join(", ")}（profile=${profile}，来源: ${profileSource}）`);
     else p.log.info("项目未配置渠道（applift.config.ts → android.stores）");
-    // 内测并行配置概览（beta 无平台参数时的渠道开关）
     if (config.beta) {
       const betaParts = [
         config.beta.pgyer ? `pgyer（${config.beta.pgyer.platforms.join("/")}）` : "",
