@@ -90,6 +90,17 @@ export default defineConfig({
 });
 ```
 
+ios 段（App Store Connect，全可选）：
+
+```ts
+ios: {
+  bundleId: "com.example.app",                           // 按 bundleId 定位 App
+  release: "auto",                                       // auto=审核通过自动上架（默认）| manual；--release-mode 单次覆盖，定时走 --release-time
+  exportCompliance: { usesNonExemptEncryption: false },  // 可选：提审时代答出口合规（仅 build 未声明时写入）
+  phasedRelease: true,                                   // 可选：后续版本 7 天分阶段灰度（1%→2%→…→100%；首版官方限制自动跳过并告警）
+}
+```
+
 profile 切换：`applift use <name>`（本机个人选择）或 `--profile`（最高优先级）。
 
 ## 渠道与能力
@@ -99,7 +110,7 @@ profile 切换：`applift use <name>`（本机个人选择）或 `--profile`（�
 | 内测 | 蒲公英（三端）/ AGC 指定设备              | ✅          | —             | 即装                 |
 | 安卓 | 华为 / 小米 / OPPO / vivo / 荣耀 / 应用宝 | ✅*         | ✅            | 自动上架             |
 | 鸿蒙 | AGC（.app 整包全链路）                    | ✅          | ✅            | 自动上架             |
-| iOS  | App Store Connect / TestFlight            | ✅          | ✅            | **手动发布**（默认） |
+| iOS  | App Store Connect / TestFlight            | ✅          | ✅            | **自动上架**（默认，`ios.release`/`--release-mode` 可改手动） |
 | 海外 | Google Play                               | ✅ internal | ✅ production | 自动                 |
 
 *小米上传即提审（无草稿态），提审 icon 默认从工程自动发现（android res mipmap → Tauri src-tauri/icons），可用 `android.stores.xiaomi.icon` 覆盖。`applift channels --json` 查全部渠道+所需凭据。
