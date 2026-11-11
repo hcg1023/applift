@@ -415,6 +415,31 @@ export class AscChannel implements Channel {
       }
     }
 
+    // 4.7) phased release（§7，7 天 1%→100% 自动更新灰度）。官方限制：仅后续版本可用
+    //      （"not available for the first version of an app"）——版本记录数 ≤1 判首版，warn 跳过
+    if (ctx.phasedRelease) {
+      const all = await asc.get<AscListResponse<AscVersionAttrs>>(
+        `/v1/apps/${appId}/appStoreVersions?filter[platform]=IOS&limit=2`,
+      );
+      if (all.data.length > 1) {
+        await asc.request("/v1/appStoreVersionPhasedReleases", "POST", {
+          data: {
+            type: "appStoreVersionPhasedReleases",
+            relationships: {
+              appStoreVersion: { data: { type: "appStoreVersions", id: versionId } },
+            },
+          },
+        });
+        ctx.emit({ type: "progress", detail: "已开启分阶段发布（7 天 1%→100%，仅自动更新用户）" });
+      } else {
+        ctx.emit({
+          type: "warn",
+          message:
+            "phased release 已配置但本 app 尚无在架版本（官方：首版不可用）——本次跳过，下一版本自动生效",
+        });
+      }
+    }
+
     // 5) 提审三查（§3）：已在审拒绝 / 草稿复用 / 他人条目拒绝，然后三步流
     const subs = await asc.get<AscListResponse<{ state?: string }>>(
       `/v1/reviewSubmissions?filter[app]=${appId}&include=items&limit=10`,

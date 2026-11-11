@@ -196,6 +196,12 @@ export const ProjectConfigSchema = z.object({
       release: z.enum(["auto", "manual"]).default("auto"),
       /** 出口合规代答：仅当 build 的 usesNonExemptEncryption 未声明（null）时 PATCH 代答；缺省不代答（保持提示） */
       exportCompliance: z.object({ usesNonExemptEncryption: z.boolean() }).optional(),
+      /**
+       * 分阶段发布（phased release）：审核通过后 7 天内 1%→2%→5%→10%→20%→50%→100% 自动更新灰度
+       * （仅影响自动更新用户，手动更新不受限）。官方限制：仅后续版本可用
+       * （"not available for the first version of an app"）——首版提交时自动跳过并告警。
+       */
+      phasedRelease: z.boolean().default(false),
     })
     .optional(),
   /** 产物目录覆盖（非标准工程）：每平台 glob 数组，优先于框架内置 pattern（桌面平台 + 插件自报平台经 catchall 收） */

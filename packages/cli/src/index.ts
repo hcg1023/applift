@@ -251,6 +251,7 @@ export function makeContext(
     releaseTime?: string;
     releaseMode?: "auto" | "manual";
     exportCompliance?: { usesNonExemptEncryption: boolean };
+    phasedRelease?: boolean;
     remark?: string;
     installPassword?: string;
   } = {},
@@ -284,6 +285,7 @@ export function makeContext(
     releaseTime: extra.releaseTime,
     releaseMode: extra.releaseMode,
     exportCompliance: extra.exportCompliance,
+    phasedRelease: extra.phasedRelease,
     remark: extra.remark,
     installPassword: extra.installPassword,
     emit,
@@ -1398,6 +1400,7 @@ program
           releaseTime: opts.releaseTime,
           releaseMode: opts.releaseMode ?? config.ios?.release,
           exportCompliance: config.ios?.exportCompliance,
+          phasedRelease: config.ios?.phasedRelease,
           remark: opts.remark,
         }),
       );

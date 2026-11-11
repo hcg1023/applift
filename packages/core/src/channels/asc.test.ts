@@ -69,6 +69,7 @@ function makeCtx(
     releaseTime?: string;
     releaseMode?: "auto" | "manual";
     exportCompliance?: { usesNonExemptEncryption: boolean };
+    phasedRelease?: boolean;
     artifactPath?: string;
     artifactVersion?: { versionName?: string; versionCode?: string };
   } = {},
@@ -86,6 +87,7 @@ function makeCtx(
     releaseTime: overrides.releaseTime,
     releaseMode: overrides.releaseMode,
     exportCompliance: overrides.exportCompliance,
+    phasedRelease: overrides.phasedRelease,
     emit: () => {},
   } as unknown as ChannelContext;
 }
@@ -1018,6 +1020,156 @@ describe("出口合规代答（§6）", () => {
       expect(
         events.some((e) => e.detail?.includes("出口合规") || e.message?.includes("出口合规")),
       ).toBe(false);
+    } finally {
+      m.restore();
+    }
+  });
+});
+
+describe("phased release（§7）", () => {
+  const ch = new AscChannel();
+  const app = { type: "apps", id: "APP1", attributes: { bundleId: "com.example.app" } };
+  const buildValid = {
+    type: "builds",
+    id: "B2",
+    attributes: { version: "42", processingState: "VALID" },
+    relationships: { preReleaseVersion: { data: { type: "preReleaseVersions", id: "PR1" } } },
+  };
+  const pre = { type: "preReleaseVersions", id: "PR1", attributes: { version: "1.2.3" } };
+
+  /** 首版判定查询（limit=2）专属路由，置于通用 appStoreVersions 路由之前（首个命中生效） */
+  function phasedRoutes(versionCount: number) {
+    return [
+      {
+        match: /appStoreVersions\?filter\[platform\]=IOS&limit=2/,
+        response: {
+          status: 200,
+          json: {
+            data: Array.from({ length: versionCount }, (_, i) => ({
+              type: "appStoreVersions",
+              id: `VP${i}`,
+              attributes: { versionString: `1.2.${i}` },
+            })),
+          },
+        },
+      },
+      {
+        match: /appStoreVersions\?filter\[platform\]/,
+        response: {
+          status: 200,
+          json: {
+            data: [
+              {
+                type: "appStoreVersions",
+                id: "V1",
+                attributes: { versionString: "1.2.3", appVersionState: "PREPARE_FOR_SUBMISSION" },
+              },
+            ],
+          },
+        },
+      },
+      { match: /\/v1\/apps\?/, response: { status: 200, json: { data: [app] } } },
+      { match: /\/v1\/preReleaseVersions\?/, response: { status: 200, json: { data: [] } } },
+      {
+        match: /\/v1\/builds\?/,
+        response: { status: 200, json: { data: [buildValid], included: [pre] } },
+      },
+      {
+        match: /\/v1\/appStoreVersions\/[^/]+$/,
+        response: { status: 200, json: { data: { id: "V1" } } },
+      },
+      {
+        match: /appStoreVersionPhasedReleases/,
+        method: "POST",
+        response: { status: 201, json: { data: { id: "PR-REL-1" } } },
+      },
+      {
+        match: /appStoreVersionLocalizations/,
+        response: {
+          status: 200,
+          json: {
+            data: [
+              {
+                type: "appStoreVersionLocalizations",
+                id: "L1",
+                attributes: { locale: "zh-Hans", description: "企业司机端描述" },
+              },
+            ],
+          },
+        },
+      },
+      { match: /relationships\/builds/, response: { status: 200, json: { data: [] } } },
+      {
+        match: /\/v1\/reviewSubmissions\/[^/]+\/items$/,
+        response: { status: 201, json: { data: { id: "RSI1" } } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions\/[^/]+$/,
+        response: { status: 200, json: { data: { id: "RS1", attributes: { action: "SUBMIT" } } } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions\?/,
+        response: { status: 200, json: { data: [], included: [] } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions$/,
+        response: { status: 201, json: { data: { id: "SUB1" } } },
+      },
+    ];
+  }
+
+  it("配置开启 + 非首版：POST /v1/appStoreVersionPhasedReleases 关联 versionId", async () => {
+    const m = mockFetch(phasedRoutes(2));
+    try {
+      const events: Ev[] = [];
+      const ctx = makeCtx({ phasedRelease: true });
+      ctx.emit = evCollector(events) as typeof ctx.emit;
+      await expect(ch.submit(ctx)).resolves.toEqual({ ok: true, ref: "SUB1" });
+      const post = m.calls.find(
+        (c) => c.method === "POST" && c.url.endsWith("/v1/appStoreVersionPhasedReleases"),
+      )!;
+      expect(JSON.parse(post.body as string)).toEqual({
+        data: {
+          type: "appStoreVersionPhasedReleases",
+          relationships: {
+            appStoreVersion: { data: { type: "appStoreVersions", id: "V1" } },
+          },
+        },
+      });
+      expect(
+        events.some((e) => e.type === "progress" && e.detail?.includes("已开启分阶段发布")),
+      ).toBe(true);
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("配置开启 + 首版（仅 1 条版本记录）：emit warn 跳过，不 POST", async () => {
+    const m = mockFetch(phasedRoutes(1));
+    try {
+      const events: Ev[] = [];
+      const ctx = makeCtx({ phasedRelease: true });
+      ctx.emit = evCollector(events) as typeof ctx.emit;
+      await expect(ch.submit(ctx)).resolves.toEqual({ ok: true, ref: "SUB1" });
+      expect(
+        m.calls.find(
+          (c) => c.method === "POST" && c.url.endsWith("/v1/appStoreVersionPhasedReleases"),
+        ),
+      ).toBeUndefined();
+      expect(events.some((e) => e.type === "warn" && e.message?.includes("首版不可用"))).toBe(true);
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("未配置：零 phased 请求", async () => {
+    const m = mockFetch(phasedRoutes(2));
+    try {
+      await expect(ch.submit(makeCtx())).resolves.toEqual({ ok: true, ref: "SUB1" });
+      expect(m.calls.find((c) => c.url.endsWith("limit=2"))).toBeUndefined();
+      expect(
+        m.calls.find((c) => c.url.includes("/v1/appStoreVersionPhasedReleases")),
+      ).toBeUndefined();
     } finally {
       m.restore();
     }

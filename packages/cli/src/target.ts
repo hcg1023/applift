@@ -21,8 +21,12 @@ export function resolveChannelTarget(
     };
   }
   if (id === "asc") {
-    // exportCompliance 是结构化配置（走 ctx），不进 target（target 契约为 string 键值）
-    const { exportCompliance: _exportCompliance, ...iosCfg } = config.ios ?? {};
+    // exportCompliance（结构化）/ phasedRelease（布尔）走 ctx，不进 target（target 契约为 string 键值）
+    const {
+      exportCompliance: _exportCompliance,
+      phasedRelease: _phasedRelease,
+      ...iosCfg
+    } = config.ios ?? {};
     return {
       ...(detected.iosBundleId ? { bundleId: detected.iosBundleId } : {}),
       ...iosCfg,

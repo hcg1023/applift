@@ -42,6 +42,8 @@ export interface ChannelContext {
   releaseMode?: "auto" | "manual";
   /** 出口合规代答（仅 asc 消费：build 未声明时按此 PATCH usesNonExemptEncryption） */
   exportCompliance?: { usesNonExemptEncryption: boolean };
+  /** 分阶段发布（仅 asc 消费：非首版时 POST appStoreVersionPhasedReleases 开启 7 天自动更新灰度） */
+  phasedRelease?: boolean;
   /** 事件发射（进度/日志，唯一输出通道，不直接 console） */
   emit: (event: ChannelEvent) => void;
 }
