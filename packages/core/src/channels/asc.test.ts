@@ -16,7 +16,12 @@ import { mockFetch } from "../test-utils.js";
 vi.mock("node:child_process", () => ({ spawnSync: vi.fn() }));
 import { spawnSync } from "node:child_process";
 
+// 产物版本读取 mock：默认 undefined（产物读不出→跳过预检/退回最新 VALID），新用例按需覆写
+vi.mock("../version/artifact.js", () => ({ readArtifactVersion: vi.fn() }));
+import { readArtifactVersion } from "../version/artifact.js";
+
 const spawnSyncMock = vi.mocked(spawnSync);
+const readArtifactVersionMock = vi.mocked(readArtifactVersion);
 
 type Ev = { type: string; phase?: string; detail?: string; message?: string };
 
@@ -52,6 +57,8 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+  readArtifactVersionMock.mockReset();
+  readArtifactVersionMock.mockReturnValue(undefined);
   spawnSyncMock.mockReset();
 });
 
@@ -62,8 +69,11 @@ function makeCtx(
     releaseTime?: string;
     releaseMode?: "auto" | "manual";
     artifactPath?: string;
+    artifactVersion?: { versionName?: string; versionCode?: string };
   } = {},
 ): ChannelContext {
+  if (overrides.artifactVersion)
+    readArtifactVersionMock.mockReturnValue(overrides.artifactVersion as never);
   return {
     credentials: overrides.credentials ?? {
       ASC_KEY_ID: "KEYID1",
@@ -420,17 +430,27 @@ describe("submit（ASC REST 提审）", () => {
       versions?: unknown;
       createdVersion?: unknown;
       builds?: unknown;
+      /** builds 动态响应（响应回调按调用序分流，oppo taskStateSequence 同款） */
+      buildsFn?: () => unknown;
+      /** preReleaseVersions 查询响应（锚定链路） */
+      preVersions?: unknown;
       localizations?: unknown;
     } = {},
   ) {
     return [
       { match: /\/v1\/apps\?/, response: { status: 200, json: { data: [app] } } },
       {
+        match: /\/v1\/preReleaseVersions\?/,
+        response: { status: 200, json: overrides.preVersions ?? { data: [] } },
+      },
+      {
         match: /\/v1\/builds\?/,
-        response: {
-          status: 200,
-          json: overrides.builds ?? { data: [buildValid], included: [pre] },
-        },
+        response: overrides.buildsFn
+          ? () => ({ status: 200, json: overrides.buildsFn!() })
+          : {
+              status: 200,
+              json: overrides.builds ?? { data: [buildValid], included: [pre] },
+            },
       },
       {
         match: /appStoreVersions\?filter\[platform\]/,
@@ -635,40 +655,34 @@ describe("submit（ASC REST 提审）", () => {
     }
   });
 
-  it("无 VALID 构建时抛错并列出最近状态", async () => {
+  it("锚定后构建 INVALID：立即报错（不再等满 30 分钟）", async () => {
+    const buildInvalid = {
+      type: "builds",
+      id: "B1",
+      attributes: { version: "42", processingState: "INVALID" },
+    };
     const m = mockFetch(
       submitRoutes({
-        builds: {
-          data: [
-            buildProcessing,
-            { type: "builds", id: "B0", attributes: { processingState: "FAILED" } },
-          ],
-          included: [pre],
-        },
+        preVersions: { data: [pre] },
+        buildsFn: () => ({ data: [buildInvalid], included: [pre] }),
       }),
     );
     try {
-      await expect(ch.submit(makeCtx())).rejects.toThrow("最近状态: PROCESSING, FAILED");
+      await expect(
+        ch.submit(makeCtx({ artifactVersion: { versionName: "1.2.3", versionCode: "42" } })),
+      ).rejects.toThrow(/构建处理失败（INVALID/);
     } finally {
       m.restore();
     }
   });
 
-  it('构建列表为空 → 报"无构建"', async () => {
-    const m = mockFetch(submitRoutes({ builds: { data: [] } }));
+  it("产物读不出（--skip-stage 无产物场景语义）：不发 preReleaseVersions 查询，直接 builds 取最新 VALID", async () => {
+    // mock 默认返回 undefined（beforeEach 已设），即产物读不出路径
+    const m = mockFetch(submitRoutes());
     try {
-      await expect(ch.submit(makeCtx())).rejects.toThrow("最近状态: 无构建");
-    } finally {
-      m.restore();
-    }
-  });
-
-  it("构建缺 processingState 字段 → 状态列表回退 UNKNOWN", async () => {
-    const m = mockFetch(
-      submitRoutes({ builds: { data: [{ type: "builds", id: "B1", attributes: {} }] } }),
-    );
-    try {
-      await expect(ch.submit(makeCtx())).rejects.toThrow("最近状态: UNKNOWN");
+      await expect(ch.submit(makeCtx())).resolves.toEqual({ ok: true, ref: "SUB1" });
+      expect(m.calls.every((c) => !c.url.includes("/v1/preReleaseVersions"))).toBe(true);
+      expect(m.find("/v1/builds?")!.url).toContain("sort=-uploadedDate");
     } finally {
       m.restore();
     }
@@ -688,7 +702,9 @@ describe("submit（ASC REST 提审）", () => {
       ctx.emit = evCollector(events) as typeof ctx.emit;
       await expect(ch.submit(ctx)).resolves.toEqual({ ok: true, ref: "SUB1" });
       expect(
-        events.some((e) => e.type === "progress" && e.detail === "最新构建 build （版本 1.2.3）"),
+        events.some(
+          (e) => e.type === "progress" && e.detail === "构建处理完成 build （版本 1.2.3）",
+        ),
       ).toBe(true);
     } finally {
       m.restore();
@@ -843,6 +859,156 @@ describe("submit（ASC REST 提审）", () => {
       expect(m.find("/v1/builds?")!.url).toContain("filter[app]=APPX");
     } finally {
       m.restore();
+    }
+  });
+});
+
+describe("submit 等构建处理完成（docs/fastlane-adoption §2）", () => {
+  const ch = new AscChannel();
+  const app = { type: "apps", id: "APP1", attributes: { bundleId: "com.example.app" } };
+  const buildValid = {
+    type: "builds",
+    id: "B2",
+    attributes: { version: "42", processingState: "VALID" },
+    relationships: { preReleaseVersion: { data: { type: "preReleaseVersions", id: "PR1" } } },
+  };
+  const buildProcessing = {
+    type: "builds",
+    id: "B1",
+    attributes: { version: "42", processingState: "PROCESSING" },
+  };
+  const pre = { type: "preReleaseVersions", id: "PR1", attributes: { version: "1.2.3" } };
+
+  function routes(buildsFn: () => unknown, preVersions: unknown = { data: [pre] }) {
+    return [
+      { match: /\/v1\/apps\?/, response: { status: 200, json: { data: [app] } } },
+      { match: /\/v1\/preReleaseVersions\?/, response: { status: 200, json: preVersions } },
+      { match: /\/v1\/builds\?/, response: () => ({ status: 200, json: buildsFn() }) },
+      {
+        match: /appStoreVersions\?filter\[platform\]/,
+        response: { status: 200, json: { data: [] } },
+      },
+      {
+        match: /\/v1\/appStoreVersions$/,
+        response: { status: 201, json: { data: { id: "VNEW" } } },
+      },
+      {
+        match: /appStoreVersionLocalizations/,
+        response: {
+          status: 200,
+          json: {
+            data: [
+              {
+                type: "appStoreVersionLocalizations",
+                id: "L1",
+                attributes: { locale: "zh-Hans", description: "企业司机端描述" },
+              },
+            ],
+          },
+        },
+      },
+      { match: /relationships\/builds/, response: { status: 200, json: { data: [] } } },
+      {
+        match: /\/v1\/reviewSubmissions$/,
+        response: { status: 201, json: { data: { id: "SUB1" } } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions\/[^/]+\/items$/,
+        response: { status: 201, json: { data: { id: "RSI1" } } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions\/[^/]+$/,
+        response: { status: 200, json: { data: { id: "RS1" } } },
+      },
+    ];
+  }
+
+  it("PROCESSING→VALID 两轮后继续提审；请求按产物锚定（preReleaseVersions 查询在先）", async () => {
+    vi.useFakeTimers();
+    let pollCount = 0;
+    const m = mockFetch(
+      routes(() => {
+        pollCount += 1;
+        return pollCount === 1
+          ? { data: [buildProcessing], included: [pre] }
+          : { data: [buildValid], included: [pre] };
+      }),
+    );
+    try {
+      const ctx = makeCtx({ artifactVersion: { versionName: "1.2.3", versionCode: "42" } });
+      const p = ch.submit(ctx);
+      await vi.advanceTimersByTimeAsync(30_000);
+      await expect(p).resolves.toEqual({ ok: true, ref: "SUB1" });
+      expect(m.calls.some((c) => c.url.includes("filter[preReleaseVersion]=PR1"))).toBe(true);
+      expect(m.calls.some((c) => c.url.includes("filter[version]=42"))).toBe(true);
+    } finally {
+      m.restore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("持续 PROCESSING 超时：报错文案指引 --skip-stage 重跑", async () => {
+    vi.useFakeTimers();
+    const m = mockFetch(routes(() => ({ data: [buildProcessing], included: [pre] })));
+    try {
+      const ctx = makeCtx({ artifactVersion: { versionName: "1.2.3", versionCode: "42" } });
+      const p = ch.submit(ctx);
+      const expectP = expect(p).rejects.toThrow(/构建处理超时.*--skip-stage/);
+      await vi.advanceTimersByTimeAsync(30 * 60_000 + 60_000);
+      await expectP;
+    } finally {
+      m.restore();
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("stage build 号预检（§9）", () => {
+  const ch = new AscChannel();
+  const app = { type: "apps", id: "APP1", attributes: { bundleId: "com.example.app" } };
+
+  it("产物 versionCode 已存在于 ASC：上传前报错", async () => {
+    const m = mockFetch([
+      { match: /\/v1\/apps\?/, response: { status: 200, json: { data: [app] } } },
+      {
+        match: /\/v1\/builds\?/,
+        response: {
+          status: 200,
+          json: {
+            data: [
+              { type: "builds", id: "B9", attributes: { version: "42", processingState: "VALID" } },
+            ],
+          },
+        },
+      },
+    ]);
+    try {
+      await expect(
+        ch.stage(makeCtx({ artifactVersion: { versionName: "1.2.3", versionCode: "42" } })),
+      ).rejects.toThrow(/build 号已被占用.*42/);
+      expect(m.find("/v1/builds?")!.url).toContain("filter[version]=42");
+      expect(spawnSyncMock).not.toHaveBeenCalled();
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("无占用：正常走上传引擎（altool 桩）", async () => {
+    const tpSpy = vi.spyOn(ch, "resolveTransporterPath").mockReturnValue(undefined);
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: "success", stderr: "" } as never);
+    const m = mockFetch([
+      { match: /\/v1\/apps\?/, response: { status: 200, json: { data: [app] } } },
+      { match: /\/v1\/builds\?/, response: { status: 200, json: { data: [] } } },
+    ]);
+    try {
+      await expect(
+        ch.stage(makeCtx({ artifactVersion: { versionName: "1.2.3", versionCode: "42" } })),
+      ).resolves.toEqual({ ok: true });
+      expect(m.find("/v1/builds?")!.url).toContain("filter[version]=42");
+      expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+    } finally {
+      m.restore();
+      tpSpy.mockRestore();
     }
   });
 });
