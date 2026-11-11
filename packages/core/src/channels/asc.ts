@@ -422,15 +422,27 @@ export class AscChannel implements Channel {
         `/v1/apps/${appId}/appStoreVersions?filter[platform]=IOS&limit=2`,
       );
       if (all.data.length > 1) {
-        await asc.request("/v1/appStoreVersionPhasedReleases", "POST", {
-          data: {
-            type: "appStoreVersionPhasedReleases",
-            relationships: {
-              appStoreVersion: { data: { type: "appStoreVersions", id: versionId } },
+        try {
+          await asc.request("/v1/appStoreVersionPhasedReleases", "POST", {
+            data: {
+              type: "appStoreVersionPhasedReleases",
+              relationships: {
+                appStoreVersion: { data: { type: "appStoreVersions", id: versionId } },
+              },
             },
-          },
-        });
-        ctx.emit({ type: "progress", detail: "已开启分阶段发布（7 天 1%→100%，仅自动更新用户）" });
+          });
+          ctx.emit({
+            type: "progress",
+            detail: "已开启分阶段发布（7 天 1%→100%，仅自动更新用户）",
+          });
+        } catch (e) {
+          // 降级不阻断：phased 只是灰度策略，失败不应挡住提审主链路（可稍后在 ASC 网页手动开启）
+          const brief = String(e instanceof Error ? e.message : e).slice(0, 200);
+          ctx.emit({
+            type: "warn",
+            message: `分阶段发布开启失败（版本记录判定为非首版但 Apple 拒绝）：${brief}——已继续提审， phased 可稍后在 ASC 网页手动开启`,
+          });
+        }
       } else {
         ctx.emit({
           type: "warn",
@@ -449,8 +461,9 @@ export class AscChannel implements Channel {
       (s) => !SUBMISSION_TERMINAL_STATES.has(s.attributes?.state ?? ""),
     );
     let reviewSubmissionId: string;
+    let mine: (typeof items)[number] | undefined;
     if (active?.id && active.attributes?.state !== undefined) {
-      const mine = items.find(
+      mine = items.find(
         (it) => it.relationships?.appStoreVersion?.data?.id === versionId, // AscDoc 的 relationships 类型按需扩 appStoreVersion
       );
       if (mine && active.attributes.state !== "READY")
@@ -478,16 +491,18 @@ export class AscChannel implements Channel {
       reviewSubmissionId = created.data?.id ?? "";
       if (!reviewSubmissionId) throw new Error("ASC 创建 reviewSubmission 未返回 id");
     }
-    //    b) 添加条目（关联 appStoreVersion）
-    await asc.request(`/v1/reviewSubmissions/${reviewSubmissionId}/items`, "POST", {
-      data: {
-        type: "reviewSubmissionItems",
-        attributes: {},
-        relationships: {
-          appStoreVersion: { data: { type: "appStoreVersions", id: versionId } },
+    //    b) 添加条目（关联 appStoreVersion）——复用草稿且已含本版本条目时跳过，防重复
+    if (!mine) {
+      await asc.request(`/v1/reviewSubmissions/${reviewSubmissionId}/items`, "POST", {
+        data: {
+          type: "reviewSubmissionItems",
+          attributes: {},
+          relationships: {
+            appStoreVersion: { data: { type: "appStoreVersions", id: versionId } },
+          },
         },
-      },
-    });
+      });
+    }
     //    c) 确认提交（action=SUBMIT）
     await asc.request(`/v1/reviewSubmissions/${reviewSubmissionId}`, "PATCH", {
       data: { type: "reviewSubmissions", attributes: { action: "SUBMIT" } },
@@ -657,11 +672,12 @@ export class AscChannel implements Channel {
       .split(".")
       .map((s) => String(Number(s)))
       .join(".");
-    const alt = norm.endsWith(".0")
-      ? norm.slice(0, norm.length - 2)
-      : norm.split(".").length === 2
+    const alt =
+      norm.split(".").length === 2
         ? `${norm}.0`
-        : undefined;
+        : norm.endsWith(".0")
+          ? norm.slice(0, norm.length - 2)
+          : undefined;
     const ids = new Set<string>();
     for (const v of [norm, alt]) {
       if (!v) continue;
@@ -804,6 +820,7 @@ function cmpVersion(a: string, b: string): number {
   const pb = b.split(".").map(Number);
   for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
     const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (Number.isNaN(d)) continue; // 非数字段不参与排序，防乱序
     if (d !== 0) return d;
   }
   return 0;

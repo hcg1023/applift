@@ -1162,6 +1162,38 @@ describe("phased release（§7）", () => {
     }
   });
 
+  it("配置开启 + 非首版但 Apple 拒绝（409）：warn 降级不阻断提审，三查照常", async () => {
+    const routes = phasedRoutes(2).map((r) =>
+      r.match instanceof RegExp && /appStoreVersionPhasedReleases/.test(r.match.source)
+        ? { ...r, response: { status: 409, json: { errors: [{ detail: "conflict" }] } } }
+        : r,
+    );
+    const m = mockFetch(routes);
+    try {
+      const events: Ev[] = [];
+      const ctx = makeCtx({ phasedRelease: true });
+      ctx.emit = evCollector(events) as typeof ctx.emit;
+      await expect(ch.submit(ctx)).resolves.toEqual({ ok: true, ref: "SUB1" });
+      expect(
+        events.some((e) => e.type === "warn" && e.message?.includes("分阶段发布开启失败")),
+      ).toBe(true);
+      // 三查照常发生：GET reviewSubmissions → POST items → PATCH SUBMIT
+      expect(
+        m.calls.find((c) => c.method === "GET" && c.url.includes("/v1/reviewSubmissions?")),
+      ).toBeDefined();
+      expect(
+        m.calls.find(
+          (c) => c.method === "POST" && c.url.includes("/v1/reviewSubmissions/SUB1/items"),
+        ),
+      ).toBeDefined();
+      expect(
+        m.calls.find((c) => c.method === "PATCH" && c.url.endsWith("/v1/reviewSubmissions/SUB1")),
+      ).toBeDefined();
+    } finally {
+      m.restore();
+    }
+  });
+
   it("未配置：零 phased 请求", async () => {
     const m = mockFetch(phasedRoutes(2));
     try {
@@ -1677,6 +1709,36 @@ describe("提审三查（docs/fastlane-adoption §3）", () => {
       const item = m.calls.find((c) => c.method === "POST" && c.url.includes("reviewSubmissions"));
       expect(item!.url).toContain("/v1/reviewSubmissions/RS-DRAFT/items");
       // 确认提交 PATCH 也打在旧 id 上
+      expect(
+        m.calls.find(
+          (c) => c.method === "PATCH" && c.url.endsWith("/v1/reviewSubmissions/RS-DRAFT"),
+        ),
+      ).toBeDefined();
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("READY 草稿已含本版本条目：零 items POST，直接 PATCH SUBMIT", async () => {
+    const m = mockFetch(
+      routes({
+        data: [{ type: "reviewSubmissions", id: "RS-DRAFT", attributes: { state: "READY" } }],
+        included: [
+          {
+            type: "reviewSubmissionItems",
+            id: "RSI-MINE",
+            relationships: {
+              appStoreVersion: { data: { type: "appStoreVersions", id: "VNEW" } },
+            },
+          },
+        ],
+      }),
+    );
+    try {
+      await expect(ch.submit(makeCtx())).resolves.toEqual({ ok: true, ref: "RS-DRAFT" });
+      // 零 items POST（草稿已含本版本条目，重复 POST 会被 Apple 拒）
+      expect(m.calls.find((c) => c.method === "POST" && c.url.endsWith("/items"))).toBeUndefined();
+      expect(m.find("reviewSubmissions", "POST")).toBeUndefined();
       expect(
         m.calls.find(
           (c) => c.method === "PATCH" && c.url.endsWith("/v1/reviewSubmissions/RS-DRAFT"),
