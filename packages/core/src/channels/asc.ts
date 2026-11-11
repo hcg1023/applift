@@ -34,7 +34,7 @@ import type {
   StageResult,
   SubmitResult,
 } from "../channel.js";
-import { ascGet, ascRequest, makeAscJwt } from "./shared/asc-jwt.js";
+import { AscClient, makeAscJwt } from "./shared/asc-jwt.js";
 
 /** ASC JSON:API 资源文档（data/included 元素的最小字段） */
 interface AscDoc<A = Record<string, unknown>> {
@@ -293,20 +293,22 @@ export class AscChannel implements Channel {
     const { keyId, issuerId, p8Path } = this.resolveAuth(ctx);
     const bundleId = ctx.target["bundleId"] ?? ctx.target["bundleName"];
     if (!bundleId) throw new Error("ASC 渠道缺少 bundleId（项目配置 ios.bundleId）");
-    const jwt = makeAscJwt({ keyId, issuerId, p8Path });
-    ctx.emit({ type: "phase", phase: "auth", message: "ASC JWT 已生成（20 分钟有效）" });
+    const asc = new AscClient({ keyId, issuerId, p8Path });
+    ctx.emit({
+      type: "phase",
+      phase: "auth",
+      message: "ASC 客户端就绪（JWT 惰性续签，20 分钟有效）",
+    });
 
     // 1) 按 bundleId 定位 App（ASC 内部数字 id）
-    const apps = await ascGet<AscListResponse<AscAppAttrs>>(
-      jwt,
+    const apps = await asc.get<AscListResponse<AscAppAttrs>>(
       `/v1/apps?filter[bundleId]=${encodeURIComponent(bundleId)}&limit=5`,
     );
     const app = apps.data.find((a) => a.attributes?.bundleId === bundleId) ?? apps.data[0];
     if (!app?.id) throw new Error(`ASC 未找到 bundleId=${bundleId} 对应的 App`);
 
     // 2) 找最新已处理构建（processingState=VALID；altool 上传后约 10 分钟才从 PROCESSING 变 VALID）
-    const builds = await ascGet<AscListResponse<AscBuildAttrs>>(
-      jwt,
+    const builds = await asc.get<AscListResponse<AscBuildAttrs>>(
       `/v1/builds?filter[app]=${app.id}&sort=-uploadedDate&limit=20&include=preReleaseVersion`,
     );
     const build = builds.data.find((b) => b.attributes?.processingState === "VALID");
@@ -341,13 +343,12 @@ export class AscChannel implements Channel {
     const releaseAttrs = ctx.releaseTime
       ? { releaseType, earliestReleaseDate: ctx.releaseTime }
       : { releaseType };
-    const versions = await ascGet<AscListResponse<AscVersionAttrs>>(
-      jwt,
+    const versions = await asc.get<AscListResponse<AscVersionAttrs>>(
       `/v1/apps/${app.id}/appStoreVersions?filter[platform]=IOS&filter[appVersionState]=PREPARE_FOR_SUBMISSION&limit=5`,
     );
     let versionId = versions.data[0]?.id;
     if (versionId) {
-      await ascRequest(jwt, `/v1/appStoreVersions/${versionId}`, "PATCH", {
+      await asc.request(`/v1/appStoreVersions/${versionId}`, "PATCH", {
         data: { type: "appStoreVersions", id: versionId, attributes: releaseAttrs },
       });
       ctx.emit({
@@ -356,8 +357,7 @@ export class AscChannel implements Channel {
         message: `复用可编辑版本 ${versions.data[0]?.attributes?.versionString ?? ""}（releaseType=${releaseType}）`,
       });
     } else {
-      const created = await ascRequest<AscSingleResponse<AscVersionAttrs>>(
-        jwt,
+      const created = await asc.request<AscSingleResponse<AscVersionAttrs>>(
         "/v1/appStoreVersions",
         "POST",
         {
@@ -378,17 +378,16 @@ export class AscChannel implements Channel {
     }
 
     // 3.5) 提审前预检：本地化描述是 Apple 提审硬性要求，缺失会在提交最后一步被拒（提前到提交前暴露）
-    await this.preflightLocalizations(jwt, versionId, ctx);
+    await this.preflightLocalizations(asc, versionId, ctx);
 
     // 4) 把构建绑定到版本（builds 为 to-many 关系，data 传数组）
-    await ascRequest(jwt, `/v1/appStoreVersions/${versionId}/relationships/builds`, "PATCH", {
+    await asc.request(`/v1/appStoreVersions/${versionId}/relationships/builds`, "PATCH", {
       data: [{ type: "builds", id: build.id }],
     });
 
     // 5) 提交审核（reviewSubmissions 三步流；旧 appStoreVersionSubmissions 端点已废弃下线）
     //    a) 创建 reviewSubmission（关联 App）
-    const reviewSubmission = await ascRequest<AscSingleResponse<Record<string, unknown>>>(
-      jwt,
+    const reviewSubmission = await asc.request<AscSingleResponse<Record<string, unknown>>>(
       "/v1/reviewSubmissions",
       "POST",
       {
@@ -402,7 +401,7 @@ export class AscChannel implements Channel {
     const reviewSubmissionId = reviewSubmission.data?.id;
     if (!reviewSubmissionId) throw new Error("ASC 创建 reviewSubmission 未返回 id");
     //    b) 添加条目（关联 appStoreVersion）
-    await ascRequest(jwt, `/v1/reviewSubmissions/${reviewSubmissionId}/items`, "POST", {
+    await asc.request(`/v1/reviewSubmissions/${reviewSubmissionId}/items`, "POST", {
       data: {
         type: "reviewSubmissionItems",
         attributes: {},
@@ -412,7 +411,7 @@ export class AscChannel implements Channel {
       },
     });
     //    c) 确认提交（action=SUBMIT）
-    await ascRequest(jwt, `/v1/reviewSubmissions/${reviewSubmissionId}`, "PATCH", {
+    await asc.request(`/v1/reviewSubmissions/${reviewSubmissionId}`, "PATCH", {
       data: { type: "reviewSubmissions", attributes: { action: "SUBMIT" } },
     });
     ctx.emit({
@@ -432,17 +431,15 @@ export class AscChannel implements Channel {
     const auth = this.resolveAuth(ctx);
     const bundleId = ctx.target["bundleId"] ?? ctx.target["bundleName"];
     if (!bundleId) throw new Error("ASC 渠道缺少 bundleId（项目配置 ios.bundleId）");
-    const jwt = makeAscJwt(auth);
+    const asc = new AscClient(auth);
 
-    const apps = await ascGet<AscListResponse<AscAppAttrs>>(
-      jwt,
+    const apps = await asc.get<AscListResponse<AscAppAttrs>>(
       `/v1/apps?filter[bundleId]=${encodeURIComponent(bundleId)}&limit=5`,
     );
     const app = apps.data.find((a) => a.attributes?.bundleId === bundleId) ?? apps.data[0];
     if (!app?.id) throw new Error(`ASC 未找到 bundleId=${bundleId} 对应的 App`);
 
-    const versions = await ascGet<AscListResponse<AscVersionAttrs>>(
-      jwt,
+    const versions = await asc.get<AscListResponse<AscVersionAttrs>>(
       `/v1/apps/${app.id}/appStoreVersions?filter[platform]=IOS&limit=10`,
     );
     const active =
@@ -482,12 +479,11 @@ export class AscChannel implements Channel {
    * Apple 提审硬性要求；缺失时提前报错，避免 reviewSubmissions 最后一步被拒的返工。
    */
   private async preflightLocalizations(
-    jwt: string,
+    asc: AscClient,
     versionId: string,
     ctx: Pick<ChannelContext, "emit">,
   ): Promise<void> {
-    const locs = await ascGet<AscListResponse<AscVersionLocAttrs>>(
-      jwt,
+    const locs = await asc.get<AscListResponse<AscVersionLocAttrs>>(
       `/v1/appStoreVersions/${versionId}/appStoreVersionLocalizations?limit=50`,
     );
     if (locs.data.length === 0)
