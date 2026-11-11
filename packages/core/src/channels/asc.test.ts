@@ -429,6 +429,8 @@ describe("submit（ASC REST 提审）", () => {
     overrides: {
       versions?: unknown;
       createdVersion?: unknown;
+      /** reviewSubmissions GET（三查）响应 */
+      reviewSubs?: unknown;
       builds?: unknown;
       /** builds 动态响应（响应回调按调用序分流，oppo taskStateSequence 同款） */
       buildsFn?: () => unknown;
@@ -500,6 +502,10 @@ describe("submit（ASC REST 提审）", () => {
         response: { status: 200, json: { data: { id: "RS1", attributes: { action: "SUBMIT" } } } },
       },
       {
+        match: /\/v1\/reviewSubmissions\?/,
+        response: { status: 200, json: overrides.reviewSubs ?? { data: [], included: [] } },
+      },
+      {
         match: /\/v1\/reviewSubmissions$/,
         response: { status: 201, json: { data: { id: "SUB1" } } },
       },
@@ -522,7 +528,7 @@ describe("submit（ASC REST 提审）", () => {
       expect(m.find("/v1/builds?")!.url).toContain("sort=-uploadedDate");
       // 3) 可编辑版本查询
       expect(m.find("appStoreVersions?filter[platform]")!.url).toContain(
-        "filter[appVersionState]=PREPARE_FOR_SUBMISSION",
+        "filter[appVersionState]=PREPARE_FOR_SUBMISSION,DEVELOPER_REJECTED,REJECTED,METADATA_REJECTED,INVALID_BINARY",
       );
       // 4) 创建版本 POST：AFTER_APPROVAL + 构建版本号 + app 关系
       const post = m.calls.find(
@@ -599,7 +605,13 @@ describe("submit（ASC REST 提审）", () => {
     const m = mockFetch(
       submitRoutes({
         versions: {
-          data: [{ type: "appStoreVersions", id: "V1", attributes: { versionString: "1.0.0" } }],
+          data: [
+            {
+              type: "appStoreVersions",
+              id: "V1",
+              attributes: { versionString: "1.2.3", appVersionState: "PREPARE_FOR_SUBMISSION" },
+            },
+          ],
         },
       }),
     );
@@ -725,7 +737,7 @@ describe("submit（ASC REST 提审）", () => {
           (e) =>
             e.type === "phase" &&
             e.phase === "bind" &&
-            e.message === "复用可编辑版本 （releaseType=AFTER_APPROVAL）",
+            e.message === "续用版本记录并改名  → 1.2.3（state=）",
         ),
       ).toBe(true);
     } finally {
@@ -909,6 +921,10 @@ describe("submit 等构建处理完成（docs/fastlane-adoption §2）", () => {
       },
       { match: /relationships\/builds/, response: { status: 200, json: { data: [] } } },
       {
+        match: /\/v1\/reviewSubmissions\?/,
+        response: { status: 200, json: { data: [], included: [] } },
+      },
+      {
         match: /\/v1\/reviewSubmissions$/,
         response: { status: 201, json: { data: { id: "SUB1" } } },
       },
@@ -959,6 +975,309 @@ describe("submit 等构建处理完成（docs/fastlane-adoption §2）", () => {
     } finally {
       m.restore();
       vi.useRealTimers();
+    }
+  });
+});
+
+describe("版本状态机扩展（docs/fastlane-adoption §4）", () => {
+  const ch = new AscChannel();
+  const app = { type: "apps", id: "APP1", attributes: { bundleId: "com.example.app" } };
+  const buildValid = {
+    type: "builds",
+    id: "B2",
+    attributes: { version: "42", processingState: "VALID" },
+    relationships: { preReleaseVersion: { data: { type: "preReleaseVersions", id: "PR1" } } },
+  };
+  const pre = { type: "preReleaseVersions", id: "PR1", attributes: { version: "1.2.3" } };
+
+  function routes(overrides: { versions?: unknown } = {}) {
+    return [
+      { match: /\/v1\/apps\?/, response: { status: 200, json: { data: [app] } } },
+      {
+        match: /\/v1\/builds\?/,
+        response: { status: 200, json: { data: [buildValid], included: [pre] } },
+      },
+      {
+        match: /appStoreVersions\?filter\[platform\]/,
+        response: { status: 200, json: overrides.versions ?? { data: [] } },
+      },
+      {
+        match: /\/v1\/appStoreVersions\/[^/]+$/,
+        response: { status: 200, json: { data: { id: "V1" } } },
+      },
+      {
+        match: /\/v1\/appStoreVersions$/,
+        response: { status: 201, json: { data: { id: "VNEW" } } },
+      },
+      {
+        match: /appStoreVersionLocalizations/,
+        response: {
+          status: 200,
+          json: {
+            data: [
+              {
+                type: "appStoreVersionLocalizations",
+                id: "L1",
+                attributes: { locale: "zh-Hans", description: "描述" },
+              },
+            ],
+          },
+        },
+      },
+      { match: /relationships\/builds/, response: { status: 200, json: { data: [] } } },
+      {
+        match: /\/v1\/reviewSubmissions\?/,
+        response: { status: 200, json: { data: [], included: [] } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions\/[^/]+\/items$/,
+        response: { status: 201, json: { data: { id: "RSI1" } } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions\/[^/]+$/,
+        response: { status: 200, json: { data: { id: "RS1" } } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions$/,
+        response: { status: 201, json: { data: { id: "SUB1" } } },
+      },
+    ];
+  }
+
+  it("editable 集合含被拒四态：filter[appVersionState] 五值逗号列表", async () => {
+    const m = mockFetch(routes());
+    try {
+      await ch.submit(makeCtx());
+      expect(m.find("appStoreVersions?filter[platform]")!.url).toContain(
+        "filter[appVersionState]=PREPARE_FOR_SUBMISSION,DEVELOPER_REJECTED,REJECTED,METADATA_REJECTED,INVALID_BINARY",
+      );
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("REJECTED 同号：复用 PATCH，不 POST 新版本", async () => {
+    const m = mockFetch(
+      routes({
+        versions: {
+          data: [
+            {
+              type: "appStoreVersions",
+              id: "V1",
+              attributes: { versionString: "1.2.3", appVersionState: "REJECTED" },
+            },
+          ],
+        },
+      }),
+    );
+    try {
+      await expect(ch.submit(makeCtx())).resolves.toEqual({ ok: true, ref: "SUB1" });
+      expect(
+        m.calls.find((c) => c.method === "POST" && c.url.endsWith("/v1/appStoreVersions")),
+      ).toBeUndefined();
+      const patch = m.calls.find(
+        (c) => c.method === "PATCH" && c.url.endsWith("/v1/appStoreVersions/V1"),
+      )!;
+      expect(JSON.parse(patch.body as string)).toEqual({
+        data: { type: "appStoreVersions", id: "V1", attributes: { releaseType: "AFTER_APPROVAL" } },
+      });
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("PREPARE 异号：PATCH versionString 改名续用（ensure_version! 语义）", async () => {
+    const m = mockFetch(
+      routes({
+        versions: {
+          data: [
+            {
+              type: "appStoreVersions",
+              id: "V1",
+              attributes: { versionString: "1.0.0", appVersionState: "PREPARE_FOR_SUBMISSION" },
+            },
+          ],
+        },
+      }),
+    );
+    try {
+      await ch.submit(makeCtx());
+      const patch = m.calls.find(
+        (c) => c.method === "PATCH" && c.url.endsWith("/v1/appStoreVersions/V1"),
+      )!;
+      expect(JSON.parse(patch.body as string).data.attributes).toEqual({
+        versionString: "1.2.3",
+        releaseType: "AFTER_APPROVAL",
+      });
+      // 条目关联的是续用的 V1（改名未换记录）
+      const item = m.calls.find(
+        (c) => c.method === "POST" && c.url.includes("/v1/reviewSubmissions/SUB1/items"),
+      )!;
+      expect(JSON.parse(item.body as string).data.relationships.appStoreVersion.data.id).toBe("V1");
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("REJECTED 异号：报错人话（不自动改名），提示控制台人工处置", async () => {
+    const m = mockFetch(
+      routes({
+        versions: {
+          data: [
+            {
+              type: "appStoreVersions",
+              id: "V1",
+              attributes: { versionString: "1.0.0", appVersionState: "REJECTED" },
+            },
+          ],
+        },
+      }),
+    );
+    try {
+      await expect(ch.submit(makeCtx())).rejects.toThrow(/被拒.*人工|控制台/);
+      expect(
+        m.calls.find((c) => c.method === "POST" && c.url.endsWith("/v1/appStoreVersions")),
+      ).toBeUndefined();
+    } finally {
+      m.restore();
+    }
+  });
+});
+
+describe("提审三查（docs/fastlane-adoption §3）", () => {
+  const ch = new AscChannel();
+  const app = { type: "apps", id: "APP1", attributes: { bundleId: "com.example.app" } };
+  const buildValid = {
+    type: "builds",
+    id: "B2",
+    attributes: { version: "42", processingState: "VALID" },
+    relationships: { preReleaseVersion: { data: { type: "preReleaseVersions", id: "PR1" } } },
+  };
+  const pre = { type: "preReleaseVersions", id: "PR1", attributes: { version: "1.2.3" } };
+
+  function routes(reviewSubs: unknown) {
+    return [
+      { match: /\/v1\/apps\?/, response: { status: 200, json: { data: [app] } } },
+      {
+        match: /\/v1\/builds\?/,
+        response: { status: 200, json: { data: [buildValid], included: [pre] } },
+      },
+      {
+        match: /appStoreVersions\?filter\[platform\]/,
+        response: { status: 200, json: { data: [] } },
+      },
+      {
+        match: /\/v1\/appStoreVersions$/,
+        response: { status: 201, json: { data: { id: "VNEW" } } },
+      },
+      {
+        match: /appStoreVersionLocalizations/,
+        response: {
+          status: 200,
+          json: {
+            data: [
+              {
+                type: "appStoreVersionLocalizations",
+                id: "L1",
+                attributes: { locale: "zh-Hans", description: "描述" },
+              },
+            ],
+          },
+        },
+      },
+      { match: /relationships\/builds/, response: { status: 200, json: { data: [] } } },
+      {
+        match: /\/v1\/reviewSubmissions\?/,
+        response: { status: 200, json: reviewSubs },
+      },
+      {
+        match: /\/v1\/reviewSubmissions\/[^/]+\/items$/,
+        response: { status: 201, json: { data: { id: "RSI1" } } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions\/[^/]+$/,
+        response: { status: 200, json: { data: { id: "RS1" } } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions$/,
+        response: { status: 201, json: { data: { id: "SUB1" } } },
+      },
+    ];
+  }
+
+  it("已有进行中 reviewSubmission 且含本版本：报错勿重复提交", async () => {
+    const m = mockFetch(
+      routes({
+        data: [
+          { type: "reviewSubmissions", id: "RS9", attributes: { state: "WAITING_FOR_REVIEW" } },
+        ],
+        included: [
+          {
+            type: "reviewSubmissionItems",
+            id: "RSI9",
+            relationships: { appStoreVersion: { data: { type: "appStoreVersions", id: "VNEW" } } },
+          },
+        ],
+      }),
+    );
+    try {
+      await expect(ch.submit(makeCtx())).rejects.toThrow(/已在审核流程中.*勿重复提交/);
+      expect(
+        m.calls.find((c) => c.method === "POST" && c.url.endsWith("/v1/reviewSubmissions")),
+      ).toBeUndefined();
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("存在 items 为空的草稿 submission：复用其 id，不再 POST 创建", async () => {
+    const m = mockFetch(
+      routes({
+        data: [{ type: "reviewSubmissions", id: "RS-DRAFT", attributes: { state: "READY" } }],
+        included: [],
+      }),
+    );
+    try {
+      await expect(ch.submit(makeCtx())).resolves.toEqual({ ok: true, ref: "RS-DRAFT" });
+      expect(
+        m.calls.find((c) => c.method === "POST" && c.url.endsWith("/v1/reviewSubmissions")),
+      ).toBeUndefined();
+      // POST items 用旧 id
+      const item = m.calls.find((c) => c.method === "POST" && c.url.includes("reviewSubmissions"));
+      expect(item!.url).toContain("/v1/reviewSubmissions/RS-DRAFT/items");
+      // 确认提交 PATCH 也打在旧 id 上
+      expect(
+        m.calls.find(
+          (c) => c.method === "PATCH" && c.url.endsWith("/v1/reviewSubmissions/RS-DRAFT"),
+        ),
+      ).toBeDefined();
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("草稿含其他条目：报错引导网页处理", async () => {
+    const m = mockFetch(
+      routes({
+        data: [{ type: "reviewSubmissions", id: "RS-DRAFT", attributes: { state: "READY" } }],
+        included: [
+          {
+            type: "reviewSubmissionItems",
+            id: "RSI8",
+            relationships: {
+              appStoreVersion: { data: { type: "appStoreVersions", id: "VOTHER" } },
+            },
+          },
+        ],
+      }),
+    );
+    try {
+      await expect(ch.submit(makeCtx())).rejects.toThrow(/ASC 网页.*人工/);
+      expect(
+        m.calls.find((c) => c.method === "POST" && c.url.endsWith("/v1/reviewSubmissions")),
+      ).toBeUndefined();
+    } finally {
+      m.restore();
     }
   });
 });

@@ -84,6 +84,12 @@ describe("asc flow: 同一渠道实例 altool stage → REST submit → status",
     const fetchMock = mockFetch([
       // 注意路由顺序：先匹配更长路径，避免 appStoreVersions 相互误命中
       // reviewSubmissions 三步流：items 路由在前避免被基础路由先命中
+      // 提审三查：GET reviewSubmissions（无进行中提交 → 走 POST 创建）
+      {
+        match: "reviewSubmissions",
+        method: "GET",
+        response: { json: { data: [], included: [] } },
+      },
       {
         match: "/items",
         method: "POST",
@@ -280,6 +286,12 @@ describe("asc flow: 同一渠道实例 altool stage → REST submit → status",
       stderr: "",
     } as never);
     const fetchMock = mockFetch([
+      // 提审三查：GET reviewSubmissions（无进行中提交 → 走 POST 创建）
+      {
+        match: "reviewSubmissions",
+        method: "GET",
+        response: { json: { data: [], included: [] } },
+      },
       { match: "reviewSubmissions", method: "POST", response: { json: { data: [] } } }, // 无 id
       { match: "relationships/builds", response: { json: { data: [] } } },
       // 提审前预检路由（该用例预检通过后才走到 reviewSubmissions 失败点）

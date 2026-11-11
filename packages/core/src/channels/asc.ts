@@ -42,13 +42,28 @@ import { AscClient, makeAscJwt } from "./shared/asc-jwt.js";
 /** ASC 构建处理轮询：30s 间隔，30 分钟上限（fastlane BuildWatcher 同款量级） */
 const BUILD_POLL_MS = 30_000;
 const BUILD_TIMEOUT_MS = 30 * 60_000;
+
+/** 可编辑版本状态全集（fastlane get_edit_app_store_version 同款；含被拒四态——被拒后重跑续用不再撞同号建重复版本） */
+const EDITABLE_STATES = [
+  "PREPARE_FOR_SUBMISSION",
+  "DEVELOPER_REJECTED",
+  "REJECTED",
+  "METADATA_REJECTED",
+  "INVALID_BINARY",
+] as const;
+const REJECTED_STATES = new Set(["DEVELOPER_REJECTED", "REJECTED", "METADATA_REJECTED"]);
+/** reviewSubmission 终态（枚举真实链路首用核对，spec 风险节） */
+const SUBMISSION_TERMINAL_STATES = new Set(["COMPLETED", "CANCELLED"]);
 /** ASC JSON:API 资源文档（data/included 元素的最小字段） */
 interface AscDoc<A = Record<string, unknown>> {
   id?: string;
   type?: string;
   attributes?: A;
-  /** JSON:API 关系链接（builds → preReleaseVersion） */
-  relationships?: { preReleaseVersion?: { data?: { id?: string; type?: string } } };
+  /** JSON:API 关系链接（builds → preReleaseVersion；reviewSubmissionItems → appStoreVersion） */
+  relationships?: {
+    preReleaseVersion?: { data?: { id?: string; type?: string } };
+    appStoreVersion?: { data?: { id?: string; type?: string } };
+  };
 }
 
 /** ASC 列表响应外壳 */
@@ -342,7 +357,7 @@ export class AscChannel implements Channel {
     const av = ctx.artifactPath ? readArtifactVersion(ctx.artifactPath) : undefined;
     const build = await this.awaitValidBuild(asc, appId, av, ctx);
 
-    // 3) 读取可编辑版本（appVersionState=PREPARE_FOR_SUBMISSION），无则按构建版本号创建；
+    // 3) 读取/创建可编辑版本（五态；同号复用 / 异号改名 / 被拒异号报错）；
     //    releaseType：releaseTime → SCHEDULED 定时；releaseMode=manual → MANUAL；
     //    默认 AFTER_APPROVAL 自动上架（配置 ios.release / 旗标 --release-mode 已由 CLI 层解析进 ctx.releaseMode）
     const releaseType = ctx.releaseTime
@@ -350,43 +365,16 @@ export class AscChannel implements Channel {
       : ctx.releaseMode === "manual"
         ? "MANUAL"
         : "AFTER_APPROVAL";
-    const releaseAttrs = ctx.releaseTime
+    const releaseAttrs: Record<string, string> = ctx.releaseTime
       ? { releaseType, earliestReleaseDate: ctx.releaseTime }
       : { releaseType };
-    const versions = await asc.get<AscListResponse<AscVersionAttrs>>(
-      `/v1/apps/${appId}/appStoreVersions?filter[platform]=IOS&filter[appVersionState]=PREPARE_FOR_SUBMISSION&limit=5`,
+    const versionId = await this.resolveEditableVersion(
+      asc,
+      appId,
+      build.versionString,
+      releaseAttrs,
+      ctx,
     );
-    let versionId = versions.data[0]?.id;
-    if (versionId) {
-      await asc.request(`/v1/appStoreVersions/${versionId}`, "PATCH", {
-        data: { type: "appStoreVersions", id: versionId, attributes: releaseAttrs },
-      });
-      ctx.emit({
-        type: "phase",
-        phase: "bind",
-        message: `复用可编辑版本 ${versions.data[0]?.attributes?.versionString ?? ""}（releaseType=${releaseType}）`,
-      });
-    } else {
-      const created = await asc.request<AscSingleResponse<AscVersionAttrs>>(
-        "/v1/appStoreVersions",
-        "POST",
-        {
-          data: {
-            type: "appStoreVersions",
-            attributes: { platform: "IOS", versionString: build.versionString, ...releaseAttrs },
-            relationships: { app: { data: { type: "apps", id: appId } } },
-          },
-        },
-      );
-      versionId = created.data?.id;
-      if (!versionId)
-        throw new Error(`ASC 创建 appStoreVersion（${build.versionString}）未返回 id`);
-      ctx.emit({
-        type: "phase",
-        phase: "bind",
-        message: `已创建版本 ${build.versionString}（releaseType=${releaseType}）`,
-      });
-    }
 
     // 3.5) 提审前预检：本地化描述是 Apple 提审硬性要求，缺失会在提交最后一步被拒（提前到提交前暴露）
     await this.preflightLocalizations(asc, versionId, ctx);
@@ -396,21 +384,44 @@ export class AscChannel implements Channel {
       data: [{ type: "builds", id: build.buildId }],
     });
 
-    // 5) 提交审核（reviewSubmissions 三步流；旧 appStoreVersionSubmissions 端点已废弃下线）
-    //    a) 创建 reviewSubmission（关联 App）
-    const reviewSubmission = await asc.request<AscSingleResponse<Record<string, unknown>>>(
-      "/v1/reviewSubmissions",
-      "POST",
-      {
-        data: {
-          type: "reviewSubmissions",
-          attributes: {},
-          relationships: { app: { data: { type: "apps", id: appId } } },
-        },
-      },
+    // 5) 提审三查（§3）：已在审拒绝 / 草稿复用 / 他人条目拒绝，然后三步流
+    const subs = await asc.get<AscListResponse<{ state?: string }>>(
+      `/v1/reviewSubmissions?filter[app]=${appId}&include=items&limit=10`,
     );
-    const reviewSubmissionId = reviewSubmission.data?.id;
-    if (!reviewSubmissionId) throw new Error("ASC 创建 reviewSubmission 未返回 id");
+    const items = subs.included?.filter((d) => d.type === "reviewSubmissionItems") ?? [];
+    const active = subs.data.find(
+      (s) => !SUBMISSION_TERMINAL_STATES.has(s.attributes?.state ?? ""),
+    );
+    let reviewSubmissionId: string;
+    if (active?.id && active.attributes?.state !== undefined) {
+      const mine = items.find(
+        (it) => it.relationships?.appStoreVersion?.data?.id === versionId, // AscDoc 的 relationships 类型按需扩 appStoreVersion
+      );
+      if (mine && active.attributes.state !== "READY")
+        throw new Error(
+          `版本已在审核流程中（submission state=${active.attributes.state}），勿重复提交——改文案先在 ASC 控制台撤回`,
+        );
+      if (!mine && items.some((it) => it.relationships?.appStoreVersion))
+        throw new Error(
+          "存在进行中的提审且含其他条目——到 ASC 网页（App Review → 草稿）人工处置后再试",
+        );
+      reviewSubmissionId = active.id; // 草稿复用（state=READY 且无冲突条目）
+      ctx.emit({ type: "progress", detail: `复用未提交的提审草稿 ${reviewSubmissionId}` });
+    } else {
+      const created = await asc.request<AscSingleResponse<Record<string, unknown>>>(
+        "/v1/reviewSubmissions",
+        "POST",
+        {
+          data: {
+            type: "reviewSubmissions",
+            attributes: {},
+            relationships: { app: { data: { type: "apps", id: appId } } },
+          },
+        },
+      );
+      reviewSubmissionId = created.data?.id ?? "";
+      if (!reviewSubmissionId) throw new Error("ASC 创建 reviewSubmission 未返回 id");
+    }
     //    b) 添加条目（关联 appStoreVersion）
     await asc.request(`/v1/reviewSubmissions/${reviewSubmissionId}/items`, "POST", {
       data: {
@@ -506,6 +517,73 @@ export class AscChannel implements Channel {
         );
       throw e;
     }
+  }
+
+  /**
+   * 定位/创建本次提审的 appStoreVersion（§4）：
+   * - editable 五态按 versionString 取最大者（semver 分段数值比较）
+   * - 同号 → PATCH releaseAttrs（现状）；PREPARE/INVALID_BINARY 异号 → PATCH versionString 改名续用；
+   *   被拒态异号 → 报错（被拒记录连着审核沟通历史，不自动改名——比 fastlane 保守，控制台人工处置）
+   * - 无 editable → POST 创建（现状）
+   */
+  private async resolveEditableVersion(
+    asc: AscClient,
+    appId: string,
+    versionString: string,
+    releaseAttrs: Record<string, string>,
+    ctx: Pick<ChannelContext, "emit">,
+  ): Promise<string> {
+    const versions = await asc.get<AscListResponse<AscVersionAttrs>>(
+      `/v1/apps/${appId}/appStoreVersions?filter[platform]=IOS&filter[appVersionState]=${EDITABLE_STATES.join(",")}&limit=10`,
+    );
+    const picked = versions.data
+      .filter((v) => v.id)
+      .sort((a, b) =>
+        cmpVersion(b.attributes?.versionString ?? "", a.attributes?.versionString ?? ""),
+      )[0];
+    if (!picked?.id) {
+      const created = await asc.request<AscSingleResponse<AscVersionAttrs>>(
+        "/v1/appStoreVersions",
+        "POST",
+        {
+          data: {
+            type: "appStoreVersions",
+            attributes: { platform: "IOS", versionString, ...releaseAttrs },
+            relationships: { app: { data: { type: "apps", id: appId } } },
+          },
+        },
+      );
+      if (!created.data?.id)
+        throw new Error(`ASC 创建 appStoreVersion（${versionString}）未返回 id`);
+      ctx.emit({ type: "phase", phase: "bind", message: `已创建版本 ${versionString}` });
+      return created.data.id;
+    }
+    const state = picked.attributes?.appVersionState ?? "";
+    const existing = picked.attributes?.versionString ?? "";
+    if (existing === versionString) {
+      await asc.request(`/v1/appStoreVersions/${picked.id}`, "PATCH", {
+        data: { type: "appStoreVersions", id: picked.id, attributes: releaseAttrs },
+      });
+      ctx.emit({ type: "phase", phase: "bind", message: `复用版本 ${existing}（state=${state}）` });
+      return picked.id;
+    }
+    if (REJECTED_STATES.has(state))
+      throw new Error(
+        `ASC 存在被拒版本 ${existing}（${state}）与目标版本 ${versionString} 不同——被拒记录需人工在控制台处置（放弃该版本或改号续用）后再重跑`,
+      );
+    await asc.request(`/v1/appStoreVersions/${picked.id}`, "PATCH", {
+      data: {
+        type: "appStoreVersions",
+        id: picked.id,
+        attributes: { versionString, ...releaseAttrs },
+      },
+    });
+    ctx.emit({
+      type: "phase",
+      phase: "bind",
+      message: `续用版本记录并改名 ${existing} → ${versionString}（state=${state}）`,
+    });
+    return picked.id;
   }
 
   /** preReleaseVersions 双格式查询（X.Y / X.Y.0 + 前导零归一）；任何失败返回 []（走退回路径） */
@@ -640,4 +718,15 @@ function resolveP8Path(ctx: Pick<ChannelContext, "credentials">, keyId: string):
       : path.resolve(explicit);
   }
   return path.join(os.homedir(), ".applift", "private_keys", `AuthKey_${keyId}.p8`);
+}
+
+/** semver 风格分段数值比较（"4.0.1000" > "4.0.999"） */
+function cmpVersion(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
 }
