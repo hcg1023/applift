@@ -220,6 +220,11 @@ export const ProjectConfigSchema = z.object({
   version: VersionConfigSchema.optional(),
   /** 内测分发（beta 无平台参数时的多渠道并行配置） */
   beta: BetaConfigSchema.optional(),
+  /**
+   * 渠道并发数（1-8）——项目属性（由渠道数决定，如七安卓渠道全开需 ≥7）。
+   * 优先级：此处 > 全局 ~/.applift/config.toml concurrency（个人兜底）> 默认 4
+   */
+  concurrency: z.number().int().min(1).max(8).optional(),
 });
 
 export type BetaConfig = z.infer<typeof BetaConfigSchema>;

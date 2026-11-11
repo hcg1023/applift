@@ -1467,7 +1467,7 @@ program
     const pipelineInput = {
       channels,
       contexts,
-      concurrency: global.concurrency,
+      concurrency: config.concurrency ?? global.concurrency,
       cwd: opts.cwd,
       confirm: confirmFn,
       plugins: host,

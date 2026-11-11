@@ -105,6 +105,15 @@ describe("ProjectConfigSchema android.stores 集成", () => {
   });
 });
 
+describe("ProjectConfigSchema.concurrency（项目级渠道并发）", () => {
+  it("1-8 合法；缺省 undefined（走 全局>默认4 解析链）；越界被拒", () => {
+    expect(ProjectConfigSchema.parse({ concurrency: 7 }).concurrency).toBe(7);
+    expect(ProjectConfigSchema.parse({}).concurrency).toBeUndefined();
+    expect(ProjectConfigSchema.safeParse({ concurrency: 9 }).success).toBe(false);
+    expect(ProjectConfigSchema.safeParse({ concurrency: 0 }).success).toBe(false);
+  });
+});
+
 describe("BetaConfigSchema（beta 多渠道）", () => {
   it("全空 → beta 可整体缺省，各渠道缺省值正确（pgyer.platforms=['android']、agc submit=false、testType=3）", () => {
     const config = ProjectConfigSchema.parse({});
