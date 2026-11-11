@@ -38,6 +38,8 @@ export interface ChannelContext {
   installPassword?: string;
   /** 定时上架时间（RFC3339），仅 capabilities.scheduled 渠道生效 */
   releaseTime?: string;
+  /** 上架方式覆盖（仅 asc 消费：manual=审核通过后手动上架；缺省 auto=审核通过自动上架） */
+  releaseMode?: "auto" | "manual";
   /** 事件发射（进度/日志，唯一输出通道，不直接 console） */
   emit: (event: ChannelEvent) => void;
 }

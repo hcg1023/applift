@@ -14,7 +14,9 @@
  *   凭据 ASC_TRANSPORTER_PATH 可显式指定 iTMSTransporter 路径（校验存在性）；
  *   缺省探测默认安装路径，不存在则回退 altool。
  *   约定 p8 私钥：凭据 ASC_P8_PATH（支持 ~ 前缀）或 ~/.applift/private_keys/AuthKey_<ASC_KEY_ID>.p8
- * - submit: ASC REST API 提审（含提审前预检：本地化描述完备性），按 ASC 官方文档实现，未经真实链路验证
+ * - submit: ASC REST API 提审（含提审前预检：本地化描述完备性），按 ASC 官方文档实现，未经真实链路验证；
+ *   releaseType 三档（2026-11-11）：releaseTime→SCHEDULED 定时 / releaseMode=manual→MANUAL /
+ *   默认 AFTER_APPROVAL 审核通过自动上架（官方确认首版亦可自动，唯一强制手动场景=预购且从未上架）
  *   官方文档: https://developer.apple.com/documentation/appstoreconnectapi
  * - status: 查最新 appStoreVersion 的 appVersionState（AppVersionState 15 枚举 → ReviewStatus）
  */
@@ -81,10 +83,15 @@ export class AscChannel implements Channel {
       platform: "ios",
       artifactVersion: "",
       action: "stage+submit",
-      // iOS 默认手动发布（审核通过后人工上架）；提供 releaseTime 时走 SCHEDULED 定时上架
-      afterApproval: ctx.releaseTime ? "scheduled" : "manual",
+      // 上架方式：releaseTime → SCHEDULED 定时；releaseMode=manual → MANUAL 手动；默认 AFTER_APPROVAL 自动
+      // （2026-11-11 定稿默认自动：官方确认首版亦可自动发布，仅"预购且从未上架"场景被官方强制手动）
+      afterApproval: ctx.releaseTime
+        ? "scheduled"
+        : ctx.releaseMode === "manual"
+          ? "manual"
+          : "auto-publish",
       notes:
-        "stage=iTMSTransporter（或 altool 兜底）上传构建（TestFlight，约 10 分钟完成处理）；submit=ASC API 提审（含预检），默认手动发布",
+        "stage=iTMSTransporter（或 altool 兜底）上传构建（TestFlight，约 10 分钟完成处理）；submit=ASC API 提审（含预检），默认审核通过自动上架（--release-mode manual 改手动）",
     };
   }
 
@@ -279,7 +286,7 @@ export class AscChannel implements Channel {
    * 文档: reviewSubmissions / Create a Review Submission / Submit a Review Submission
    *   https://developer.apple.com/documentation/appstoreconnectapi
    * 链路: 查 app（bundleId → 数字 id）→ 查最新已处理(VALID)构建 → 读取/创建 appStoreVersion
-   *   （releaseType 默认 MANUAL，ctx.releaseTime 提供时 SCHEDULED + earliestReleaseDate）
+   *   （releaseType 默认 AFTER_APPROVAL 自动上架，releaseMode=manual 时 MANUAL，releaseTime 时 SCHEDULED + earliestReleaseDate）
    *   → 提审前预检（本地化描述）→ 绑定构建到版本 → reviewSubmissions 三步流提交进入审核
    */
   async submit(ctx: ChannelContext): Promise<SubmitResult> {
@@ -324,8 +331,13 @@ export class AscChannel implements Channel {
     });
 
     // 3) 读取可编辑版本（appVersionState=PREPARE_FOR_SUBMISSION），无则按构建版本号创建；
-    //    releaseType 默认 MANUAL（审核通过后手动上架），ctx.releaseTime 提供时 SCHEDULED 定时上架
-    const releaseType = ctx.releaseTime ? "SCHEDULED" : "MANUAL";
+    //    releaseType：releaseTime → SCHEDULED 定时；releaseMode=manual → MANUAL；
+    //    默认 AFTER_APPROVAL 自动上架（配置 ios.release / 旗标 --release-mode 已由 CLI 层解析进 ctx.releaseMode）
+    const releaseType = ctx.releaseTime
+      ? "SCHEDULED"
+      : ctx.releaseMode === "manual"
+        ? "MANUAL"
+        : "AFTER_APPROVAL";
     const releaseAttrs = ctx.releaseTime
       ? { releaseType, earliestReleaseDate: ctx.releaseTime }
       : { releaseType };
@@ -406,7 +418,7 @@ export class AscChannel implements Channel {
     ctx.emit({
       type: "phase",
       phase: "done",
-      message: `已提交 App Store 审核（releaseType=${releaseType}，审核通过后${releaseType === "MANUAL" ? "手动" : "定时"}上架）`,
+      message: `已提交 App Store 审核（releaseType=${releaseType}，审核通过后${releaseType === "MANUAL" ? "手动" : releaseType === "SCHEDULED" ? "定时" : "自动"}上架）`,
     });
     return { ok: true, ref: reviewSubmissionId };
   }

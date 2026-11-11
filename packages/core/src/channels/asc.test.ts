@@ -60,6 +60,7 @@ function makeCtx(
     credentials?: Record<string, string>;
     target?: Record<string, string>;
     releaseTime?: string;
+    releaseMode?: "auto" | "manual";
     artifactPath?: string;
   } = {},
 ): ChannelContext {
@@ -72,6 +73,7 @@ function makeCtx(
     target: overrides.target ?? { bundleId: "com.example.app" },
     artifactPath: overrides.artifactPath ?? "/tmp/app-release.ipa",
     releaseTime: overrides.releaseTime,
+    releaseMode: overrides.releaseMode,
     emit: () => {},
   } as unknown as ChannelContext;
 }
@@ -84,14 +86,15 @@ describe("AscChannel 元数据", () => {
     expect(ch.capabilities).toEqual({ stage: true, submit: true, scheduled: true, status: true });
   });
 
-  it("plan 默认手动发布，releaseTime 时定时", async () => {
+  it("plan 默认自动发布，manual 时手动，releaseTime 时定时", async () => {
     const p1 = await ch.plan(makeCtx());
     expect(p1).toMatchObject({
       channel: "asc",
       platform: "ios",
       action: "stage+submit",
-      afterApproval: "manual",
+      afterApproval: "auto-publish",
     });
+    expect((await ch.plan(makeCtx({ releaseMode: "manual" }))).afterApproval).toBe("manual");
     const p2 = await ch.plan(makeCtx({ releaseTime: "2026-11-01T10:00:00Z" }));
     expect(p2.afterApproval).toBe("scheduled");
   });
@@ -483,7 +486,7 @@ describe("submit（ASC REST 提审）", () => {
     ];
   }
 
-  it("无既有版本：查 app→找 VALID 构建→创建版本（MANUAL）→绑构建→提审", async () => {
+  it("无既有版本：查 app→找 VALID 构建→创建版本（AFTER_APPROVAL）→绑构建→提审", async () => {
     const m = mockFetch(submitRoutes());
     try {
       const events: Ev[] = [];
@@ -501,14 +504,14 @@ describe("submit（ASC REST 提审）", () => {
       expect(m.find("appStoreVersions?filter[platform]")!.url).toContain(
         "filter[appVersionState]=PREPARE_FOR_SUBMISSION",
       );
-      // 4) 创建版本 POST：MANUAL + 构建版本号 + app 关系
+      // 4) 创建版本 POST：AFTER_APPROVAL + 构建版本号 + app 关系
       const post = m.calls.find(
         (c) => c.method === "POST" && c.url.endsWith("/v1/appStoreVersions"),
       )!;
       expect(JSON.parse(post.body as string)).toEqual({
         data: {
           type: "appStoreVersions",
-          attributes: { platform: "IOS", versionString: "1.2.3", releaseType: "MANUAL" },
+          attributes: { platform: "IOS", versionString: "1.2.3", releaseType: "AFTER_APPROVAL" },
           relationships: { app: { data: { type: "apps", id: "APP1" } } },
         },
       });
@@ -586,7 +589,7 @@ describe("submit（ASC REST 提审）", () => {
         (c) => c.method === "PATCH" && c.url.endsWith("/v1/appStoreVersions/V1"),
       )!;
       expect(JSON.parse(patch.body as string)).toEqual({
-        data: { type: "appStoreVersions", id: "V1", attributes: { releaseType: "MANUAL" } },
+        data: { type: "appStoreVersions", id: "V1", attributes: { releaseType: "AFTER_APPROVAL" } },
       });
       // 未再 POST 创建版本
       expect(
@@ -609,6 +612,23 @@ describe("submit（ASC REST 提审）", () => {
         versionString: "1.2.3",
         releaseType: "SCHEDULED",
         earliestReleaseDate: "2026-11-01T10:00:00Z",
+      });
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("releaseMode=manual 时创建版本 MANUAL（配置 ios.release / 旗标解析进 ctx 后的渠道侧行为）", async () => {
+    const m = mockFetch(submitRoutes());
+    try {
+      await ch.submit(makeCtx({ releaseMode: "manual" }));
+      const post = m.calls.find(
+        (c) => c.method === "POST" && c.url.endsWith("/v1/appStoreVersions"),
+      )!;
+      expect(JSON.parse(post.body as string).data.attributes).toEqual({
+        platform: "IOS",
+        versionString: "1.2.3",
+        releaseType: "MANUAL",
       });
     } finally {
       m.restore();
@@ -689,7 +709,7 @@ describe("submit（ASC REST 提审）", () => {
           (e) =>
             e.type === "phase" &&
             e.phase === "bind" &&
-            e.message === "复用可编辑版本 （releaseType=MANUAL）",
+            e.message === "复用可编辑版本 （releaseType=AFTER_APPROVAL）",
         ),
       ).toBe(true);
     } finally {

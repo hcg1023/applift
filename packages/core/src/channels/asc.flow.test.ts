@@ -234,8 +234,10 @@ describe("asc flow: 同一渠道实例 altool stage → REST submit → status",
       (c) => c.url.includes("/v1/reviewSubmissions/") && c.method === "PATCH",
     )!;
     expect(JSON.parse(patchSub.body as string).data.attributes).toEqual({ action: "SUBMIT" });
-    // iOS 默认手动发布（releaseType=MANUAL：审核通过后人工上架）
-    expect(JSON.parse(createVersion.body as string).data.attributes.releaseType).toBe("MANUAL");
+    // iOS 默认审核通过自动上架（releaseType=AFTER_APPROVAL；--release-mode manual 改手动，2026-11-11）
+    expect(JSON.parse(createVersion.body as string).data.attributes.releaseType).toBe(
+      "AFTER_APPROVAL",
+    );
 
     // ---------- status：appVersionState 映射 ReviewStatus（重新 mock 审核中状态） ----------
     fetchMock.restore();

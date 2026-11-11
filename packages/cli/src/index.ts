@@ -247,7 +247,12 @@ export function makeContext(
   artifactPath: string,
   note: string | undefined,
   /** CLI flag 透传的渠道上下文扩展（P2-2：定时上架/提审备注/安装密码） */
-  extra: { releaseTime?: string; remark?: string; installPassword?: string } = {},
+  extra: {
+    releaseTime?: string;
+    releaseMode?: "auto" | "manual";
+    remark?: string;
+    installPassword?: string;
+  } = {},
 ): ChannelContext {
   const label = pc.bold(channel.label);
   const emit = (event: ChannelEvent) => {
@@ -276,6 +281,7 @@ export function makeContext(
     artifactPath,
     updateDescription: note,
     releaseTime: extra.releaseTime,
+    releaseMode: extra.releaseMode,
     remark: extra.remark,
     installPassword: extra.installPassword,
     emit,
@@ -299,7 +305,7 @@ async function confirmWithClack(plans: ReleasePlanEntry[]): Promise<boolean> {
   for (const r of rows) p.log.message(r);
   p.log.message(`${pc.bold("└───────────────────────────────────┘")}`);
   if (plans.some((x) => x.afterApproval === "auto-publish")) {
-    p.log.warn(`${pc.red("⚠")} 提审后审核通过即自动上架，无法撤回（iOS manual 除外）`);
+    p.log.warn(`${pc.red("⚠")} 提审后审核通过即自动上架，无法撤回`);
   }
   const yes = await p.confirm({ message: `确认提交以上 ${plans.length} 项？` });
   // Ctrl-C 抛「已取消」而非返回 false：bin 据此退 130（中止≠失败）；false 保留给明确选"否"
@@ -332,6 +338,7 @@ interface ReleaseOpts {
   artifact: string;
   note?: string;
   releaseTime?: string;
+  releaseMode?: "auto" | "manual";
   remark?: string;
   profile?: string;
   yes: boolean;
@@ -1065,6 +1072,10 @@ program
   .option("--artifact <path>", "产物路径；缺省自动探测框架最新构建产物")
   .option("--note <text>", "更新说明")
   .option("--release-time <rfc3339>", "定时上架时间（RFC3339，仅 scheduled 渠道生效）")
+  .option(
+    "--release-mode <mode>",
+    "iOS 上架方式：auto 审核通过自动上架（默认）| manual 审核通过后手动上架；覆盖配置 ios.release",
+  )
   .option("--remark <text>", "提审备注（给审核员）")
   .option(
     "--profile <name>",
@@ -1085,6 +1096,14 @@ program
         throw new Error(`--rollout 必须是 1-100 的整数，收到 "${opts.rollout}"`);
       }
     }
+    if (
+      opts.releaseMode !== undefined &&
+      opts.releaseMode !== "auto" &&
+      opts.releaseMode !== "manual"
+    )
+      throw new Error(`--release-mode 只支持 auto | manual，收到 "${opts.releaseMode}"`);
+    if (opts.releaseMode !== undefined && opts.releaseTime !== undefined)
+      throw new Error("--release-mode 与 --release-time 互斥（定时上架请只传 --release-time）");
     const KNOWN_PLATFORMS = ["android", "harmony", "ios", "windows", "macos", "linux"];
     if (!KNOWN_PLATFORMS.includes(platform)) {
       // 插件适配器可自报平台——仅提示不拒绝
@@ -1375,6 +1394,7 @@ program
         c.id,
         makeContext(c, creds, target, artifactPath ?? "", opts.note, {
           releaseTime: opts.releaseTime,
+          releaseMode: opts.releaseMode ?? config.ios?.release,
           remark: opts.remark,
         }),
       );

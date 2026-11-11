@@ -188,6 +188,12 @@ export const ProjectConfigSchema = z.object({
       workspace: z.string().optional(),
       /** App Store Connect 按 bundleId 定位 App（asc 渠道 submit 用） */
       bundleId: z.string().optional(),
+      /**
+       * App Store 上架方式："auto"（默认，审核通过自动上架 releaseType=AFTER_APPROVAL）
+       * | "manual"（审核通过后手动上架 MANUAL）。--release-mode 单次覆盖；定时上架走 --release-time。
+       * 官方文档确认首版亦可自动发布（唯一强制手动场景=预购且从未上架，2026-11-11 核查）。
+       */
+      release: z.enum(["auto", "manual"]).default("auto"),
     })
     .optional(),
   /** 产物目录覆盖（非标准工程）：每平台 glob 数组，优先于框架内置 pattern（桌面平台 + 插件自报平台经 catchall 收） */

@@ -47,10 +47,12 @@ describe("makeContext（P2-2 透传）", () => {
   it("extra 扩展字段透传到 ChannelContext，缺省不产生 undefined 以外的值", () => {
     const ctx = makeContext(stubChannel, { k: "v" }, { appId: "1" }, "/tmp/a.apk", "更新说明", {
       releaseTime: "2027-01-01T00:00:00Z",
+      releaseMode: "manual",
       remark: "提审备注",
       installPassword: "pw123",
     });
     expect(ctx.releaseTime).toBe("2027-01-01T00:00:00Z");
+    expect(ctx.releaseMode).toBe("manual");
     expect(ctx.remark).toBe("提审备注");
     expect(ctx.installPassword).toBe("pw123");
     expect(ctx.updateDescription).toBe("更新说明");
@@ -60,6 +62,7 @@ describe("makeContext（P2-2 透传）", () => {
 
     const bare = makeContext(stubChannel, {}, {}, "/tmp/a.apk", undefined);
     expect(bare.releaseTime).toBeUndefined();
+    expect(bare.releaseMode).toBeUndefined();
     expect(bare.remark).toBeUndefined();
     expect(bare.installPassword).toBeUndefined();
     expect(bare.updateDescription).toBeUndefined();
@@ -94,8 +97,21 @@ describe("CLI 旗标面（P2-2 入口）", () => {
     const release = program.commands.find((c) => c.name() === "release");
     const beta = program.commands.find((c) => c.name() === "beta");
     expect(release?.options.map((o) => o.flags)).toContain("--release-time <rfc3339>");
+    expect(release?.options.map((o) => o.flags)).toContain("--release-mode <mode>");
     expect(release?.options.map((o) => o.flags)).toContain("--remark <text>");
     expect(beta?.options.map((o) => o.flags)).toContain("--install-password <pwd>");
+  });
+
+  it("--release-mode 非法值 / 与 --release-time 同给 → 入口报错", async () => {
+    await expect(
+      program.parseAsync(["release", "ios", "--release-mode", "whenever"], { from: "user" }),
+    ).rejects.toThrow(/--release-mode 只支持 auto \| manual/);
+    await expect(
+      program.parseAsync(
+        ["release", "ios", "--release-mode", "manual", "--release-time", "2027-01-01T00:00:00Z"],
+        { from: "user" },
+      ),
+    ).rejects.toThrow(/互斥/);
   });
 });
 
@@ -119,13 +135,13 @@ describe("release --dry-run 集成（P2-2 透传 / P2-5 钩子配置 / P3-7 警�
         "export default {",
         "  plugins: [rnFramework(), {",
         "    name: 'capture',",
-        "    'config:resolved': (config) => ({ ...config, android: { pkgName: 'com.demo', stores: { stub: { appId: 'from-hook' } } } }),",
+        "    'config:resolved': (config) => ({ ...config, android: { pkgName: 'com.demo', stores: { stub: { appId: 'from-hook' } } }, ios: { release: 'manual' } }),",
         "    'channel:register': (registry) => registry.register({",
         "      id: 'stub', label: '桩渠道',",
         "      capabilities: { stage: true, submit: true, scheduled: true, status: false },",
         "      plan: async (ctx) => {",
         "        globalThis.__appliftCaptured.push(ctx);",
-        "        return { channel: 'stub', platform: 'android', artifactVersion: '1.0.0', action: 'stage-only', afterApproval: ctx.releaseTime ? 'scheduled' : 'auto-publish' };",
+        "        return { channel: 'stub', platform: 'android', artifactVersion: '1.0.0', action: 'stage-only', afterApproval: ctx.releaseTime ? 'scheduled' : (ctx.releaseMode === 'manual' ? 'manual' : 'auto-publish') };",
         "      },",
         "      stage: async () => ({ ok: true }),",
         "      submit: async () => ({ ok: true }),",
@@ -191,6 +207,63 @@ describe("release --dry-run 集成（P2-2 透传 / P2-5 钩子配置 / P3-7 警�
     };
     expect(json.errors).toEqual({});
     expect(json.plans[0]?.afterApproval).toBe("scheduled");
+  });
+
+  it("ios.release 配置解析：旗标缺省时 ctx.releaseMode 取配置值", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-cli-ios-"));
+    const captured: ChannelContext[] = [];
+    const slot = globalThis as { __appliftCaptured2?: ChannelContext[] };
+    fs.writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({ name: "guard-demo-ios", dependencies: { "react-native": "0.84.0" } }),
+    );
+    slot.__appliftCaptured2 = captured;
+    fs.writeFileSync(
+      path.join(dir, "applift.config.ts"),
+      [
+        "import { rnFramework } from '@applift/core';",
+        "export default {",
+        "  ios: { release: 'manual' },",
+        "  plugins: [rnFramework(), {",
+        "    name: 'capture-ios',",
+        "    'channel:register': (registry) => {",
+        "      if (registry.get('stub-ios')) return;",
+        "      registry.register({",
+        "        id: 'stub-ios', label: '桩渠道(iOS)',",
+        "        capabilities: { stage: true, submit: true, scheduled: true, status: false },",
+        "        plan: async (ctx) => {",
+        "          globalThis.__appliftCaptured2.push(ctx);",
+        "          return { channel: 'stub-ios', platform: 'ios', artifactVersion: '1.0.0', action: 'stage-only', afterApproval: ctx.releaseMode === 'manual' ? 'manual' : 'auto-publish' };",
+        "        },",
+        "        stage: async () => ({ ok: true }),",
+        "        submit: async () => ({ ok: true }),",
+        "        status: async () => { throw new Error('not supported'); },",
+        "      });",
+        "    },",
+        "  }],",
+        "};",
+      ].join("\n"),
+    );
+    const stdoutWrites: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((b) => {
+      stdoutWrites.push(String(b));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await program.parseAsync(
+        ["release", "ios", "--cwd", dir, "--stores", "stub-ios", "--dry-run", "--json"],
+        { from: "user" },
+      );
+    } finally {
+      vi.restoreAllMocks();
+      delete slot.__appliftCaptured2;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    expect(captured.length).toBe(1);
+    expect(captured[0]?.releaseMode).toBe("manual");
+    const json = JSON.parse(stdoutWrites.join("")) as { plans: Array<{ afterApproval: string }> };
+    expect(json.plans[0]?.afterApproval).toBe("manual");
   });
 });
 
