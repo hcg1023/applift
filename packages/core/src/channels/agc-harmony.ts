@@ -355,8 +355,6 @@ export class AgcHarmonyChannel implements Channel {
         label: "AGC 云端编译",
         intervalMs: COMPILE_POLL_MS,
         timeoutMs: COMPILE_TIMEOUT_MS,
-        onWait: () =>
-          ctx.emit({ type: "progress", detail: `编译中，${COMPILE_POLL_MS / 1000}s 后重查…` }),
         attempt: async () => {
           const stQs = new URLSearchParams({ appId, pkgIds: pkgId });
           const st = await agcJson<CompileStatusResp>(
