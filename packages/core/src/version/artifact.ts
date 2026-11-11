@@ -20,6 +20,7 @@ export interface ArtifactVersion {
 export function readArtifactVersion(artifactPath: string): ArtifactVersion | undefined {
   const ext = path.extname(artifactPath).toLowerCase();
   if (ext === ".hap" || ext === ".app") return fromPackInfo(artifactPath);
+  if (ext === ".ipa") return fromIpaInfoPlist(artifactPath);
   if (ext === ".apk") return fromAapt(artifactPath);
   return undefined;
 }
@@ -108,6 +109,42 @@ function apkBuildTime(artifactPath: string): string | undefined {
 function ipaBuildTime(artifactPath: string): string | undefined {
   const text = unzipStdout(["-p", artifactPath, "Payload/*.app/pushy_build_time.txt"]);
   return text?.trim() || undefined;
+}
+
+/** iOS：Payload/*.app/Info.plist 读营销版本号 + build 号（CFBundleShortVersionString/CFBundleVersion）。
+ *  二进制 plist（bplist00 头，Xcode 默认产物）经 plutil 转 xml1 再解析（macOS 自带工具，ASC 上传链路本就
+ *  macOS-only）；任一环节失败（unzip/plutil/两个 key 都未命中）返回 undefined——不猜测，走调用方兜底。 */
+function fromIpaInfoPlist(artifactPath: string): ArtifactVersion | undefined {
+  // 二进制安全读取（不带 encoding，bplist 字节流不能按 utf8 解码）
+  const r = spawnSync("unzip", ["-p", artifactPath, "Payload/*.app/Info.plist"], {
+    timeout: 20_000,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (r.error || r.status !== 0 || !r.stdout) return undefined;
+  let text: string | undefined;
+  const head = Buffer.from(r.stdout).subarray(0, 8).toString("latin1");
+  if (head === "bplist00") {
+    const tmp = path.join(os.tmpdir(), `applift-plist-${process.pid}-${Date.now()}`);
+    try {
+      fs.writeFileSync(`${tmp}.plist`, r.stdout);
+      const c = spawnSync("plutil", ["-convert", "xml1", "-o", `${tmp}.xml`, `${tmp}.plist`], {
+        timeout: 10_000,
+        encoding: "utf8",
+      });
+      if (c.error || c.status !== 0) return undefined;
+      text = fs.readFileSync(`${tmp}.xml`, "utf8");
+    } finally {
+      fs.rmSync(`${tmp}.plist`, { force: true });
+      fs.rmSync(`${tmp}.xml`, { force: true });
+    }
+  } else {
+    text = Buffer.from(r.stdout).toString("utf8");
+  }
+  if (!text) return undefined;
+  const name = /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]*)<\/string>/.exec(text)?.[1];
+  const code = /<key>CFBundleVersion<\/key>\s*<string>([^<]*)<\/string>/.exec(text)?.[1];
+  if (!name && !code) return undefined;
+  return { versionName: name, versionCode: code, source: "Info.plist" };
 }
 
 /** 鸿蒙包版本读取：优先包内 pack.info（zip 容器内的权威数据），回退同目录 pack.info（标注可能过期） */

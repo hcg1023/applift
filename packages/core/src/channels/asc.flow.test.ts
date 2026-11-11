@@ -162,9 +162,10 @@ describe("asc flow: 同一渠道实例 altool stage → REST submit → status",
     // ---------- stage：altool 上传（TestFlight） ----------
     const stage = await channel.stage(ctx);
     expect(stage).toEqual({ ok: true });
-    // altool 参数完整：上传 ipa + 同一 KeyID/Issuer
-    const altoolArgs = spawnSyncMock.mock.calls[0]?.[1];
-    expect(spawnSyncMock.mock.calls[0]?.[0]).toBe("xcrun");
+    // stage 预检先 spawn unzip 读 Info.plist（mock 输出无版本 key → 读不出走兜底），altool 是 xcrun 调用
+    const altoolCall = spawnSyncMock.mock.calls.find((c) => c[0] === "xcrun");
+    const altoolArgs = altoolCall?.[1];
+    expect(altoolCall?.[0]).toBe("xcrun");
     expect(altoolArgs).toContain("--upload-app");
     expect(altoolArgs).toContain(ipaPath);
     expect(altoolArgs).toContain("--apiKey");
