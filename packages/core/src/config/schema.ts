@@ -194,6 +194,8 @@ export const ProjectConfigSchema = z.object({
        * 官方文档确认首版亦可自动发布（唯一强制手动场景=预购且从未上架，2026-11-11 核查）。
        */
       release: z.enum(["auto", "manual"]).default("auto"),
+      /** 出口合规代答：仅当 build 的 usesNonExemptEncryption 未声明（null）时 PATCH 代答；缺省不代答（保持提示） */
+      exportCompliance: z.object({ usesNonExemptEncryption: z.boolean() }).optional(),
     })
     .optional(),
   /** 产物目录覆盖（非标准工程）：每平台 glob 数组，优先于框架内置 pattern（桌面平台 + 插件自报平台经 catchall 收） */

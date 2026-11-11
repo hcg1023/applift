@@ -250,6 +250,7 @@ export function makeContext(
   extra: {
     releaseTime?: string;
     releaseMode?: "auto" | "manual";
+    exportCompliance?: { usesNonExemptEncryption: boolean };
     remark?: string;
     installPassword?: string;
   } = {},
@@ -282,6 +283,7 @@ export function makeContext(
     updateDescription: note,
     releaseTime: extra.releaseTime,
     releaseMode: extra.releaseMode,
+    exportCompliance: extra.exportCompliance,
     remark: extra.remark,
     installPassword: extra.installPassword,
     emit,
@@ -1395,6 +1397,7 @@ program
         makeContext(c, creds, target, artifactPath ?? "", opts.note, {
           releaseTime: opts.releaseTime,
           releaseMode: opts.releaseMode ?? config.ios?.release,
+          exportCompliance: config.ios?.exportCompliance,
           remark: opts.remark,
         }),
       );

@@ -265,6 +265,61 @@ describe("release --dry-run 集成（P2-2 透传 / P2-5 钩子配置 / P3-7 警�
     const json = JSON.parse(stdoutWrites.join("")) as { plans: Array<{ afterApproval: string }> };
     expect(json.plans[0]?.afterApproval).toBe("manual");
   });
+
+  it("ios.exportCompliance 配置解析：ctx.exportCompliance 透传给渠道（旗标面缺省取配置）", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-cli-cmp-"));
+    const captured: ChannelContext[] = [];
+    const slot = globalThis as { __appliftCaptured3?: ChannelContext[] };
+    fs.writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({ name: "guard-demo-cmp", dependencies: { "react-native": "0.84.0" } }),
+    );
+    slot.__appliftCaptured3 = captured;
+    fs.writeFileSync(
+      path.join(dir, "applift.config.ts"),
+      [
+        "import { rnFramework } from '@applift/core';",
+        "export default {",
+        "  ios: { exportCompliance: { usesNonExemptEncryption: false } },",
+        "  plugins: [rnFramework(), {",
+        "    name: 'capture-cmp',",
+        "    'channel:register': (registry) => {",
+        "      if (registry.get('stub-cmp')) return;",
+        "      registry.register({",
+        "        id: 'stub-cmp', label: '桩渠道(CMP)',",
+        "        capabilities: { stage: true, submit: true, scheduled: true, status: false },",
+        "        plan: async (ctx) => {",
+        "          globalThis.__appliftCaptured3.push(ctx);",
+        "          return { channel: 'stub-cmp', platform: 'ios', artifactVersion: '1.0.0', action: 'stage-only', afterApproval: 'auto-publish' };",
+        "        },",
+        "        stage: async () => ({ ok: true }),",
+        "        submit: async () => ({ ok: true }),",
+        "        status: async () => { throw new Error('not supported'); },",
+        "      });",
+        "    },",
+        "  }],",
+        "};",
+      ].join("\n"),
+    );
+    const stdoutWrites: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((b) => {
+      stdoutWrites.push(String(b));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await program.parseAsync(
+        ["release", "ios", "--cwd", dir, "--stores", "stub-cmp", "--dry-run", "--json"],
+        { from: "user" },
+      );
+    } finally {
+      vi.restoreAllMocks();
+      delete slot.__appliftCaptured3;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    expect(captured.length).toBe(1);
+    expect(captured[0]?.exportCompliance).toEqual({ usesNonExemptEncryption: false });
+  });
 });
 
 describe("声明式 framework 守卫（发布命令无插件声明必须报错）", () => {

@@ -79,8 +79,13 @@ interface AscSingleResponse<A> {
 
 /** apps 资源属性 */
 type AscAppAttrs = { bundleId?: string; name?: string };
-/** builds 资源属性（processingState: PROCESSING / INVALID / FAILED / VALID） */
-type AscBuildAttrs = { version?: string; uploadedDate?: string; processingState?: string };
+/** builds 资源属性（processingState: PROCESSING / INVALID / FAILED / VALID；usesNonExemptEncryption null=未声明） */
+type AscBuildAttrs = {
+  version?: string;
+  uploadedDate?: string;
+  processingState?: string;
+  usesNonExemptEncryption?: boolean | null;
+};
 /** preReleaseVersions 资源属性（version 即 CFBundleShortVersionString 营销版本号） */
 type AscPreReleaseAttrs = { version?: string };
 /** appStoreVersions 资源属性（appVersionState 枚举见 AppVersionState；releaseType: MANUAL / AFTER_APPROVAL / SCHEDULED） */
@@ -368,21 +373,47 @@ export class AscChannel implements Channel {
     const releaseAttrs: Record<string, string> = ctx.releaseTime
       ? { releaseType, earliestReleaseDate: ctx.releaseTime }
       : { releaseType };
+    const warns: string[] = [];
     const versionId = await this.resolveEditableVersion(
       asc,
       appId,
       build.versionString,
       releaseAttrs,
       ctx,
+      warns,
     );
 
-    // 3.5) 提审前预检：本地化描述是 Apple 提审硬性要求，缺失会在提交最后一步被拒（提前到提交前暴露）
-    await this.preflightLocalizations(asc, versionId, ctx);
+    // 3.5) 提审前预检（规则化，§8）：error 抛出阻断 / warn 仅提示
+    await this.preflight(asc, versionId, ctx, warns);
 
     // 4) 把构建绑定到版本（builds 为 to-many 关系，data 传数组）
     await asc.request(`/v1/appStoreVersions/${versionId}/relationships/builds`, "PATCH", {
       data: [{ type: "builds", id: build.buildId }],
     });
+
+    // 4.5) 出口合规代答（§6）：build 未声明（null）才写——幂等判据（fastlane 同款）；
+    //      Info.plist 已声明（ITSAppUsesNonExemptEncryption）的 build 此处为非 null，自动跳过
+    if (build.attrs.usesNonExemptEncryption == null) {
+      if (ctx.exportCompliance) {
+        await asc.request(`/v1/builds/${build.buildId}`, "PATCH", {
+          data: {
+            type: "builds",
+            id: build.buildId,
+            attributes: { usesNonExemptEncryption: ctx.exportCompliance.usesNonExemptEncryption },
+          },
+        });
+        ctx.emit({
+          type: "progress",
+          detail: `已代答出口合规（usesNonExemptEncryption=${ctx.exportCompliance.usesNonExemptEncryption}）`,
+        });
+      } else {
+        ctx.emit({
+          type: "progress",
+          detail:
+            "出口合规提示：Info.plist 声明 ITSAppUsesNonExemptEncryption（按实际加密用途取值）可免每次提审被问询",
+        });
+      }
+    }
 
     // 5) 提审三查（§3）：已在审拒绝 / 草稿复用 / 他人条目拒绝，然后三步流
     const subs = await asc.get<AscListResponse<{ state?: string }>>(
@@ -455,7 +486,7 @@ export class AscChannel implements Channel {
     appId: string,
     av: ArtifactVersion | undefined,
     ctx: Pick<ChannelContext, "emit">,
-  ): Promise<{ buildId: string; versionString: string }> {
+  ): Promise<{ buildId: string; versionString: string; attrs: AscBuildAttrs }> {
     ctx.emit({
       type: "phase",
       phase: "wait",
@@ -464,7 +495,7 @@ export class AscChannel implements Channel {
     const trainIds = av?.versionName ? await this.resolveTrainIds(asc, appId, av.versionName) : [];
     const anchored = trainIds.length > 0 && !!av?.versionCode;
     try {
-      return await pollUntil<{ buildId: string; versionString: string }>({
+      return await pollUntil<{ buildId: string; versionString: string; attrs: AscBuildAttrs }>({
         label: "ASC 构建处理",
         intervalMs: BUILD_POLL_MS,
         timeoutMs: BUILD_TIMEOUT_MS,
@@ -496,7 +527,10 @@ export class AscChannel implements Channel {
               type: "progress",
               detail: `构建处理完成 build ${valid.attributes?.version ?? ""}（版本 ${versionString}）`,
             });
-            return { done: true as const, value: { buildId: valid.id, versionString } };
+            return {
+              done: true as const,
+              value: { buildId: valid.id, versionString, attrs: valid.attributes ?? {} },
+            };
           }
           const bad = builds.data.find(
             (b) =>
@@ -532,6 +566,7 @@ export class AscChannel implements Channel {
     versionString: string,
     releaseAttrs: Record<string, string>,
     ctx: Pick<ChannelContext, "emit">,
+    warns: string[], // 预检 warn 事实收集（被拒续用等）
   ): Promise<string> {
     const versions = await asc.get<AscListResponse<AscVersionAttrs>>(
       `/v1/apps/${appId}/appStoreVersions?filter[platform]=IOS&filter[appVersionState]=${EDITABLE_STATES.join(",")}&limit=10`,
@@ -561,6 +596,7 @@ export class AscChannel implements Channel {
     const state = picked.attributes?.appVersionState ?? "";
     const existing = picked.attributes?.versionString ?? "";
     if (existing === versionString) {
+      if (REJECTED_STATES.has(state)) warns.push("rejected-reuse");
       await asc.request(`/v1/appStoreVersions/${picked.id}`, "PATCH", {
         data: { type: "appStoreVersions", id: picked.id, attributes: releaseAttrs },
       });
@@ -669,37 +705,54 @@ export class AscChannel implements Channel {
   }
 
   /**
-   * 提审前预检（只读）：目标版本的全部本地化必须有商店描述（description）。
-   * Apple 提审硬性要求；缺失时提前报错，避免 reviewSubmissions 最后一步被拒的返工。
+   * 提审前预检规则（§8）：error 抛出阻断，warn 仅提示。规则接口可移植（不提升 core）。
    */
-  private async preflightLocalizations(
+  private async preflight(
     asc: AscClient,
     versionId: string,
     ctx: Pick<ChannelContext, "emit">,
+    warns: string[], // 上游（resolveEditableVersion 等）收集的 warn 事实
   ): Promise<void> {
-    const locs = await asc.get<AscListResponse<AscVersionLocAttrs>>(
-      `/v1/appStoreVersions/${versionId}/appStoreVersionLocalizations?limit=50`,
-    );
-    if (locs.data.length === 0)
-      throw new Error(
-        "ASC 版本无任何本地化记录，无法提审——请在 ASC 后台补全商店元数据（描述/关键词/截图）后重试",
-      );
-    const missing = locs.data
-      .filter((d) => !(d.attributes?.description ?? "").trim())
-      .map((d) => d.attributes?.locale ?? d.id);
-    if (missing.length > 0)
-      throw new Error(
-        `以下本地化缺少商店描述（description），无法提审: ${missing.join(", ")}——请在 ASC 后台或经 API 补全后重试`,
-      );
-    ctx.emit({
-      type: "progress",
-      detail: `提审预检通过：本地化 ${locs.data.map((d) => d.attributes?.locale ?? d.id).join(", ")} 描述齐备`,
-    });
-    ctx.emit({
-      type: "progress",
-      detail:
-        "出口合规提示：Info.plist 声明 ITSAppUsesNonExemptEncryption（按实际加密用途取值）可免每次提审被问询",
-    });
+    const rules: Array<{
+      key: string;
+      level: "warn" | "error";
+      check: () => Promise<string | null>;
+    }> = [
+      {
+        key: "localizations-description",
+        level: "error",
+        check: async () => {
+          const locs = await asc.get<AscListResponse<AscVersionLocAttrs>>(
+            `/v1/appStoreVersions/${versionId}/appStoreVersionLocalizations?limit=50`,
+          );
+          if (locs.data.length === 0)
+            return "ASC 版本无任何本地化记录，无法提审——请在 ASC 后台补全商店元数据（描述/关键词/截图）后重试";
+          const missing = locs.data
+            .filter((d) => !(d.attributes?.description ?? "").trim())
+            .map((d) => d.attributes?.locale ?? d.id);
+          if (missing.length > 0)
+            return `以下本地化缺少商店描述（description），无法提审: ${missing.join(", ")}——请在 ASC 后台或经 API 补全后重试`;
+          ctx.emit({
+            type: "progress",
+            detail: `提审预检通过：本地化 ${locs.data.map((d) => d.attributes?.locale ?? d.id).join(", ")} 描述齐备`,
+          });
+          return null;
+        },
+      },
+      {
+        key: "rejected-version-reuse",
+        level: "warn",
+        check: async () =>
+          warns.includes("rejected-reuse") ? "续用被拒版本记录：请确认拒审原因已解决" : null,
+      },
+    ];
+    for (const r of rules) {
+      const msg = await r.check();
+      if (!msg) continue;
+      if (r.level === "error") throw new Error(msg);
+      ctx.emit({ type: "warn", message: msg });
+    }
+    ctx.emit({ type: "progress", detail: "提审预检通过" });
   }
 }
 

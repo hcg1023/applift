@@ -68,6 +68,7 @@ function makeCtx(
     target?: Record<string, string>;
     releaseTime?: string;
     releaseMode?: "auto" | "manual";
+    exportCompliance?: { usesNonExemptEncryption: boolean };
     artifactPath?: string;
     artifactVersion?: { versionName?: string; versionCode?: string };
   } = {},
@@ -84,6 +85,7 @@ function makeCtx(
     artifactPath: overrides.artifactPath ?? "/tmp/app-release.ipa",
     releaseTime: overrides.releaseTime,
     releaseMode: overrides.releaseMode,
+    exportCompliance: overrides.exportCompliance,
     emit: () => {},
   } as unknown as ChannelContext;
 }
@@ -869,6 +871,283 @@ describe("submit（ASC REST 提审）", () => {
       expect(r).toEqual({ ok: true, ref: "SUB1" });
       // builds 查询用兜底 App id
       expect(m.find("/v1/builds?")!.url).toContain("filter[app]=APPX");
+    } finally {
+      m.restore();
+    }
+  });
+});
+
+describe("出口合规代答（§6）", () => {
+  const ch = new AscChannel();
+  const app = { type: "apps", id: "APP1", attributes: { bundleId: "com.example.app" } };
+  const buildUndeclared = {
+    type: "builds",
+    id: "B2",
+    attributes: { version: "42", processingState: "VALID", usesNonExemptEncryption: null },
+    relationships: { preReleaseVersion: { data: { type: "preReleaseVersions", id: "PR1" } } },
+  };
+  const buildDeclared = {
+    type: "builds",
+    id: "B2",
+    attributes: { version: "42", processingState: "VALID", usesNonExemptEncryption: false },
+    relationships: { preReleaseVersion: { data: { type: "preReleaseVersions", id: "PR1" } } },
+  };
+  const pre = { type: "preReleaseVersions", id: "PR1", attributes: { version: "1.2.3" } };
+
+  function routes(builds: unknown) {
+    return [
+      { match: /\/v1\/apps\?/, response: { status: 200, json: { data: [app] } } },
+      { match: /\/v1\/preReleaseVersions\?/, response: { status: 200, json: { data: [] } } },
+      { match: /\/v1\/builds\?/, response: { status: 200, json: builds } },
+      { match: /\/v1\/builds\/B2$/, response: { status: 200, json: { data: { id: "B2" } } } },
+      {
+        match: /appStoreVersions\?filter\[platform\]/,
+        response: { status: 200, json: { data: [] } },
+      },
+      {
+        match: /\/v1\/appStoreVersions\/[^/]+$/,
+        response: { status: 200, json: { data: { id: "V1" } } },
+      },
+      {
+        match: /\/v1\/appStoreVersions$/,
+        response: {
+          status: 201,
+          json: { data: { id: "VNEW", attributes: { versionString: "1.2.3" } } },
+        },
+      },
+      {
+        match: /appStoreVersionLocalizations/,
+        response: {
+          status: 200,
+          json: {
+            data: [
+              {
+                type: "appStoreVersionLocalizations",
+                id: "L1",
+                attributes: { locale: "zh-Hans", description: "企业司机端描述" },
+              },
+            ],
+          },
+        },
+      },
+      { match: /relationships\/builds/, response: { status: 200, json: { data: [] } } },
+      {
+        match: /\/v1\/reviewSubmissions\/[^/]+\/items$/,
+        response: { status: 201, json: { data: { id: "RSI1" } } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions\/[^/]+$/,
+        response: { status: 200, json: { data: { id: "RS1" } } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions\?/,
+        response: { status: 200, json: { data: [], included: [] } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions$/,
+        response: { status: 201, json: { data: { id: "SUB1" } } },
+      },
+    ];
+  }
+
+  it("配置代答 + build usesNonExemptEncryption 为 null：PATCH builds/<id> 补写；非 null 跳过", async () => {
+    const m = mockFetch(routes({ data: [buildUndeclared], included: [pre] }));
+    try {
+      const events: Ev[] = [];
+      const ctx = makeCtx({ exportCompliance: { usesNonExemptEncryption: false } });
+      ctx.emit = evCollector(events) as typeof ctx.emit;
+      await expect(ch.submit(ctx)).resolves.toEqual({ ok: true, ref: "SUB1" });
+      const patch = m.calls.find((c) => c.method === "PATCH" && c.url.endsWith("/v1/builds/B2"))!;
+      expect(JSON.parse(patch.body as string)).toEqual({
+        data: { type: "builds", id: "B2", attributes: { usesNonExemptEncryption: false } },
+      });
+      expect(
+        events.some(
+          (e) =>
+            e.type === "progress" && e.detail === "已代答出口合规（usesNonExemptEncryption=false）",
+        ),
+      ).toBe(true);
+
+      // 非 null：零 PATCH（同配置下幂等跳过）
+      m.restore();
+      const m2 = mockFetch(routes({ data: [buildDeclared], included: [pre] }));
+      try {
+        await expect(
+          ch.submit(makeCtx({ exportCompliance: { usesNonExemptEncryption: false } })),
+        ).resolves.toEqual({ ok: true, ref: "SUB1" });
+        expect(
+          m2.calls.find((c) => c.method === "PATCH" && c.url.endsWith("/v1/builds/B2")),
+        ).toBeUndefined();
+      } finally {
+        m2.restore();
+      }
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("未配置代答 + null：emit 提示（现行为保留），不 PATCH", async () => {
+    const m = mockFetch(routes({ data: [buildUndeclared], included: [pre] }));
+    try {
+      const events: Ev[] = [];
+      const ctx = makeCtx();
+      ctx.emit = evCollector(events) as typeof ctx.emit;
+      await expect(ch.submit(ctx)).resolves.toEqual({ ok: true, ref: "SUB1" });
+      expect(
+        m.calls.find((c) => c.method === "PATCH" && c.url.endsWith("/v1/builds/B2")),
+      ).toBeUndefined();
+      expect(events.some((e) => e.type === "progress" && e.detail?.includes("出口合规提示"))).toBe(
+        true,
+      );
+      expect(events.some((e) => e.detail?.includes("已代答出口合规"))).toBe(false);
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("已声明（非 null）：零请求零提示", async () => {
+    const m = mockFetch(routes({ data: [buildDeclared], included: [pre] }));
+    try {
+      const events: Ev[] = [];
+      const ctx = makeCtx();
+      ctx.emit = evCollector(events) as typeof ctx.emit;
+      await expect(ch.submit(ctx)).resolves.toEqual({ ok: true, ref: "SUB1" });
+      expect(
+        m.calls.find((c) => c.method === "PATCH" && c.url.endsWith("/v1/builds/B2")),
+      ).toBeUndefined();
+      expect(
+        events.some((e) => e.detail?.includes("出口合规") || e.message?.includes("出口合规")),
+      ).toBe(false);
+    } finally {
+      m.restore();
+    }
+  });
+});
+
+describe("preflight 规则引擎（§8）", () => {
+  const ch = new AscChannel();
+  const app = { type: "apps", id: "APP1", attributes: { bundleId: "com.example.app" } };
+  const buildValid = {
+    type: "builds",
+    id: "B2",
+    attributes: { version: "42", processingState: "VALID" },
+    relationships: { preReleaseVersion: { data: { type: "preReleaseVersions", id: "PR1" } } },
+  };
+  const pre = { type: "preReleaseVersions", id: "PR1", attributes: { version: "1.2.3" } };
+
+  function routes(overrides: { versions?: unknown; localizations?: unknown } = {}) {
+    return [
+      { match: /\/v1\/apps\?/, response: { status: 200, json: { data: [app] } } },
+      { match: /\/v1\/preReleaseVersions\?/, response: { status: 200, json: { data: [] } } },
+      {
+        match: /\/v1\/builds\?/,
+        response: { status: 200, json: { data: [buildValid], included: [pre] } },
+      },
+      {
+        match: /appStoreVersions\?filter\[platform\]/,
+        response: { status: 200, json: overrides.versions ?? { data: [] } },
+      },
+      {
+        match: /\/v1\/appStoreVersions\/[^/]+$/,
+        response: { status: 200, json: { data: { id: "V1" } } },
+      },
+      {
+        match: /\/v1\/appStoreVersions$/,
+        response: {
+          status: 201,
+          json: { data: { id: "VNEW", attributes: { versionString: "1.2.3" } } },
+        },
+      },
+      {
+        match: /appStoreVersionLocalizations/,
+        response: {
+          status: 200,
+          json: overrides.localizations ?? {
+            data: [
+              {
+                type: "appStoreVersionLocalizations",
+                id: "L1",
+                attributes: { locale: "zh-Hans", description: "企业司机端描述" },
+              },
+            ],
+          },
+        },
+      },
+      { match: /relationships\/builds/, response: { status: 200, json: { data: [] } } },
+      {
+        match: /\/v1\/reviewSubmissions\/[^/]+\/items$/,
+        response: { status: 201, json: { data: { id: "RSI1" } } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions\/[^/]+$/,
+        response: { status: 200, json: { data: { id: "RS1" } } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions\?/,
+        response: { status: 200, json: { data: [], included: [] } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions$/,
+        response: { status: 201, json: { data: { id: "SUB1" } } },
+      },
+    ];
+  }
+
+  it("error 级阻断：localizations 缺描述仍抛（迁移后语义不变）", async () => {
+    const m = mockFetch(
+      routes({
+        localizations: {
+          data: [
+            {
+              type: "appStoreVersionLocalizations",
+              id: "L1",
+              attributes: { locale: "zh-Hans", description: "有描述" },
+            },
+            {
+              type: "appStoreVersionLocalizations",
+              id: "L2",
+              attributes: { locale: "en-US", description: "" },
+            },
+          ],
+        },
+      }),
+    );
+    try {
+      await expect(ch.submit(makeCtx())).rejects.toThrow(
+        /缺少商店描述（description），无法提审: en-US/,
+      );
+      expect(m.calls.find((c) => c.url.includes("relationships/builds"))).toBeUndefined();
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("warn 级不阻断：被拒版本续用时 emit warn", async () => {
+    const m = mockFetch(
+      routes({
+        versions: {
+          data: [
+            {
+              type: "appStoreVersions",
+              id: "V1",
+              attributes: { versionString: "1.2.3", appVersionState: "REJECTED" },
+            },
+          ],
+        },
+      }),
+    );
+    try {
+      const events: Ev[] = [];
+      const ctx = makeCtx();
+      ctx.emit = evCollector(events) as typeof ctx.emit;
+      await expect(ch.submit(ctx)).resolves.toEqual({ ok: true, ref: "SUB1" });
+      expect(
+        events.some(
+          (e) => e.type === "warn" && e.message === "续用被拒版本记录：请确认拒审原因已解决",
+        ),
+      ).toBe(true);
+      // warn 不阻断：绑定/提审照常
+      expect(m.calls.find((c) => c.url.includes("relationships/builds"))).toBeDefined();
     } finally {
       m.restore();
     }
