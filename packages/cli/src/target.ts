@@ -21,10 +21,11 @@ export function resolveChannelTarget(
     };
   }
   if (id === "asc") {
-    // exportCompliance（结构化）/ phasedRelease（布尔）走 ctx，不进 target（target 契约为 string 键值）
+    // exportCompliance（结构化）/ phasedRelease（布尔）/ releaseMode（走 ctx.releaseMode）不进 target
     const {
       exportCompliance: _exportCompliance,
       phasedRelease: _phasedRelease,
+      releaseMode: _releaseMode,
       ...iosCfg
     } = config.ios ?? {};
     return {

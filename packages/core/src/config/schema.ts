@@ -85,8 +85,11 @@ export const BetaConfigSchema = z.object({
       submit: z.boolean().default(false),
       /** 测试群组名（submit 时按名查 groupId 绑定；匹配不到报错提示到控制台建组） */
       group: z.string().optional(),
-      /** 3=邀请测试（默认）4=公开测试 */
-      testType: z.union([z.literal(3), z.literal(4)]).default(3),
+      /** 测试类型："invite"（邀请测试，默认）| "open"（公开测试）；兼容 AGC 原始枚举 3/4 */
+      testType: z
+        .union([z.literal("invite"), z.literal("open"), z.literal(3), z.literal(4)])
+        .transform((v) => (v === "invite" || v === 3 ? 3 : 4))
+        .default(3),
       /**
        * 隐私政策 URL（提审必填：AGC Testing API 校验 extInfo.privacyPolicy，
        * 控制台对应版本创建时的「自定义协议」步骤；缺失提审报 204144692
@@ -183,17 +186,15 @@ export const ProjectConfigSchema = z.object({
     .optional(),
   ios: z
     .object({
-      /** 缺省自动推导（工程 scheme 探测） */
-      scheme: z.string().optional(),
-      workspace: z.string().optional(),
       /** App Store Connect 按 bundleId 定位 App（asc 渠道 submit 用） */
       bundleId: z.string().optional(),
       /**
        * App Store 上架方式："auto"（默认，审核通过自动上架 releaseType=AFTER_APPROVAL）
        * | "manual"（审核通过后手动上架 MANUAL）。--release-mode 单次覆盖；定时上架走 --release-time。
        * 官方文档确认首版亦可自动发布（唯一强制手动场景=预购且从未上架，2026-11-11 核查）。
+       * 命名与旗标/ctx 对齐（releaseMode 三处同名；0.x 窗口自 ios.release 改名，无存量迁移）。
        */
-      release: z.enum(["auto", "manual"]).default("auto"),
+      releaseMode: z.enum(["auto", "manual"]).default("auto"),
       /** 出口合规代答：仅当 build 的 usesNonExemptEncryption 未声明（null）时 PATCH 代答；缺省不代答（保持提示） */
       exportCompliance: z.object({ usesNonExemptEncryption: z.boolean() }).optional(),
       /**

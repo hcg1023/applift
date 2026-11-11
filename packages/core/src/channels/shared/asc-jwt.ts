@@ -155,7 +155,7 @@ async function httpError(
     );
   const retryHint = idempotent
     ? ""
-    : "（写操作不自动重试：可能已成功，先跑 applift status 确认再重试）";
+    : "（写操作不自动重试：可能已成功，先跑 applift status --stores asc 确认再重试）";
   const methodPrefix = method === "GET" ? "" : `${method} `;
   return new Error(
     `ASC API ${methodPrefix}${apiPath} 失败 HTTP ${res.status}: ${JSON.stringify(json.errors ?? json).slice(0, 300)}${retryHint}`,

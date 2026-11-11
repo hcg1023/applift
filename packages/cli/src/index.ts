@@ -946,8 +946,11 @@ program
             process.stderr.write(`${pc.green("✓")} ${label} — ${r.value}\n`);
           } else {
             failed = true;
+            // 与 renderSummary 同链：errorHints 人话化 + 脱敏（beta 路径此前是裸码，AGC 204144692 高频受害）
+            const hints = label === "agc" ? registry.get("agc")?.errorHints : undefined;
+            const raw = String((r.reason as Error)?.message ?? r.reason);
             process.stderr.write(
-              `${pc.red("✗")} ${label} — ${redactText(String((r.reason as Error)?.message ?? r.reason))}\n`,
+              `${pc.red("✗")} ${label} — ${humanizeError(hints, redactText(raw))}\n`,
             );
           }
         });
@@ -1040,7 +1043,9 @@ program
               : `AGC 测试版本已就绪 ${pc.green("✓")}（未提交审核），到控制台「测试」提交并指定测试群组`,
           );
         } else {
-          s.stop(`AGC 测试发布失败: ${redactText(r.error ?? "")}`);
+          s.stop(
+            `AGC 测试发布失败: ${humanizeError(registry.get("agc")?.errorHints, redactText(r.error ?? ""))}`,
+          );
           process.exitCode = 1;
         }
         return;
@@ -1089,7 +1094,7 @@ program
   .option("--release-time <rfc3339>", "定时上架时间（RFC3339，仅 scheduled 渠道生效）")
   .option(
     "--release-mode <mode>",
-    "iOS 上架方式：auto 审核通过自动上架（默认）| manual 审核通过后手动上架；覆盖配置 ios.release",
+    "iOS 上架方式：auto 审核通过自动上架（默认）| manual 审核通过后手动上架；覆盖配置 ios.releaseMode",
   )
   .option("--remark <text>", "提审备注（给审核员）")
   .option(
@@ -1183,9 +1188,19 @@ program
     );
     if (decision?.mode === "ota" && decision.provider) {
       if (opts.dryRun) {
-        p.log.info(
-          `[dry-run] 热更发布正式：优先 promote 测试通道已验证热更，无则直接发布当前 ppk（platform=${platform}）`,
-        );
+        // --json 下 stdout 只输出结构化结果（AI/CI 消费契约），人话走 stderr
+        if (isJson)
+          process.stdout.write(
+            JSON.stringify(
+              { dryRun: true, delivery: "ota", platform, provider: decision.provider.id },
+              null,
+              2,
+            ) + "\n",
+          );
+        else
+          p.log.info(
+            `[dry-run] 热更发布正式：优先 promote 测试通道已验证热更，无则直接发布当前 ppk（platform=${platform}）`,
+          );
         return;
       }
       // 两条腿：测试通道有已验证热更且 provider 支持 promote → 重绑正式（零构建）；
@@ -1427,7 +1442,7 @@ program
         c.id,
         makeContext(c, creds, target, artifactPath ?? "", opts.note, {
           releaseTime: opts.releaseTime,
-          releaseMode: opts.releaseMode ?? config.ios?.release,
+          releaseMode: opts.releaseMode ?? config.ios?.releaseMode,
           exportCompliance: config.ios?.exportCompliance,
           phasedRelease: config.ios?.phasedRelease,
           remark: opts.remark,
@@ -1435,6 +1450,10 @@ program
       );
     }
 
+    // 矛盾意图提示（--submit 只读预览时失效）：仅人话模式——--json 消费者不需要，且部分捕获口混流 stdout/stderr
+    if (opts.dryRun && opts.submit && !isJson) {
+      p.log.warn("dry-run 模式：--submit 不生效，仅打印计划");
+    }
     if (opts.dryRun) {
       const plans: unknown[] = [];
       const errors: Record<string, string> = {};
@@ -1740,6 +1759,27 @@ program
     else p.log.error("无凭据（~/.applift/credentials.json）");
     if (profileNames.length === 0) healthy = false;
     const { config } = await loadProjectConfig(cmdOpts.cwd);
+    if (config.name) p.log.success(`项目: ${pc.bold(config.name)}`);
+    // 并发与 iOS 提审配置生效值（含来源——README 承诺"打印每个生效值来自哪一层"）
+    const gCfg = loadGlobalConfig().config;
+    const concurrencyFrom = config.concurrency
+      ? "项目 applift.config.ts"
+      : gCfg.concurrency !== 4
+        ? "全局 ~/.applift/config.toml"
+        : "默认 4";
+    p.log.info(
+      `渠道并发: ${pc.bold(String(config.concurrency ?? gCfg.concurrency))} ${pc.dim(`（来源: ${concurrencyFrom}）`)}`,
+    );
+    if (config.ios) {
+      const parts = [
+        `上架方式 ${config.ios.releaseMode}`,
+        config.ios.exportCompliance
+          ? `出口合规代答 usesNonExemptEncryption=${config.ios.exportCompliance.usesNonExemptEncryption}`
+          : "出口合规代答 未配（build 未声明时仅提示）",
+        config.ios.phasedRelease ? "分阶段发布 开（首版自动跳过并告警）" : "",
+      ].filter(Boolean);
+      p.log.info(`iOS 提审: ${parts.join(" · ")}`);
+    }
     // 与 release 同链解析：projects.json 个人选择（applift use）> 项目配置团队默认 > 全局 defaultProfile
     const { profile, source: profileSource } = resolveProfileSource(
       cmdOpts.cwd,

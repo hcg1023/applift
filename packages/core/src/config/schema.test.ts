@@ -61,7 +61,7 @@ describe("ProjectConfigSchema 平台段", () => {
     expect(cfg.android?.pkgName).toBeUndefined();
     expect(Object.keys(cfg.android?.stores ?? {})).toEqual(["huawei", "yyb"]);
     expect(cfg.harmony?.bundleName).toBeUndefined();
-    expect(cfg.ios?.scheme).toBeUndefined();
+    expect(cfg.ios?.bundleId).toBeUndefined();
   });
 });
 
@@ -125,6 +125,14 @@ describe("BetaConfigSchema（beta 多渠道）", () => {
     expect(beta.agc?.submit).toBe(false);
     expect(beta.agc?.testType).toBe(3);
     expect(beta.testflight).toBeUndefined();
+  });
+
+  it("testType 语义枚举（invite/open）与 AGC 原始枚举（3/4）互通，输出恒归一为 3/4", () => {
+    const norm = (v: unknown) => BetaConfigSchema.parse({ agc: { testType: v } }).agc?.testType;
+    expect(norm("invite")).toBe(3);
+    expect(norm("open")).toBe(4);
+    expect(norm(3)).toBe(3);
+    expect(norm(4)).toBe(4);
   });
 
   it("完整配置解析", () => {

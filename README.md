@@ -110,7 +110,7 @@ profile 切换：`applift use <name>`（本机个人选择）或 `--profile`（�
 | 内测 | 蒲公英（三端）/ AGC 指定设备              | ✅          | —             | 即装                 |
 | 安卓 | 华为 / 小米 / OPPO / vivo / 荣耀 / 应用宝 | ✅*         | ✅            | 自动上架             |
 | 鸿蒙 | AGC（.app 整包全链路）                    | ✅          | ✅            | 自动上架             |
-| iOS  | App Store Connect / TestFlight            | ✅          | ✅            | **自动上架**（默认，`ios.release`/`--release-mode` 可改手动） |
+| iOS  | App Store Connect / TestFlight            | ✅          | ✅            | **自动上架**（默认，`ios.releaseMode`/`--release-mode` 可改手动） |
 | 海外 | Google Play                               | ✅ internal | ✅ production | 自动                 |
 
 *小米上传即提审（无草稿态），提审 icon 默认从工程自动发现（android res mipmap → Tauri src-tauri/icons），可用 `android.stores.xiaomi.icon` 覆盖。`applift channels --json` 查全部渠道+所需凭据。

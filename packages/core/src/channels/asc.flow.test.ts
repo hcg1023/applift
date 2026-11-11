@@ -19,10 +19,72 @@ import type { ChannelContext } from "../channel.js";
 import { AscChannel } from "./asc.js";
 import { mockFetch } from "../test-utils.js";
 
-vi.mock("node:child_process", () => ({ spawnSync: vi.fn() }));
-import { spawnSync } from "node:child_process";
+vi.mock("node:child_process", () => ({ spawnSync: vi.fn(), spawn: vi.fn() }));
+vi.mock("../version/artifact.js", () => ({ readArtifactVersion: vi.fn() }));
+import { readArtifactVersion } from "../version/artifact.js";
+vi.mocked(readArtifactVersion).mockReturnValue(undefined);
+import { EventEmitter } from "node:events";
+import { spawn, spawnSync } from "node:child_process";
 
-const spawnSyncMock = vi.mocked(spawnSync);
+const spawnMock = vi.mocked(spawn);
+// asc.test 同款 facade：上传引擎异步化（spawnAsyncCapture）后，spawnSync 风格断言零改动
+let nextResult:
+  | {
+      status: number | null;
+      stdout?: string;
+      stderr?: string;
+      error?: Error;
+    }
+  | undefined;
+const spawnCalls: Array<[string, string[], Record<string, unknown>]> = [];
+const spawnSyncMock = {
+  mockReturnValue(r: typeof nextResult) {
+    nextResult = r;
+  },
+  mockReset() {
+    nextResult = undefined;
+    spawnCalls.length = 0;
+  },
+  get mock() {
+    return { calls: spawnCalls };
+  },
+};
+spawnMock.mockImplementation(((cmd: string, args: string[], opts: Record<string, unknown>) => {
+  spawnCalls.push([cmd, args, opts]);
+  const mkStream = () => {
+    const handlers: Record<string, Array<(v?: string) => void>> = {};
+    return {
+      setEncoding: () => {},
+      on: (ev: string, fn: (v?: string) => void) => {
+        (handlers[ev] ??= []).push(fn);
+      },
+      emitData: (s: string) => (handlers.data ?? []).forEach((f) => f(s)),
+      emitEnd: () => (handlers.end ?? []).forEach((f) => f()),
+    };
+  };
+  const stdout = mkStream();
+  const stderr = mkStream();
+  const em = new EventEmitter() as EventEmitter & {
+    stdout: typeof stdout;
+    stderr: typeof stderr;
+  };
+  em.stdout = stdout;
+  em.stderr = stderr;
+  const r = nextResult;
+  queueMicrotask(() => {
+    if (r?.error) {
+      em.emit("error", r.error);
+      return;
+    }
+    if (r?.stdout) stdout.emitData(r.stdout);
+    if (r?.stderr) stderr.emitData(r.stderr);
+    stdout.emitEnd();
+    stderr.emitEnd();
+    em.emit("close", r === undefined ? 0 : r.status);
+  });
+  return em;
+}) as never);
+void spawnSync;
 const ASC_API = "api.appstoreconnect.apple.com";
 
 const APP_ID = "asc-app-1";

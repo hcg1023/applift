@@ -43,18 +43,17 @@ describe("resolveChannelTarget（项目配置 > 自动推导）", () => {
     });
   });
 
-  it("harmony/ios 平台段覆盖推导值，stores 附加键（appId）保留", () => {
+  it("harmony/ios 平台段覆盖推导值，stores 附加键（appId）保留；ios.releaseMode 走 ctx 不进 target", () => {
     const config = configOf({
       harmony: { bundleName: "com.config.hm", appId: "agc-123" },
-      ios: { scheme: "ConfigApp", bundleId: "com.config.ios" },
+      ios: { bundleId: "com.config.ios", releaseMode: "manual" },
     });
     expect(resolveChannelTarget("agc", config, detected)).toEqual({
       bundleName: "com.config.hm",
       appId: "agc-123",
     });
-    expect(resolveChannelTarget("asc", config, detected)).toMatchObject({
+    expect(resolveChannelTarget("asc", config, detected)).toEqual({
       bundleId: "com.config.ios",
-      scheme: "ConfigApp",
     });
   });
 

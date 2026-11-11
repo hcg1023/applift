@@ -156,7 +156,7 @@ describe("release --dry-run 集成（P2-2 透传 / P2-5 钩子配置 / P3-7 警�
         "export default {",
         "  plugins: [rnFramework(), {",
         "    name: 'capture',",
-        "    'config:resolved': (config) => ({ ...config, android: { pkgName: 'com.demo', stores: { stub: { appId: 'from-hook' } } }, ios: { release: 'manual' } }),",
+        "    'config:resolved': (config) => ({ ...config, android: { pkgName: 'com.demo', stores: { stub: { appId: 'from-hook' } } }, ios: { releaseMode: 'manual' } }),",
         "    'channel:register': (registry) => registry.register({",
         "      id: 'stub', label: '桩渠道',",
         "      capabilities: { stage: true, submit: true, scheduled: true, status: false },",
@@ -244,7 +244,7 @@ describe("release --dry-run 集成（P2-2 透传 / P2-5 钩子配置 / P3-7 警�
       [
         "import { rnFramework } from '@applift/core';",
         "export default {",
-        "  ios: { release: 'manual' },",
+        "  ios: { releaseMode: 'manual' },",
         "  plugins: [rnFramework(), {",
         "    name: 'capture-ios',",
         "    'channel:register': (registry) => {",

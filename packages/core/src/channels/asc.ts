@@ -20,7 +20,7 @@
  *   官方文档: https://developer.apple.com/documentation/appstoreconnectapi
  * - status: 查最新 appStoreVersion 的 appVersionState（AppVersionState 15 枚举 → ReviewStatus）
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -226,10 +226,10 @@ export class AscChannel implements Channel {
     const tmpIpa = path.join(tmpDir, `${randomUUID()}.ipa`);
     fs.copyFileSync(ctx.artifactPath, tmpIpa);
     try {
-      const r = spawnSync(
+      const r = await spawnAsyncCapture(
         transporterPath,
         ["-m", "upload", "-jwt", jwt, "-assetFile", tmpIpa, "-k", "100000"],
-        { encoding: "utf8", timeout: 30 * 60 * 1000 },
+        { timeoutMs: 30 * 60 * 1000 },
       );
       if (r.error) {
         if ("code" in r.error && r.error.code === "ETIMEDOUT")
@@ -296,7 +296,7 @@ export class AscChannel implements Channel {
       cwd = tmpDir;
     }
     try {
-      const r = spawnSync(
+      const r = await spawnAsyncCapture(
         "xcrun",
         [
           "altool",
@@ -310,7 +310,7 @@ export class AscChannel implements Channel {
           "--apiIssuer",
           issuerId,
         ],
-        { cwd, encoding: "utf8", timeout: 30 * 60 * 1000 },
+        { cwd, timeoutMs: 30 * 60 * 1000 },
       );
       if (r.error) {
         // spawnSync timeout 到点回传 ETIMEDOUT 错误
@@ -530,7 +530,8 @@ export class AscChannel implements Channel {
     ctx.emit({
       type: "phase",
       phase: "wait",
-      message: "等待 App Store Connect 构建处理完成（约 10 分钟）",
+      message:
+        "等待 App Store Connect 构建处理完成（通常约 10 分钟，慢时 30 分钟；每 30 秒探测一次，超时自动中止且重跑安全）",
     });
     const trainIds = av?.versionName ? await this.resolveTrainIds(asc, appId, av.versionName) : [];
     const anchored = trainIds.length > 0 && !!av?.versionCode;
@@ -812,6 +813,64 @@ function resolveP8Path(ctx: Pick<ChannelContext, "credentials">, keyId: string):
       : path.resolve(explicit);
   }
   return path.join(os.homedir(), ".applift", "private_keys", `AuthKey_${keyId}.p8`);
+}
+
+/**
+ * 异步 spawn + 输出捕获（ASC 上传引擎共用）：
+ * - 异步执行不冻结事件循环——5-15min 上传期间 spinner 动画、其他渠道 progress、Ctrl-C 全部正常；
+ * - stdout/stderr 行级流式透传（onLine 可选，默认攒全量）；超时 SIGKILL 并回传 ETIMEDOUT 形态错误
+ *   （错误消息与旧 spawnSync 版逐字一致，调用方无感迁移）。
+ */
+function spawnAsyncCapture(
+  cmd: string,
+  args: string[],
+  opts: { cwd?: string; timeoutMs: number; onLine?: (line: string) => void },
+): Promise<{ status: number | null; stdout: string; stderr: string; error?: Error }> {
+  // executor 形式（例外）：tsconfig lib < es2024 缺 Promise.withResolvers 类型声明（Node 20 运行时已支持，
+  // 提 lib 属全仓决策不在此单方面动）；语义与 withResolvers 等价
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { cwd: opts.cwd });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, opts.timeoutMs);
+    const wire = (stream: NodeJS.ReadableStream, append: (s: string) => void) => {
+      let pending = "";
+      stream.setEncoding("utf8");
+      stream.on("data", (chunk: string) => {
+        append(chunk);
+        pending += chunk;
+        const lines = pending.split(/\r?\n/);
+        pending = lines.pop() ?? "";
+        for (const l of lines) opts.onLine?.(l);
+      });
+      stream.on("end", () => {
+        if (pending) opts.onLine?.(pending);
+      });
+    };
+    wire(child.stdout, (s) => (stdout += s));
+    wire(child.stderr, (s) => (stderr += s));
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      resolve({ status: null, stdout, stderr, error: e });
+    });
+    child.on("close", (status) => {
+      clearTimeout(timer);
+      resolve(
+        timedOut
+          ? {
+              status,
+              stdout,
+              stderr,
+              error: Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }),
+            }
+          : { status, stdout, stderr },
+      );
+    });
+  });
 }
 
 /** semver 风格分段数值比较（"4.0.1000" > "4.0.999"） */

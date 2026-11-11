@@ -13,14 +13,91 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { AscChannel } from "./asc.js";
 import { mockFetch } from "../test-utils.js";
 
-vi.mock("node:child_process", () => ({ spawnSync: vi.fn() }));
-import { spawnSync } from "node:child_process";
+vi.mock("node:child_process", () => ({ spawnSync: vi.fn(), spawn: vi.fn() }));
+import { EventEmitter } from "node:events";
+import { spawn, spawnSync } from "node:child_process";
+
+const spawnMock = vi.mocked(spawn);
+const spawnSyncRaw = vi.mocked(spawnSync);
+void spawnSyncRaw;
+
+/**
+ * spawnSync 风格 facade：上传引擎已异步化（spawnAsyncCapture 用 spawn），但既有用例的
+ * mockReturnValue / mock.calls[0] 断言写法全部保留——mockReturnValue 设定下一次 spawn 的
+ * 回放结果（stdout/stderr data 事件 + close/error），mock.calls 记录 spawn 调用参数。
+ */
+let nextResult:
+  | {
+      status: number | null;
+      stdout?: string;
+      stderr?: string;
+      error?: Error;
+    }
+  | undefined;
+const spawnCalls: Array<[string, string[], Record<string, unknown>]> = [];
+const spawnSyncMock = {
+  mockReturnValue(r: typeof nextResult) {
+    nextResult = r;
+  },
+  mockReset() {
+    nextResult = undefined;
+    spawnCalls.length = 0;
+  },
+  toHaveBeenCalledTimes(n: number) {
+    if (spawnCalls.length !== n)
+      throw new Error(`expected ${n} spawn calls, got ${spawnCalls.length}`);
+  },
+  toHaveBeenCalled() {
+    if (spawnCalls.length === 0) throw new Error("expected spawn to have been called");
+  },
+  not: {
+    toHaveBeenCalled() {
+      if (spawnCalls.length > 0)
+        throw new Error(`expected no spawn calls, got ${spawnCalls.length}`);
+    },
+  },
+  get mock() {
+    return { calls: spawnCalls };
+  },
+};
+spawnMock.mockImplementation(((cmd: string, args: string[], opts: Record<string, unknown>) => {
+  spawnCalls.push([cmd, args, opts]);
+  // 手写同步流：setEncoding 后 Readable 的 data 分发是异步的（close 会先到丢输出），
+  // 业务侧只消费 setEncoding/on("data")/on("end")——同步回放保序
+  const mkStream = () => {
+    const handlers: Record<string, Array<(v?: string) => void>> = {};
+    return {
+      setEncoding: () => {},
+      on: (ev: string, fn: (v?: string) => void) => {
+        (handlers[ev] ??= []).push(fn);
+      },
+      emitData: (s: string) => (handlers.data ?? []).forEach((f) => f(s)),
+      emitEnd: () => (handlers.end ?? []).forEach((f) => f()),
+    };
+  };
+  const stdout = mkStream();
+  const stderr = mkStream();
+  const em = new EventEmitter() as EventEmitter & { stdout: typeof stdout; stderr: typeof stderr };
+  em.stdout = stdout;
+  em.stderr = stderr;
+  const r = nextResult;
+  queueMicrotask(() => {
+    if (r?.error) {
+      em.emit("error", r.error);
+      return;
+    }
+    if (r?.stdout) stdout.emitData(r.stdout);
+    if (r?.stderr) stderr.emitData(r.stderr);
+    stdout.emitEnd();
+    stderr.emitEnd();
+    em.emit("close", r === undefined ? 0 : r.status);
+  });
+  return em;
+}) as never);
 
 // 产物版本读取 mock：默认 undefined（产物读不出→跳过预检/退回最新 VALID），新用例按需覆写
 vi.mock("../version/artifact.js", () => ({ readArtifactVersion: vi.fn() }));
 import { readArtifactVersion } from "../version/artifact.js";
-
-const spawnSyncMock = vi.mocked(spawnSync);
 const readArtifactVersionMock = vi.mocked(readArtifactVersion);
 
 type Ev = { type: string; phase?: string; detail?: string; message?: string };
@@ -164,7 +241,7 @@ describe("stage altool 引擎（无 Transporter 时兜底）", () => {
 
     const r = await ch.stage(ctx);
     expect(r).toEqual({ ok: true });
-    expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+    expect(spawnSyncMock.mock.calls.length).toBe(1);
     const [cmd, args, opts] = spawnSyncMock.mock.calls[0]! as unknown as [
       string,
       string[],
@@ -183,7 +260,7 @@ describe("stage altool 引擎（无 Transporter 时兜底）", () => {
       "--apiIssuer",
       "ISS1",
     ]);
-    expect(opts.encoding).toBe("utf8");
+    // encoding 不再是 spawn 选项：异步捕获层 stream.setEncoding("utf8") 承担
     // cwd = private_keys 的上级目录
     expect(opts.cwd).toBe(path.dirname(pkDir));
     expect(events.some((e) => e.type === "phase" && e.phase === "done")).toBe(true);
@@ -221,11 +298,11 @@ describe("stage altool 引擎（无 Transporter 时兜底）", () => {
     await expect(ch.stage(makeCtx())).rejects.toThrow("altool 上传失败（exit 71）: 无输出");
   });
 
-  it("spawnSync 带 30 分钟 timeout（CI 卡死不无限挂起）", async () => {
+  it("spawn 异步上传（事件循环不冻结；超时由 spawnAsyncCapture 的 setTimeout+SIGKILL 承担，30min）", async () => {
     spawnSyncMock.mockReturnValue({ status: 0, stdout: "", stderr: "" } as never);
-    await ch.stage(makeCtx());
-    const opts = spawnSyncMock.mock.calls[0]![2] as { timeout?: number };
-    expect(opts.timeout).toBe(30 * 60 * 1000);
+    // spawn 第三参只带 cwd（超时不再是 spawn 选项——异步模型下由 helper 的定时器兜底）
+    await expect(ch.stage(makeCtx())).resolves.toEqual({ ok: true });
+    expect(spawnSyncMock.mock.calls.length).toBe(1);
   });
 
   it("altool 超时（ETIMEDOUT）→ 报 30min 超时并指向网络/钥匙串/CI 无 TTY", async () => {
@@ -283,16 +360,11 @@ describe("stage iTMSTransporter 引擎（装了 Transporter.app 时首选）", (
     const r = await ch.stage(ctx);
     expect(r).toEqual({ ok: true });
 
-    const [cmd, args, opts] = spawnSyncMock.mock.calls[0]! as unknown as [
-      string,
-      string[],
-      { timeout?: number },
-    ];
+    const [cmd, args] = spawnSyncMock.mock.calls[0]! as unknown as [string, string[]];
     expect(cmd).toBe("/fake/itms/iTMSTransporter");
     expect(args.slice(0, 3)).toEqual(["-m", "upload", "-jwt"]);
     expect(args).toContain("-k");
     expect(args).toContain("100000");
-    expect(opts.timeout).toBe(30 * 60 * 1000);
     // assetFile 是临时随机 ASCII 名（uuid.ipa，非原路径、位于 applift-asc-itms- 临时目录）
     const assetPath = args[args.indexOf("-assetFile") + 1]!;
     expect(assetPath).toMatch(/applift-asc-itms-[^/\\]+[/\\][0-9a-f-]{36}\.ipa$/);
@@ -1799,7 +1871,7 @@ describe("stage build 号预检（§9）", () => {
         ch.stage(makeCtx({ artifactVersion: { versionName: "1.2.3", versionCode: "42" } })),
       ).rejects.toThrow(/build 号已被占用.*42/);
       expect(m.find("/v1/builds?")!.url).toContain("filter[version]=42");
-      expect(spawnSyncMock).not.toHaveBeenCalled();
+      expect(spawnSyncMock.mock.calls.length).toBe(0);
     } finally {
       m.restore();
     }
@@ -1817,7 +1889,7 @@ describe("stage build 号预检（§9）", () => {
         ch.stage(makeCtx({ artifactVersion: { versionName: "1.2.3", versionCode: "42" } })),
       ).resolves.toEqual({ ok: true });
       expect(m.find("/v1/builds?")!.url).toContain("filter[version]=42");
-      expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+      expect(spawnSyncMock.mock.calls.length).toBe(1);
     } finally {
       m.restore();
       tpSpy.mockRestore();
