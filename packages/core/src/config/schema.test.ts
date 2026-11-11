@@ -106,11 +106,12 @@ describe("ProjectConfigSchema android.stores 集成", () => {
 });
 
 describe("ProjectConfigSchema.concurrency（项目级渠道并发）", () => {
-  it("1-8 合法；缺省 undefined（走 全局>默认4 解析链）；越界被拒", () => {
+  it("≥1 整数即可（无上限：9/20 合法，worker 池自限渠道数）；0/非整数被拒；缺省 undefined", () => {
     expect(ProjectConfigSchema.parse({ concurrency: 7 }).concurrency).toBe(7);
+    expect(ProjectConfigSchema.parse({ concurrency: 20 }).concurrency).toBe(20);
     expect(ProjectConfigSchema.parse({}).concurrency).toBeUndefined();
-    expect(ProjectConfigSchema.safeParse({ concurrency: 9 }).success).toBe(false);
     expect(ProjectConfigSchema.safeParse({ concurrency: 0 }).success).toBe(false);
+    expect(ProjectConfigSchema.safeParse({ concurrency: 1.5 }).success).toBe(false);
   });
 });
 

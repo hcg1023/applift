@@ -221,10 +221,10 @@ export const ProjectConfigSchema = z.object({
   /** 内测分发（beta 无平台参数时的多渠道并行配置） */
   beta: BetaConfigSchema.optional(),
   /**
-   * 渠道并发数（1-8）——项目属性（由渠道数决定，如七安卓渠道全开需 ≥7）。
-   * 优先级：此处 > 全局 ~/.applift/config.toml concurrency（个人兜底）> 默认 4
+   * 渠道并发数（≥1 整数，无上限——runLimited 的 worker 池自限于渠道数，配大了也无害）。
+   * 项目属性（由渠道数决定，如七安卓渠道全开需 ≥7）。优先级：此处 > 全局 > 默认 4
    */
-  concurrency: z.number().int().min(1).max(8).optional(),
+  concurrency: z.number().int().min(1).optional(),
 });
 
 export type BetaConfig = z.infer<typeof BetaConfigSchema>;
@@ -233,8 +233,8 @@ export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 /** 全局行为配置（~/.applift/config.toml） */
 export const GlobalConfigSchema = z.object({
   defaultProfile: z.string().default("default"),
-  /** 渠道并发数 */
-  concurrency: z.number().int().min(1).max(8).default(4),
+  /** 渠道并发数（≥1 整数，无上限——worker 池自限于渠道数；项目级 applift.config.ts concurrency 优先于此） */
+  concurrency: z.number().int().min(1).default(4),
   /** 上传超时（毫秒） */
   uploadTimeoutMs: z.number().default(900_000),
   /** CI 无人值守豁免确认（等价把 L3 闸门前置到 CI 审批） */
