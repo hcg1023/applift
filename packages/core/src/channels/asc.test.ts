@@ -478,12 +478,12 @@ describe("submit（ASC REST 提审）", () => {
       },
       { match: /relationships\/builds/, response: { status: 200, json: { data: [] } } },
       {
-        match: /\/v1\/reviewSubmissions\/[^/]+\/items$/,
+        match: /\/v1\/reviewSubmissionItems$/,
         response: { status: 201, json: { data: { id: "RSI1" } } },
       },
       {
         match: /\/v1\/reviewSubmissions\/[^/]+$/,
-        response: { status: 200, json: { data: { id: "RS1", attributes: { action: "SUBMIT" } } } },
+        response: { status: 200, json: { data: { id: "RS1", attributes: { submitted: true } } } },
       },
       {
         match: /\/v1\/reviewSubmissions$/,
@@ -522,9 +522,18 @@ describe("submit（ASC REST 提审）", () => {
         },
       });
       // 5) 绑定构建（to-many，data 为数组）
-      const bind = m.find("relationships/builds")!;
-      expect(bind.method).toBe("PATCH");
-      expect(JSON.parse(bind.body as string)).toEqual({ data: [{ type: "builds", id: "B2" }] });
+      const bind = m.calls.find(
+        (c) => c.method === "PATCH" && /\/v1\/appStoreVersions\/[^/]+$/.test(c.url),
+      )!;
+      {
+        const bindBody = JSON.parse(bind.body as string);
+        // id 与请求 URL 上的版本 id 一致（既有版本 V1 或新建版本 VNEW，由用例路径决定）
+        expect(bind.url).toContain(`/v1/appStoreVersions/${bindBody.data.id}`);
+        expect(bindBody.data.type).toBe("appStoreVersions");
+        expect(bindBody.data.relationships).toEqual({
+          build: { data: { type: "builds", id: "B2" } },
+        });
+      }
       // 6) 提审三步流：POST reviewSubmissions（关联 App）
       const rs = m.calls.find(
         (c) => c.method === "POST" && c.url.endsWith("/v1/reviewSubmissions"),
@@ -538,13 +547,14 @@ describe("submit（ASC REST 提审）", () => {
       });
       // 7) POST reviewSubmissionItems（关联 appStoreVersion）
       const item = m.calls.find(
-        (c) => c.method === "POST" && c.url.includes("/v1/reviewSubmissions/SUB1/items"),
+        (c) => c.method === "POST" && c.url.endsWith("/v1/reviewSubmissionItems"),
       )!;
       expect(JSON.parse(item.body as string)).toEqual({
         data: {
           type: "reviewSubmissionItems",
           attributes: {},
           relationships: {
+            reviewSubmission: { data: { type: "reviewSubmissions", id: "SUB1" } },
             appStoreVersion: { data: { type: "appStoreVersions", id: "VNEW" } },
           },
         },
@@ -554,7 +564,7 @@ describe("submit（ASC REST 提审）", () => {
         (c) => c.method === "PATCH" && c.url.endsWith("/v1/reviewSubmissions/SUB1"),
       )!;
       expect(JSON.parse(confirm.body as string)).toEqual({
-        data: { type: "reviewSubmissions", attributes: { action: "SUBMIT" } },
+        data: { type: "reviewSubmissions", id: "SUB1", attributes: { submitted: true } },
       });
       // 所有请求带 Bearer JWT
       for (const c of m.calls) expect(c.headers.Authorization).toMatch(/^Bearer ey/);
@@ -602,7 +612,9 @@ describe("submit（ASC REST 提审）", () => {
       const idxPatch = m.calls.findIndex(
         (c) => c.method === "PATCH" && c.url.includes("/v1/appStoreVersionLocalizations/"),
       );
-      const idxBind = m.calls.findIndex((c) => c.url.includes("relationships/builds"));
+      const idxBind = m.calls.findIndex(
+        (c) => c.method === "PATCH" && /\/v1\/appStoreVersions\/[^/]+$/.test(c.url),
+      );
       expect(idxPatch).toBeGreaterThan(-1);
       expect(idxPatch).toBeLessThan(idxBind);
     } finally {
@@ -852,7 +864,9 @@ describe("submit（ASC REST 提审）", () => {
       await expect(ch.submit(makeCtx())).rejects.toThrow(
         /缺少商店描述（description），无法提审: en-US, L3/,
       );
-      expect(m.calls.find((c) => c.url.includes("relationships/builds"))).toBeUndefined();
+      expect(
+        m.calls.find((c) => c.method === "PATCH" && /\/v1\/appStoreVersions\/[^/]+$/.test(c.url)),
+      ).toBeUndefined();
       expect(m.calls.find((c) => c.url.includes("reviewSubmissions"))).toBeUndefined();
     } finally {
       m.restore();

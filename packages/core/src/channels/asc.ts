@@ -370,9 +370,14 @@ export class AscChannel implements Channel {
     // 3.6) 写入版本更新说明（--note → 各本地化 whatsNew；未提供时不动线上文案）
     await this.applyWhatsNew(jwt, versionId, ctx);
 
-    // 4) 把构建绑定到版本（builds 为 to-many 关系，data 传数组）
-    await ascRequest(jwt, `/v1/appStoreVersions/${versionId}/relationships/builds`, "PATCH", {
-      data: [{ type: "builds", id: build.id }],
+    // 4) 把构建绑定到版本：ASC 无 /relationships/builds 独立端点（404 PATH_ERROR），
+    //    appStoreVersions 上的关系名为 build（单数、to-one），经 PATCH 本体 relationships.build 携带
+    await ascRequest(jwt, `/v1/appStoreVersions/${versionId}`, "PATCH", {
+      data: {
+        type: "appStoreVersions",
+        id: versionId,
+        relationships: { build: { data: { type: "builds", id: build.id } } },
+      },
     });
 
     // 5) 提交审核（reviewSubmissions 三步流；旧 appStoreVersionSubmissions 端点已废弃下线）
@@ -392,18 +397,20 @@ export class AscChannel implements Channel {
     const reviewSubmissionId = reviewSubmission.data?.id;
     if (!reviewSubmissionId) throw new Error("ASC 创建 reviewSubmission 未返回 id");
     //    b) 添加条目（关联 appStoreVersion）
-    await ascRequest(jwt, `/v1/reviewSubmissions/${reviewSubmissionId}/items`, "POST", {
+    await ascRequest(jwt, `/v1/reviewSubmissionItems`, "POST", {
       data: {
         type: "reviewSubmissionItems",
         attributes: {},
         relationships: {
+          reviewSubmission: { data: { type: "reviewSubmissions", id: reviewSubmissionId } },
           appStoreVersion: { data: { type: "appStoreVersions", id: versionId } },
         },
       },
     });
-    //    c) 确认提交（action=SUBMIT）
+    //    c) 确认提交：reviewSubmissions 无 action 属性（409 ATTRIBUTE.UNKNOWN），
+    //        确认语义是 PATCH attributes.submitted = true，成功后 state 变 WAITING_FOR_REVIEW
     await ascRequest(jwt, `/v1/reviewSubmissions/${reviewSubmissionId}`, "PATCH", {
-      data: { type: "reviewSubmissions", attributes: { action: "SUBMIT" } },
+      data: { type: "reviewSubmissions", id: reviewSubmissionId, attributes: { submitted: true } },
     });
     ctx.emit({
       type: "phase",
