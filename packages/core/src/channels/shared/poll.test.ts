@@ -76,6 +76,24 @@ describe("pollUntil", () => {
     expect(sleeps).toEqual([400, 400]);
   });
 
+  it("自理模式墙钟超时（intervalMs=0 + timeoutMs）：elapsed ≥ 上限即抛，不 sleep", async () => {
+    vi.useFakeTimers();
+    const p = pollUntil({
+      label: "自理等待",
+      // 自理模式语义：attempt 内自带耗时（此处用时钟推进模拟真实 sleep/IO）
+      attempt: async () => {
+        await vi.advanceTimersByTimeAsync(500);
+        return { done: false };
+      },
+      intervalMs: 0,
+      timeoutMs: 1000,
+    }).catch((e: unknown) => e);
+    const err = (await p) as PollTimeoutError;
+    expect(err).toBeInstanceOf(PollTimeoutError);
+    expect(err.message).toContain("上限 1s");
+    expect(sleeps).toEqual([]);
+  });
+
   it("maxAttempts 耗尽：抛 PollTimeoutError（intervalMs=0 间隔自理模式不 sleep）", async () => {
     let n = 0;
     const guard = pollUntil({

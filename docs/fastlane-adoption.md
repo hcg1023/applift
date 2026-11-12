@@ -27,6 +27,7 @@ ASC 上架方式三档：默认 **AFTER_APPROVAL 审核通过自动上架**（�
 ## §3 提审幂等三查（P1-2）
 
 提交流程前三查（fastlane `submit_for_review.rb:31-63` 同款）：
+
 1. **已在审**：`GET /v1/reviewSubmissions`（进行中）含本平台条目 → 报错"已在审核中，勿重复提交；改文案先在控制台撤回"，不碰。
 2. **未提交草稿 submission**：复用追加条目；items 非空（网页人工加的）→ 报错引导网页处理，不覆盖人工操作。
 3. 都没有 → 现行三步流（创建 reviewSubmission → 添加条目 → action=SUBMIT）。
@@ -55,6 +56,7 @@ ASC 上架方式三档：默认 **AFTER_APPROVAL 审核通过自动上架**（�
 ## §8 preflight 规则引擎（P3）
 
 ASC 渠道内规则数组 `{ key, level: "warn" | "error", check }`：
+
 - 现有 localizations 描述检查迁为 rule（error 级，保持阻断语义）；
 - 新增：出口合规未决（build 未声明且未配置代答 → warn）、存在被拒版本（error，人话指引）、phased 首版冲突（warn）。
 - **error 才阻断提审，warn 仅提示**；接口形态可移植，不提升 core。fastlane 文本审查类规则（脏话/占位词）明确不做——applift 无元数据域。
@@ -72,6 +74,7 @@ stage 上传前：`builds?filter[app]=<id>&filter[version]=<产物 versionCode>`
 测试：新增 `poll.test.ts`（间隔/上限/终态/异常传播）；迁移渠道现有测试全绿=行为不变 gate；asc.test/asc.flow 补轮询（fake timers：PROCESSING→VALID 两轮 / INVALID 立败 / 超时）、三查、状态机分支、phased 首版跳过、build 号占用、合规 null 才 PATCH；asc-jwt.test 补重试矩阵。
 
 顺序（每步全量绿再进下一步）：
+
 1. pollUntil + 迁移三渠道（纯重构）
 2. asc-jwt 韧性层
 3. ASC 等构建 + build 号预检
@@ -84,18 +87,18 @@ stage 上传前：`builds?filter[app]=<id>&filter[version]=<产物 versionCode>`
 
 原则：**模式全渠道统一（等待=有界轮询、提交=先查后写、错误=人话分类），实现渠道内聚**（各渠道 API 语义不同，不建假抽象的 core 中间层）。
 
-| 设计项 | 影响渠道 | 其他渠道现状对照 |
-|---|---|---|
-| §1 pollUntil | 跨渠道：asc（新）+ agc-harmony / oppo / pgyer（迁移） | 华为 120s 固定 sleep 非轮询不动 |
-| §2 等构建 | 仅 ASC | 安卓渠道上传即可提审无此缺口；AGC"等云端编译"= 它自己的等构建（§1 统一） |
-| §3 提审幂等 | 仅 ASC 新增 | oppo 已有等价物（errno 911215 不重复建任务）、honor 已有（errorHints 20022）；ASC 是唯一没防重的渠道 |
-| §4 版本状态机 | 仅 ASC | 安卓渠道服务端无"可编辑版本记录"实体 |
-| §5 韧性层 | 仅 asc-jwt | AGC token 刷新 / oppo 签名 / pgyer 三域名 failover 各自内聚已有；不统一 HTTP 层 |
-| §6 出口合规 | 仅 ASC | Apple 特有提审问询 |
-| §7 phased | 仅 ASC（ios） | 热更灰度 pushy promote rollout 已有；安卓国内渠道无对应 API |
-| §8 preflight 接口 | 设计可移植，本轮只落 ASC 规则 | 其他渠道已有 errorHints 事后人话体系 |
-| §9 build 号预检 | 仅 ASC | ios build 号全 app 唯一才冲突；安卓 versionCode 各渠道自校验（errorHints 已覆盖） |
-| §10 文档 | 全局 | — |
+| 设计项            | 影响渠道                                              | 其他渠道现状对照                                                                                     |
+| ----------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| §1 pollUntil      | 跨渠道：asc（新）+ agc-harmony / oppo / pgyer（迁移） | 华为 120s 固定 sleep 非轮询不动                                                                      |
+| §2 等构建         | 仅 ASC                                                | 安卓渠道上传即可提审无此缺口；AGC"等云端编译"= 它自己的等构建（§1 统一）                             |
+| §3 提审幂等       | 仅 ASC 新增                                           | oppo 已有等价物（errno 911215 不重复建任务）、honor 已有（errorHints 20022）；ASC 是唯一没防重的渠道 |
+| §4 版本状态机     | 仅 ASC                                                | 安卓渠道服务端无"可编辑版本记录"实体                                                                 |
+| §5 韧性层         | 仅 asc-jwt                                            | AGC token 刷新 / oppo 签名 / pgyer 三域名 failover 各自内聚已有；不统一 HTTP 层                      |
+| §6 出口合规       | 仅 ASC                                                | Apple 特有提审问询                                                                                   |
+| §7 phased         | 仅 ASC（ios）                                         | 热更灰度 pushy promote rollout 已有；安卓国内渠道无对应 API                                          |
+| §8 preflight 接口 | 设计可移植，本轮只落 ASC 规则                         | 其他渠道已有 errorHints 事后人话体系                                                                 |
+| §9 build 号预检   | 仅 ASC                                                | ios build 号全 app 唯一才冲突；安卓 versionCode 各渠道自校验（errorHints 已覆盖）                    |
+| §10 文档          | 全局                                                  | —                                                                                                    |
 
 多平台：所有 ASC 项只在 `release/beta ios` 路径生效；android/harmony 发布行为零变化（§1 迁移为纯重构+测试兜底）；beta 多渠道并行（pgyer/agc/testflight）不受影响；插件自报平台路径不经过这些渠道。
 

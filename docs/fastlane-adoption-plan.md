@@ -33,19 +33,22 @@
 ### Task 1: pollUntil 共享轮询 + 三渠道迁移
 
 **Files:**
+
 - Create: `packages/core/src/channels/shared/poll.ts`、`packages/core/src/channels/shared/poll.test.ts`
 - Modify: `packages/core/src/channels/agc-harmony.ts:344-379`（awaitCompile）、`packages/core/src/channels/oppo.ts:394-436`（pollTaskState）、`packages/core/src/channels/pgyer.ts:162-207`（buildInfo 循环）
 
 **Interfaces:**
+
 - Produces（后续任务与迁移共同消费）:
+
   ```ts
-  export class PollTimeoutError extends Error {}  // name = "PollTimeoutError"
+  export class PollTimeoutError extends Error {} // name = "PollTimeoutError"
   export interface PollOptions<T> {
     attempt: () => Promise<{ done: true; value: T } | { done: false }>;
-    intervalMs: number;        // ≤0：间隔由 attempt 自理（oppo/pgyer 的"先 sleep 后查"语义）
-    timeoutMs?: number;        // 墙钟上限
-    maxAttempts?: number;      // 探测次数上限（含首次）；与 timeoutMs 至少给一个
-    label?: string;            // 超时文案前缀
+    intervalMs: number; // ≤0：间隔由 attempt 自理（oppo/pgyer 的"先 sleep 后查"语义）
+    timeoutMs?: number; // 墙钟上限
+    maxAttempts?: number; // 探测次数上限（含首次）；与 timeoutMs 至少给一个
+    label?: string; // 超时文案前缀
     onWait?: (info: { attempt: number; elapsedMs: number }) => void;
   }
   export function pollUntil<T>(opts: PollOptions<T>): Promise<T>;
@@ -212,7 +215,9 @@ export async function pollUntil<T>(opts: PollOptions<T>): Promise<T> {
     const attemptsExhausted = opts.maxAttempts !== undefined && n >= opts.maxAttempts;
     const timeExhausted =
       opts.timeoutMs !== undefined &&
-      (opts.intervalMs > 0 ? elapsed + opts.intervalMs > opts.timeoutMs : elapsed >= opts.timeoutMs);
+      (opts.intervalMs > 0
+        ? elapsed + opts.intervalMs > opts.timeoutMs
+        : elapsed >= opts.timeoutMs);
     if (attemptsExhausted || timeExhausted) {
       const budget =
         opts.timeoutMs !== undefined
@@ -349,58 +354,58 @@ Run: `npx vitest run packages/core/src/channels/shared/poll.test.ts` → PASS（
 - [ ] **Step 7: 迁移 pgyer buildInfo 循环（stage 内 162-207 行段替换，两个失败文案逐字保留）**
 
 ```ts
-    ctx.emit({ type: "phase", phase: "wait", message: "等待蒲公英处理" });
-    let consecutiveErrors = 0;
-    try {
-      await pollUntil({
-        label: "蒲公英处理",
-        intervalMs: 0, // 先 sleep 后查语义自理
-        timeoutMs: 15 * 60 * 1000,
-        attempt: async () => {
-          await sleep(3000);
-          let info: BuildInfoResp;
-          try {
-            info = await pgyerPostFailover<BuildInfoResp>(ctx, "/apiv2/app/buildInfo", {
-              _api_key: apiKey,
-              buildKey,
-            });
-            consecutiveErrors = 0;
-          } catch (e) {
-            consecutiveErrors++;
-            const lastErr = e instanceof Error ? e.message : String(e);
-            ctx.emit({
-              type: "warn",
-              message: `buildInfo 状态查询失败（连续 ${consecutiveErrors}/10）: ${lastErr}`,
-            });
-            if (consecutiveErrors >= 10)
-              throw new Error(`蒲公英状态查询持续失败（包已上传，可到控制台确认）: ${lastErr}`);
-            return { done: false as const };
-          }
-          if (info.code === 0 && info.data?.buildShortcutUrl) {
-            ctx.emit({
-              type: "phase",
-              phase: "done",
-              message: `https://www.pgyer.com/${info.data.buildShortcutUrl}`,
-            });
-            return { done: true as const, value: buildKey };
-          }
-          // 1247 = buildKey 尚未就绪（COS 仍在入库）：处理中继续轮询；其余非 0 码为明确失败
-          if (info.code !== 0 && info.code !== 1247) {
-            throw new Error(`蒲公英处理失败 ${info.code}: ${info.message ?? ""}`);
-          }
-          return { done: false as const };
-        },
-      });
-      return { ok: true, ref: buildKey };
-    } catch (e) {
-      if (e instanceof PollTimeoutError)
-        return {
-          ok: false,
-          error:
-            "蒲公英 15 分钟内未完成处理（大包云端处理慢属正常，可到 pgyer.com 控制台确认实际状态）",
-        };
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
-    }
+ctx.emit({ type: "phase", phase: "wait", message: "等待蒲公英处理" });
+let consecutiveErrors = 0;
+try {
+  await pollUntil({
+    label: "蒲公英处理",
+    intervalMs: 0, // 先 sleep 后查语义自理
+    timeoutMs: 15 * 60 * 1000,
+    attempt: async () => {
+      await sleep(3000);
+      let info: BuildInfoResp;
+      try {
+        info = await pgyerPostFailover<BuildInfoResp>(ctx, "/apiv2/app/buildInfo", {
+          _api_key: apiKey,
+          buildKey,
+        });
+        consecutiveErrors = 0;
+      } catch (e) {
+        consecutiveErrors++;
+        const lastErr = e instanceof Error ? e.message : String(e);
+        ctx.emit({
+          type: "warn",
+          message: `buildInfo 状态查询失败（连续 ${consecutiveErrors}/10）: ${lastErr}`,
+        });
+        if (consecutiveErrors >= 10)
+          throw new Error(`蒲公英状态查询持续失败（包已上传，可到控制台确认）: ${lastErr}`);
+        return { done: false as const };
+      }
+      if (info.code === 0 && info.data?.buildShortcutUrl) {
+        ctx.emit({
+          type: "phase",
+          phase: "done",
+          message: `https://www.pgyer.com/${info.data.buildShortcutUrl}`,
+        });
+        return { done: true as const, value: buildKey };
+      }
+      // 1247 = buildKey 尚未就绪（COS 仍在入库）：处理中继续轮询；其余非 0 码为明确失败
+      if (info.code !== 0 && info.code !== 1247) {
+        throw new Error(`蒲公英处理失败 ${info.code}: ${info.message ?? ""}`);
+      }
+      return { done: false as const };
+    },
+  });
+  return { ok: true, ref: buildKey };
+} catch (e) {
+  if (e instanceof PollTimeoutError)
+    return {
+      ok: false,
+      error:
+        "蒲公英 15 分钟内未完成处理（大包云端处理慢属正常，可到 pgyer.com 控制台确认实际状态）",
+    };
+  return { ok: false, error: e instanceof Error ? e.message : String(e) };
+}
 ```
 
 （成功路径原代码 return `{ ok: true, ref: buildKey }`——迁移后由 pollUntil 正常返回带出，在 try 外 return；失败路径统一 catch 翻译，`ok:false.error` 与原文案一致。）
@@ -422,17 +427,23 @@ git commit -m "refactor(channels): 抽取 pollUntil 共享有界轮询并迁移 
 ### Task 2: AscClient 韧性层（JWT 续签 + 重试矩阵 + 错误分类）
 
 **Files:**
+
 - Modify: `packages/core/src/channels/shared/asc-jwt.ts`（全文件重构）、`packages/core/src/channels/shared/asc-jwt.test.ts`
 - Modify: `packages/core/src/channels/asc.ts`（调用点：submit/status 从 `makeAscJwt + ascGet/ascRequest` 换 `new AscClient(auth)`）
 - Test: `packages/core/src/channels/shared/asc-jwt.test.ts`、`packages/core/src/channels/asc.test.ts`（现有断言保持）
 
 **Interfaces:**
+
 - Produces（Task 3-6 全部消费）:
   ```ts
-  export interface AscAuth { keyId: string; issuerId: string; p8Path: string }
+  export interface AscAuth {
+    keyId: string;
+    issuerId: string;
+    p8Path: string;
+  }
   export class AscClient {
     constructor(auth: AscAuth);
-    get<T = unknown>(apiPath: string): Promise<T>;                       // GET，幂等可重试
+    get<T = unknown>(apiPath: string): Promise<T>; // GET，幂等可重试
     request<T = unknown>(apiPath: string, method: string, body?: unknown): Promise<T>; // 写：不自动重试
   }
   ```
@@ -481,9 +492,13 @@ describe("AscClient 重试矩阵（docs/fastlane-adoption §5）", () => {
     }
   });
 
-  it("GET 500 → 2s 后重试成功，共 2 次请求", async () => { /* 同款：先 500 后 200，advance 2000 */ });
+  it("GET 500 → 2s 后重试成功，共 2 次请求", async () => {
+    /* 同款：先 500 后 200，advance 2000 */
+  });
 
-  it("GET 401 → 重签 JWT 重试一次成功（两次请求 Authorization 不同）", async () => { /* 捕获两次 auth header，断言不相等 */ });
+  it("GET 401 → 重签 JWT 重试一次成功（两次请求 Authorization 不同）", async () => {
+    /* 捕获两次 auth header，断言不相等 */
+  });
 
   it("POST 500 → 不重试直接抛错，文案含「先跑 applift status 确认」", async () => {
     const m = mockFetch([{ match: "/v1/appStoreVersions", response: { status: 500, json: {} } }]);
@@ -492,22 +507,33 @@ describe("AscClient 重试矩阵（docs/fastlane-adoption §5）", () => {
         new AscClient(auth()).request("/v1/appStoreVersions", "POST", {}),
       ).rejects.toThrow(/写操作不自动重试.*applift status/);
       expect(m.calls.length).toBe(1);
-    } finally { m.restore(); }
+    } finally {
+      m.restore();
+    }
   });
 
   it("403 REQUIRED_AGREEMENTS_MISSING_OR_EXPIRED → 专属人话", async () => {
     const m = mockFetch([
       {
         match: "/v1/apps",
-        response: { status: 403, json: { errors: [{ code: "REQUIRED_AGREEMENTS_MISSING_OR_EXPIRED" }] } },
+        response: {
+          status: 403,
+          json: { errors: [{ code: "REQUIRED_AGREEMENTS_MISSING_OR_EXPIRED" }] },
+        },
       },
     ]);
     try {
-      await expect(new AscClient(auth()).get("/v1/apps")).rejects.toThrow(/付费协议未签或已过期.*App Store Connect 网页/);
-    } finally { m.restore(); }
+      await expect(new AscClient(auth()).get("/v1/apps")).rejects.toThrow(
+        /付费协议未签或已过期.*App Store Connect 网页/,
+      );
+    } finally {
+      m.restore();
+    }
   });
 
-  it("非 JSON 200 响应 → 抛「返回非 JSON」", async () => { /* status 200, body 非 JSON */ });
+  it("非 JSON 200 响应 → 抛「返回非 JSON」", async () => {
+    /* status 200, body 非 JSON */
+  });
 });
 ```
 
@@ -538,9 +564,21 @@ const RETRY_429_START_MS = 1000;
 const RETRY_429_CAP_MS = 60_000;
 const RETRY_429_TOTAL_MS = 10 * 60_000;
 
-export interface AscErrorItem { id?: string; status?: string; code?: string; title?: string; detail?: string }
-export interface AscErrorBody { errors?: AscErrorItem[] }
-export interface AscAuth { keyId: string; issuerId: string; p8Path: string }
+export interface AscErrorItem {
+  id?: string;
+  status?: string;
+  code?: string;
+  title?: string;
+  detail?: string;
+}
+export interface AscErrorBody {
+  errors?: AscErrorItem[];
+}
+export interface AscAuth {
+  keyId: string;
+  issuerId: string;
+  p8Path: string;
+}
 export type AscJwtOptions = AscAuth;
 
 export function makeAscJwt({ keyId, issuerId, p8Path }: AscJwtOptions): string {
@@ -586,7 +624,11 @@ export class AscClient {
         backoff429 = Math.min(backoff429 * 2, RETRY_429_CAP_MS);
         continue;
       }
-      if (idempotent && [500, 502, 503, 504].includes(res.status) && n5xx < RETRY_5XX_DELAYS_MS.length) {
+      if (
+        idempotent &&
+        [500, 502, 503, 504].includes(res.status) &&
+        n5xx < RETRY_5XX_DELAYS_MS.length
+      ) {
         await sleep(RETRY_5XX_DELAYS_MS[n5xx]!);
         n5xx += 1;
         continue;
@@ -614,7 +656,12 @@ async function parseBody<T>(res: Response, apiPath: string): Promise<T> {
   }
 }
 
-async function httpError(res: Response, apiPath: string, method: string, idempotent: boolean): Promise<Error> {
+async function httpError(
+  res: Response,
+  apiPath: string,
+  method: string,
+  idempotent: boolean,
+): Promise<Error> {
   const json = (await res.json().catch(() => ({}))) as AscErrorBody;
   const first = json.errors?.[0];
   if (res.status === 403 && first?.code === "REQUIRED_AGREEMENTS_MISSING_OR_EXPIRED")
@@ -651,10 +698,12 @@ git commit -m "feat(asc): AscClient 韧性层——JWT 续签/iat-60、GET 重�
 ### Task 3: ASC 等构建处理完成 + build 号预检
 
 **Files:**
+
 - Modify: `packages/core/src/channels/asc.ts`（submit 第 2 步重构为 `awaitValidBuild`；stage 入口加 build 号预检）
 - Test: `packages/core/src/channels/asc.test.ts`
 
 **Interfaces:**
+
 - Consumes: `pollUntil`/`PollTimeoutError`（Task 1）、`AscClient`（Task 2）、`readArtifactVersion`（version/artifact.ts）。
 - Produces: `private async awaitValidBuild(asc, appId, artifactVer, ctx): Promise<{ buildId: string; versionString: string }>`——versionString 恒取 builds include 的 preReleaseVersion（现有推导逻辑保留），Task 4/6 消费。
 
@@ -665,20 +714,26 @@ describe("submit 等构建处理完成（docs/fastlane-adoption §2）", () => {
   it("PROCESSING→VALID 两轮后继续提审；请求按产物锚定（preReleaseVersions 查询在先）", async () => {
     vi.useFakeTimers();
     let pollCount = 0;
-    const m = mockFetch(submitRoutes({
-      preVersions: { data: [{ type: "preReleaseVersions", id: "PR1", attributes: { version: "1.2.3" } }] },
-      builds: {
-        // 首轮 PROCESSING，次轮 VALID（响应回调按计数分流，参照 taskStateSequence 模式）
-        response: () => {
-          pollCount += 1;
-          return pollCount === 1
-            ? { data: [buildProcessing], included: [pre] }
-            : { data: [buildValid], included: [pre] };
+    const m = mockFetch(
+      submitRoutes({
+        preVersions: {
+          data: [{ type: "preReleaseVersions", id: "PR1", attributes: { version: "1.2.3" } }],
         },
-      },
-    }));
+        builds: {
+          // 首轮 PROCESSING，次轮 VALID（响应回调按计数分流，参照 taskStateSequence 模式）
+          response: () => {
+            pollCount += 1;
+            return pollCount === 1
+              ? { data: [buildProcessing], included: [pre] }
+              : { data: [buildValid], included: [pre] };
+          },
+        },
+      }),
+    );
     try {
-      const ctx = makeCtx({ artifactVersion: { versionName: "1.2.3", versionCode: "42" } as never });
+      const ctx = makeCtx({
+        artifactVersion: { versionName: "1.2.3", versionCode: "42" } as never,
+      });
       const p = ch.submit(ctx);
       await vi.advanceTimersByTimeAsync(30_000);
       await expect(p).resolves.toEqual({ ok: true, ref: "SUB1" });
@@ -725,20 +780,20 @@ asc.ts 顶部：`import { readArtifactVersion } from "../version/artifact.js";`�
 stage 预检（resolveAuth 之后、resolveTransporterPath 之前）：
 
 ```ts
-    // build 号预检（§9）：ios build 号全 app 唯一，占用则上传必失败——提前拦截省 5-15 分钟
-    const av = ctx.artifactPath ? readArtifactVersion(ctx.artifactPath) : undefined;
-    if (av?.versionCode) {
-      const asc = new AscClient(auth);
-      const appId = await this.resolveAppId(asc, ctx); // 抽取 submit 第 1 步的 apps 查询
-      const dup = await asc.get<AscListResponse<AscBuildAttrs>>(
-        `/v1/builds?filter[app]=${appId}&filter[version]=${encodeURIComponent(av.versionCode)}&limit=1`,
-      );
-      if (dup.data.length > 0)
-        throw new Error(
-          `build 号已被占用（版本 ${av.versionName ?? "?"} 构建号 ${av.versionCode} 已在 App Store Connect）` +
-            "——升 versionCode 重新出包后重试（versionCode 以工程文件为准）",
-        );
-    }
+// build 号预检（§9）：ios build 号全 app 唯一，占用则上传必失败——提前拦截省 5-15 分钟
+const av = ctx.artifactPath ? readArtifactVersion(ctx.artifactPath) : undefined;
+if (av?.versionCode) {
+  const asc = new AscClient(auth);
+  const appId = await this.resolveAppId(asc, ctx); // 抽取 submit 第 1 步的 apps 查询
+  const dup = await asc.get<AscListResponse<AscBuildAttrs>>(
+    `/v1/builds?filter[app]=${appId}&filter[version]=${encodeURIComponent(av.versionCode)}&limit=1`,
+  );
+  if (dup.data.length > 0)
+    throw new Error(
+      `build 号已被占用（版本 ${av.versionName ?? "?"} 构建号 ${av.versionCode} 已在 App Store Connect）` +
+        "——升 versionCode 重新出包后重试（versionCode 以工程文件为准）",
+    );
+}
 ```
 
 submit 第 2 步替换为 `const build = await this.awaitValidBuild(asc, app.id, av, ctx);`，新私有方法（versionString 推导沿用现状 include 匹配逻辑）：
@@ -846,10 +901,12 @@ git commit -m "feat(asc): 提审前有界等待构建处理（产物锚定防绑
 ### Task 4: 提审幂等三查 + 版本状态机扩展
 
 **Files:**
+
 - Modify: `packages/core/src/channels/asc.ts`（submit 第 3 步 editable 集合/分支；第 5 步前三查）
 - Test: `packages/core/src/channels/asc.test.ts`
 
 **Interfaces:**
+
 - Consumes: `AscClient`、Task 3 的 build/versionString。
 - Produces（Task 6 消费）: `private async resolveEditableVersion(asc, appId, versionString, releaseAttrs, ctx): Promise<string>`（返回 versionId；含改名/报错分支）。
 
@@ -861,9 +918,15 @@ describe("版本状态机扩展（§4）", () => {
     // submitRoutes mock 捕获 versions 查询 URL，断言含
     // filter[appVersionState]=PREPARE_FOR_SUBMISSION,DEVELOPER_REJECTED,REJECTED,METADATA_REJECTED,INVALID_BINARY
   });
-  it("REJECTED 同号：复用 PATCH，不 POST 新版本", async () => { /* versions 返回 REJECTED V1 → 断言无 POST appStoreVersions */ });
-  it("PREPARE 异号：PATCH versionString 改名续用（ensure_version! 语义）", async () => { /* 断言 PATCH body 含 versionString */ });
-  it("REJECTED 异号：报错人话（不自动改名），提示控制台人工处置", async () => { /* rejects /被拒.*人工|控制台/ */ });
+  it("REJECTED 同号：复用 PATCH，不 POST 新版本", async () => {
+    /* versions 返回 REJECTED V1 → 断言无 POST appStoreVersions */
+  });
+  it("PREPARE 异号：PATCH versionString 改名续用（ensure_version! 语义）", async () => {
+    /* 断言 PATCH body 含 versionString */
+  });
+  it("REJECTED 异号：报错人话（不自动改名），提示控制台人工处置", async () => {
+    /* rejects /被拒.*人工|控制台/ */
+  });
 });
 
 describe("提审三查（§3）", () => {
@@ -871,8 +934,12 @@ describe("提审三查（§3）", () => {
     // reviewSubmissions 路由返回 active + items 含 versionId → rejects /已在审核中，勿重复提交/
     // 且断言未发生 POST /v1/reviewSubmissions
   });
-  it("存在 items 为空的草稿 submission：复用其 id，不再 POST 创建", async () => { /* 断言无 POST reviewSubmissions，POST items 用旧 id */ });
-  it("草稿含其他条目：报错引导网页处理", async () => { /* rejects /ASC 网页.*人工/ */ });
+  it("存在 items 为空的草稿 submission：复用其 id，不再 POST 创建", async () => {
+    /* 断言无 POST reviewSubmissions，POST items 用旧 id */
+  });
+  it("草稿含其他条目：报错引导网页处理", async () => {
+    /* rejects /ASC 网页.*人工/ */
+  });
 });
 ```
 
@@ -964,37 +1031,50 @@ const SUBMISSION_TERMINAL_STATES = new Set(["COMPLETED", "CANCELLED"]);
 （cmpVersion 为模块级函数。）三查（替换现第 5 步 a/b/c 的入口）：
 
 ```ts
-    // 5) 提审三查（§3）：已在审拒绝 / 草稿复用 / 他人条目拒绝，然后三步流
-    const subs = await asc.get<AscListResponse<{ state?: string }>>(
-      `/v1/reviewSubmissions?filter[app]=${app.id}&include=items&limit=10`,
+// 5) 提审三查（§3）：已在审拒绝 / 草稿复用 / 他人条目拒绝，然后三步流
+const subs = await asc.get<AscListResponse<{ state?: string }>>(
+  `/v1/reviewSubmissions?filter[app]=${app.id}&include=items&limit=10`,
+);
+const items = subs.included?.filter((d) => d.type === "reviewSubmissionItems") ?? [];
+const active = subs.data.find((s) => !SUBMISSION_TERMINAL_STATES.has(s.attributes?.state ?? ""));
+let reviewSubmissionId: string;
+if (active?.id && active.attributes?.state !== undefined) {
+  const mine = items.find(
+    (it) => it.relationships?.appStoreVersion?.data?.id === versionId, // AscDoc 的 relationships 类型按需扩 appStoreVersion
+  );
+  if (mine && active.attributes.state !== "READY")
+    throw new Error(
+      `版本已在审核流程中（submission state=${active.attributes.state}），勿重复提交——改文案先在 ASC 控制台撤回`,
     );
-    const items = subs.included?.filter((d) => d.type === "reviewSubmissionItems") ?? [];
-    const active = subs.data.find((s) => !SUBMISSION_TERMINAL_STATES.has(s.attributes?.state ?? ""));
-    let reviewSubmissionId: string;
-    if (active?.id && active.attributes?.state !== undefined) {
-      const mine = items.find(
-        (it) =>
-          it.relationships?.appStoreVersion?.data?.id === versionId, // AscDoc 的 relationships 类型按需扩 appStoreVersion
-      );
-      if (mine && active.attributes.state !== "READY")
-        throw new Error(`版本已在审核流程中（submission state=${active.attributes.state}），勿重复提交——改文案先在 ASC 控制台撤回`);
-      if (!mine && items.some((it) => it.relationships?.appStoreVersion))
-        throw new Error("存在进行中的提审且含其他条目——到 ASC 网页（App Review → 草稿）人工处置后再试");
-      reviewSubmissionId = active.id; // 草稿复用（state=READY 且无冲突条目）
-      ctx.emit({ type: "progress", detail: `复用未提交的提审草稿 ${reviewSubmissionId}` });
-    } else {
-      const created = await asc.request<AscSingleResponse<Record<string, unknown>>>("/v1/reviewSubmissions", "POST", {
-        data: { type: "reviewSubmissions", attributes: {}, relationships: { app: { data: { type: "apps", id: app.id } } } },
-      });
-      reviewSubmissionId = created.data?.id ?? "";
-      if (!reviewSubmissionId) throw new Error("ASC 创建 reviewSubmission 未返回 id");
-    }
-    await asc.request(`/v1/reviewSubmissions/${reviewSubmissionId}/items`, "POST", {
-      data: { type: "reviewSubmissionItems", attributes: {}, relationships: { appStoreVersion: { data: { type: "appStoreVersions", id: versionId } } } },
-    });
-    await asc.request(`/v1/reviewSubmissions/${reviewSubmissionId}`, "PATCH", {
-      data: { type: "reviewSubmissions", attributes: { action: "SUBMIT" } },
-    });
+  if (!mine && items.some((it) => it.relationships?.appStoreVersion))
+    throw new Error("存在进行中的提审且含其他条目——到 ASC 网页（App Review → 草稿）人工处置后再试");
+  reviewSubmissionId = active.id; // 草稿复用（state=READY 且无冲突条目）
+  ctx.emit({ type: "progress", detail: `复用未提交的提审草稿 ${reviewSubmissionId}` });
+} else {
+  const created = await asc.request<AscSingleResponse<Record<string, unknown>>>(
+    "/v1/reviewSubmissions",
+    "POST",
+    {
+      data: {
+        type: "reviewSubmissions",
+        attributes: {},
+        relationships: { app: { data: { type: "apps", id: app.id } } },
+      },
+    },
+  );
+  reviewSubmissionId = created.data?.id ?? "";
+  if (!reviewSubmissionId) throw new Error("ASC 创建 reviewSubmission 未返回 id");
+}
+await asc.request(`/v1/reviewSubmissions/${reviewSubmissionId}/items`, "POST", {
+  data: {
+    type: "reviewSubmissionItems",
+    attributes: {},
+    relationships: { appStoreVersion: { data: { type: "appStoreVersions", id: versionId } } },
+  },
+});
+await asc.request(`/v1/reviewSubmissions/${reviewSubmissionId}`, "PATCH", {
+  data: { type: "reviewSubmissions", attributes: { action: "SUBMIT" } },
+});
 ```
 
 （AscDoc 的 `relationships` 类型扩 `appStoreVersion?: { data?: { id?: string; type?: string } }`。）
@@ -1013,11 +1093,13 @@ git commit -m "feat(asc): 提审幂等三查 + 可编辑版本状态机扩展（
 ### Task 5: 出口合规代答 + preflight 规则化
 
 **Files:**
+
 - Modify: `packages/core/src/config/schema.ts`（ios.exportCompliance）、`packages/core/src/channel.ts`（ChannelContext.exportCompliance）、`packages/cli/src/index.ts`（makeContext extra 透传 config.ios?.exportCompliance）
 - Modify: `packages/core/src/channels/asc.ts`（preflightLocalizations → preflightRules；submit 绑 build 后合规代答）
 - Test: `packages/core/src/channels/asc.test.ts`、`packages/cli/src/index.test.ts`
 
 **Interfaces:**
+
 - Produces: `ChannelContext.exportCompliance?: { usesNonExemptEncryption: boolean }`；schema `ios.exportCompliance` 同形（`.optional()`，无默认=不代答）。
 - Produces: `type PreflightRule = { key: string; level: "warn" | "error"; check: () => Promise<string | null> }`——asc 内部类型，error 抛 / warn emit。
 
@@ -1030,13 +1112,21 @@ describe("出口合规代答（§6）", () => {
     // ctx.exportCompliance = { usesNonExemptEncryption: false }
     // 断言出现 PATCH /v1/builds/B1 body attributes.usesNonExemptEncryption=false
   });
-  it("未配置代答 + null：emit warn 提示（现行为保留），不 PATCH", async () => { /* events 断言 */ });
-  it("已声明（非 null）：零请求零提示", async () => { /* usesNonExemptEncryption: false 直接给值 */ });
+  it("未配置代答 + null：emit warn 提示（现行为保留），不 PATCH", async () => {
+    /* events 断言 */
+  });
+  it("已声明（非 null）：零请求零提示", async () => {
+    /* usesNonExemptEncryption: false 直接给值 */
+  });
 });
 
 describe("preflight 规则引擎（§8）", () => {
-  it("error 级阻断：localizations 缺描述仍抛（迁移后语义不变）", async () => { /* 现有断言保留 */ });
-  it("warn 级不阻断：被拒版本续用时 emit warn", async () => { /* resolveEditableVersion 返回 REJECTED 态 → warn 事件 */ });
+  it("error 级阻断：localizations 缺描述仍抛（迁移后语义不变）", async () => {
+    /* 现有断言保留 */
+  });
+  it("warn 级不阻断：被拒版本续用时 emit warn", async () => {
+    /* resolveEditableVersion 返回 REJECTED 态 → warn 事件 */
+  });
 });
 ```
 
@@ -1047,35 +1137,47 @@ cli 侧：`index.test.ts` 旗标面 describe 补一条 e2e——config 写 `ios:
 - [ ] **Step 3: 实现**
 
 schema（ios 段）：
+
 ```ts
       /** 出口合规代答：仅当 build 的 usesNonExemptEncryption 未声明（null）时 PATCH 代答；缺省不代答（保持提示） */
       exportCompliance: z.object({ usesNonExemptEncryption: z.boolean() }).optional(),
 ```
+
 channel.ts（releaseMode 旁）：
+
 ```ts
   /** 出口合规代答（仅 asc 消费：build 未声明时按此 PATCH usesNonExemptEncryption） */
   exportCompliance?: { usesNonExemptEncryption: boolean };
 ```
+
 cli makeContext 调用点 extra 增 `exportCompliance: config.ios?.exportCompliance`（无旗标——设计定约配置，YAGNI）；makeContext extra 类型与 ctx 组装同 releaseMode 模式。
 
 asc.ts：AscBuildAttrs 扩 `usesNonExemptEncryption?: boolean | null`；submit 绑 build 后：
 
 ```ts
-    // 4.5) 出口合规代答（§6）：build 未声明（null）才写——幂等判据（fastlane 同款）；
-    //      Info.plist 已声明（ITSAppUsesNonExemptEncryption）的 build 此处为非 null，自动跳过
-    if (build.attrs.usesNonExemptEncryption == null) {
-      if (ctx.exportCompliance) {
-        await asc.request(`/v1/builds/${build.buildId}`, "PATCH", {
-          data: { type: "builds", id: build.buildId, attributes: { usesNonExemptEncryption: ctx.exportCompliance.usesNonExemptEncryption } },
-        });
-        ctx.emit({ type: "progress", detail: `已代答出口合规（usesNonExemptEncryption=${ctx.exportCompliance.usesNonExemptEncryption}）` });
-      } else {
-        ctx.emit({
-          type: "progress",
-          detail: "出口合规提示：Info.plist 声明 ITSAppUsesNonExemptEncryption（按实际加密用途取值）可免每次提审被问询",
-        });
-      }
-    }
+// 4.5) 出口合规代答（§6）：build 未声明（null）才写——幂等判据（fastlane 同款）；
+//      Info.plist 已声明（ITSAppUsesNonExemptEncryption）的 build 此处为非 null，自动跳过
+if (build.attrs.usesNonExemptEncryption == null) {
+  if (ctx.exportCompliance) {
+    await asc.request(`/v1/builds/${build.buildId}`, "PATCH", {
+      data: {
+        type: "builds",
+        id: build.buildId,
+        attributes: { usesNonExemptEncryption: ctx.exportCompliance.usesNonExemptEncryption },
+      },
+    });
+    ctx.emit({
+      type: "progress",
+      detail: `已代答出口合规（usesNonExemptEncryption=${ctx.exportCompliance.usesNonExemptEncryption}）`,
+    });
+  } else {
+    ctx.emit({
+      type: "progress",
+      detail:
+        "出口合规提示：Info.plist 声明 ITSAppUsesNonExemptEncryption（按实际加密用途取值）可免每次提审被问询",
+    });
+  }
+}
 ```
 
 preflight 规则化（`preflightLocalizations` 改 `preflight`，返回规则数组并顺序执行）：
@@ -1134,11 +1236,13 @@ git commit -m "feat(asc): 出口合规可配置代答（null 才写幂等）+ �
 ### Task 6: phased release（iOS 灰度）
 
 **Files:**
+
 - Modify: `packages/core/src/config/schema.ts`（ios.phasedRelease）、`packages/core/src/channel.ts`（ChannelContext.phasedRelease）、`packages/cli/src/index.ts`（透传）
 - Modify: `packages/core/src/channels/asc.ts`（submit 提审前 POST phasedRelease；preflight 加首版冲突 warn 规则）
 - Test: `packages/core/src/channels/asc.test.ts`、`packages/cli/src/index.test.ts`
 
 **Interfaces:**
+
 - Produces: `ChannelContext.phasedRelease?: boolean`；schema `ios.phasedRelease: z.boolean().default(false)`。
 
 - [ ] **Step 1: 失败测试**
@@ -1148,8 +1252,12 @@ describe("phased release（§7）", () => {
   it("配置开启 + 非首版：POST /v1/appStoreVersionPhasedReleases 关联 versionId", async () => {
     // appStoreVersions 列表路由返回 2 条 → 断言 POST body relationships.appStoreVersion.data.id
   });
-  it("配置开启 + 首版（仅 1 条版本记录）：emit warn 跳过，不 POST", async () => { /* events + 无 POST 断言 */ });
-  it("未配置：零 phased 请求", async () => { /* 现有用例回归 */ });
+  it("配置开启 + 首版（仅 1 条版本记录）：emit warn 跳过，不 POST", async () => {
+    /* events + 无 POST 断言 */
+  });
+  it("未配置：零 phased 请求", async () => {
+    /* 现有用例回归 */
+  });
 });
 ```
 
@@ -1162,27 +1270,28 @@ schema：`phasedRelease: z.boolean().default(false)`（注释引官方首版限�
 asc.ts（三查之前、resolveEditableVersion 之后）：
 
 ```ts
-    // 4.7) phased release（§7，7 天 1%→100% 自动更新灰度）。官方限制：仅后续版本可用
-    //      （"not available for the first version of an app"）——版本记录数 ≤1 判首版，warn 跳过
-    if (ctx.phasedRelease) {
-      const all = await asc.get<AscListResponse<AscVersionAttrs>>(
-        `/v1/apps/${app.id}/appStoreVersions?filter[platform]=IOS&limit=2`,
-      );
-      if (all.data.length > 1) {
-        await asc.request("/v1/appStoreVersionPhasedReleases", "POST", {
-          data: {
-            type: "appStoreVersionPhasedReleases",
-            relationships: { appStoreVersion: { data: { type: "appStoreVersions", id: versionId } } },
-          },
-        });
-        ctx.emit({ type: "progress", detail: "已开启分阶段发布（7 天 1%→100%，仅自动更新用户）" });
-      } else {
-        ctx.emit({
-          type: "warn",
-          message: "phased release 已配置但本 app 尚无在架版本（官方：首版不可用）——本次跳过，下一版本自动生效",
-        });
-      }
-    }
+// 4.7) phased release（§7，7 天 1%→100% 自动更新灰度）。官方限制：仅后续版本可用
+//      （"not available for the first version of an app"）——版本记录数 ≤1 判首版，warn 跳过
+if (ctx.phasedRelease) {
+  const all = await asc.get<AscListResponse<AscVersionAttrs>>(
+    `/v1/apps/${app.id}/appStoreVersions?filter[platform]=IOS&limit=2`,
+  );
+  if (all.data.length > 1) {
+    await asc.request("/v1/appStoreVersionPhasedReleases", "POST", {
+      data: {
+        type: "appStoreVersionPhasedReleases",
+        relationships: { appStoreVersion: { data: { type: "appStoreVersions", id: versionId } } },
+      },
+    });
+    ctx.emit({ type: "progress", detail: "已开启分阶段发布（7 天 1%→100%，仅自动更新用户）" });
+  } else {
+    ctx.emit({
+      type: "warn",
+      message:
+        "phased release 已配置但本 app 尚无在架版本（官方：首版不可用）——本次跳过，下一版本自动生效",
+    });
+  }
+}
 ```
 
 preflight 增规则 `{ key: "phased-first-version", level: "warn" }`：phasedRelease 配置且首版时输出提示（与 4.7 的 warn 二选一即可——实现取 4.7，preflight 规则仅当首版判定与 4.7 重复时省略；**决定：不重复，4.7 一处 warn，preflight 不加此规则**——spec §8 该条以 4.7 落地为準，spec 歧义在此收敛）。
@@ -1201,6 +1310,7 @@ git commit -m "feat(asc): iOS 分阶段发布开关（ios.phasedRelease，首版
 ### Task 7: 文档 + 变更集收口
 
 **Files:**
+
 - Modify: `README.md`（ios 配置段：release/exportCompliance/phasedRelease 与 --release-mode 说明——auto-publish 三档已先行落地，一并补全）、`docs/llms.txt`（同步）、`AGENTS.md`（当前状态追加一段）、`.changeset/asc-hardening.md`（新建）
 
 - [ ] **Step 1: README 补 ios 配置文档**（示例块）：
@@ -1209,9 +1319,9 @@ git commit -m "feat(asc): iOS 分阶段发布开关（ios.phasedRelease，首版
 export default defineConfig({
   ios: {
     bundleId: "com.example.app",
-    release: "auto",                                  // auto=审核通过自动上架（默认）| manual
+    release: "auto", // auto=审核通过自动上架（默认）| manual
     exportCompliance: { usesNonExemptEncryption: false }, // 可选：提审时代答出口合规
-    phasedRelease: true,                              // 可选：后续版本 7 天分阶段灰度（首版自动跳过）
+    phasedRelease: true, // 可选：后续版本 7 天分阶段灰度（首版自动跳过）
   },
 });
 ```

@@ -26,6 +26,8 @@ void spawnSyncRaw;
  * mockReturnValue / mock.calls[0] 断言写法全部保留——mockReturnValue 设定下一次 spawn 的
  * 回放结果（stdout/stderr data 事件 + close/error），mock.calls 记录 spawn 调用参数。
  */
+/** 挂起哨兵：设为 HANG 时 spawn 永不回放（真实超时路径用例专用） */
+const HANG = Symbol("hang");
 let nextResult:
   | {
       status: number | null;
@@ -33,6 +35,7 @@ let nextResult:
       stderr?: string;
       error?: Error;
     }
+  | typeof HANG
   | undefined;
 const spawnCalls: Array<[string, string[], Record<string, unknown>]> = [];
 const spawnSyncMock = {
@@ -77,21 +80,31 @@ spawnMock.mockImplementation(((cmd: string, args: string[], opts: Record<string,
   };
   const stdout = mkStream();
   const stderr = mkStream();
-  const em = new EventEmitter() as EventEmitter & { stdout: typeof stdout; stderr: typeof stderr };
+  const em = new EventEmitter() as EventEmitter & {
+    stdout: typeof stdout;
+    stderr: typeof stderr;
+    kill: (sig?: string) => void;
+  };
   em.stdout = stdout;
   em.stderr = stderr;
+  // 真实超时路径用：SIGKILL 后进程 close（status null）——spawnAsyncCapture 的 timer 分支覆盖
+  em.kill = () => {
+    em.emit("close", null);
+  };
   const r = nextResult;
-  queueMicrotask(() => {
-    if (r?.error) {
-      em.emit("error", r.error);
-      return;
-    }
-    if (r?.stdout) stdout.emitData(r.stdout);
-    if (r?.stderr) stderr.emitData(r.stderr);
-    stdout.emitEnd();
-    stderr.emitEnd();
-    em.emit("close", r === undefined ? 0 : r.status);
-  });
+  if (r !== HANG) {
+    queueMicrotask(() => {
+      if (r?.error) {
+        em.emit("error", r.error);
+        return;
+      }
+      if (r?.stdout) stdout.emitData(r.stdout);
+      if (r?.stderr) stderr.emitData(r.stderr);
+      stdout.emitEnd();
+      stderr.emitEnd();
+      em.emit("close", r === undefined ? 0 : r.status);
+    });
+  }
   return em;
 }) as never);
 
@@ -290,6 +303,18 @@ describe("stage altool 引擎（无 Transporter 时兜底）", () => {
     await expect(ch.stage(makeCtx())).rejects.toThrow("无法执行 xcrun: ENOENT");
   });
 
+  it("上传挂起 → 真实 30min 超时 SIGKILL → ETIMEDOUT 文案（spawnAsyncCapture timer 分支）", async () => {
+    vi.useFakeTimers();
+    spawnSyncMock.mockReturnValue(HANG as never);
+    // 先挂 catch（防 unhandled rejection 泄漏）→ advance 触发 timer → kill → timedOut 分支
+    const guard = ch.stage(makeCtx()).catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(30 * 60 * 1000 + 1000);
+    await expect(guard).resolves.toMatchObject({
+      message: expect.stringContaining("xcrun altool 超时（30min）"),
+    });
+    vi.useRealTimers();
+  });
+
   it("spawn 结果无 stdout/stderr 字段 → 输出按空串处理仍成功", async () => {
     spawnSyncMock.mockReturnValue({ status: 0 } as never);
     await expect(ch.stage(makeCtx())).resolves.toEqual({ ok: true });
@@ -477,6 +502,22 @@ describe("stage iTMSTransporter 引擎（装了 Transporter.app 时首选）", (
     await expect(ch.stage(makeCtx({ artifactPath: ipaFile }))).rejects.toThrow(
       "iTMSTransporter 上传失败（exit ?）: 无输出",
     );
+  });
+
+  it("上传期间 ERROR 行流式透传（含末尾无换行的残留行 flush）", async () => {
+    // 末行无换行：走 stream end 的 pending flush 分支，onLine 仍收到
+    spawnSyncMock.mockReturnValue({
+      status: 0,
+      stdout: "uploading...\nDBG-X: Returning 0\nERROR: code=1102 partial",
+      stderr: "",
+    } as never);
+    const events: Ev[] = [];
+    const ctx = makeCtx({ artifactPath: ipaFile });
+    ctx.emit = evCollector(events) as typeof ctx.emit;
+    await expect(ch.stage(ctx)).resolves.toEqual({ ok: true });
+    expect(
+      events.some((e) => e.type === "progress" && e.detail === "ERROR: code=1102 partial"),
+    ).toBe(true);
   });
 
   it("缺省探测默认安装路径：装了返回路径，未装返回 undefined（回退 altool）", () => {
@@ -1644,6 +1685,130 @@ describe("submit 等构建处理完成（docs/fastlane-adoption §2）", () => {
       vi.useRealTimers();
     }
   });
+
+  it("train 双格式查询（X.Y 与 X.Y.0 都查）+ preVersions 查询失败 → 退回最新 VALID 兜底", async () => {
+    let pvCalls = 0;
+    const m = mockFetch([
+      { match: /\/v1\/apps\?/, response: { status: 200, json: { data: [app] } } },
+      {
+        match: /\/v1\/preReleaseVersions\?/,
+        response: () => {
+          pvCalls += 1;
+          return { status: 500, json: {} }; // 锚定查询失败 → resolveTrainIds 返回 []
+        },
+      },
+      {
+        match: /\/v1\/builds\?/,
+        response: { status: 200, json: { data: [buildValid], included: [pre] } },
+      },
+      {
+        match: /appStoreVersions\?filter\[platform\]/,
+        response: { status: 200, json: { data: [] } },
+      },
+      {
+        match: /\/v1\/appStoreVersions$/,
+        response: { status: 201, json: { data: { id: "VNEW" } } },
+      },
+      {
+        match: /appStoreVersionLocalizations/,
+        response: {
+          status: 200,
+          json: {
+            data: [
+              {
+                type: "appStoreVersionLocalizations",
+                id: "L1",
+                attributes: { locale: "zh-Hans", description: "描述" },
+              },
+            ],
+          },
+        },
+      },
+      {
+        match: /\/v1\/appStoreVersions\/[^/]+$/,
+        response: { status: 200, json: { data: { id: "VNEW" } } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions\?/,
+        response: { status: 200, json: { data: [], included: [] } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions$/,
+        response: { status: 201, json: { data: { id: "SUB1" } } },
+      },
+      {
+        match: /\/v1\/reviewSubmissionItems$/,
+        response: { status: 201, json: { data: { id: "RSI1" } } },
+      },
+      {
+        match: /\/v1\/reviewSubmissions\/[^/]+$/,
+        response: { status: 200, json: { data: { id: "RS1" } } },
+      },
+    ]);
+    try {
+      const ctx = makeCtx({ artifactVersion: { versionName: "1.2.3", versionCode: "42" } });
+      await expect(ch.submit(ctx)).resolves.toEqual({ ok: true, ref: "SUB1" });
+      // 兜底路径：builds 查询退回 sort=-uploadedDate（不带锚定 filter）
+      const buildsCall = m.calls.find((c) => c.url.includes("/v1/builds?"));
+      expect(buildsCall?.url).toContain("sort=-uploadedDate");
+      expect(pvCalls).toBeGreaterThanOrEqual(1);
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("三段 train 版本名（1.2.3）：alt 走砍尾 1.2；VALID 缺 attrs → 空对象兼容仍成功", async () => {
+    const noAttrsBuild = {
+      type: "builds",
+      id: "B5",
+      attributes: undefined,
+      relationships: { preReleaseVersion: { data: { type: "preReleaseVersions", id: "PR1" } } },
+    };
+    const m = mockFetch(
+      routes(() => ({
+        data: [{ ...noAttrsBuild, attributes: { processingState: "PROCESSING" } }],
+        included: [pre],
+      })),
+    );
+    try {
+      const ctx = makeCtx({ artifactVersion: { versionName: "1.2.3", versionCode: "42" } });
+      // 首轮 PROCESSING 会一直等到超时——改为一轮直接给 VALID（attributes 缺 version 字段）
+      m.restore();
+      const m2 = mockFetch([
+        ...routes(() => ({
+          data: [
+            {
+              type: "builds",
+              id: "B5",
+              attributes: { processingState: "VALID" },
+              relationships: {
+                preReleaseVersion: { data: { type: "preReleaseVersions", id: "PR1" } },
+              },
+            },
+          ],
+          included: [pre],
+        })),
+        {
+          match: /\/v1\/builds\/[^/]+$/,
+          method: "PATCH",
+          response: { status: 200, json: { data: { id: "B5" } } },
+        },
+      ]);
+      try {
+        await expect(ch.submit(ctx)).resolves.toEqual({ ok: true, ref: "SUB1" });
+        // 三段名 1.2.3：alt 分支走砍尾（1.2）
+        expect(
+          m2.calls.some(
+            (c) => c.url.includes("filter[version]=1.2&") || c.url.includes("filter[version]=1.2"),
+          ),
+        ).toBe(true);
+      } finally {
+        m2.restore();
+      }
+    } finally {
+      m.restore();
+    }
+  });
 });
 
 describe("版本状态机扩展（docs/fastlane-adoption §4）", () => {
@@ -1805,6 +1970,46 @@ describe("版本状态机扩展（docs/fastlane-adoption §4）", () => {
       expect(
         m.calls.find((c) => c.method === "POST" && c.url.endsWith("/v1/appStoreVersions")),
       ).toBeUndefined();
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("多 editable 版本并存：取 versionString 最大者（cmpVersion 分段数值比较），INVALID_BINARY 异号走改名", async () => {
+    const m = mockFetch(
+      routes({
+        versions: {
+          data: [
+            {
+              type: "appStoreVersions",
+              id: "V-LOW",
+              attributes: { versionString: "1.9.9", appVersionState: "INVALID_BINARY" },
+            },
+            {
+              type: "appStoreVersions",
+              id: "V-HIGH",
+              attributes: { versionString: "1.10.0", appVersionState: "PREPARE_FOR_SUBMISSION" },
+            },
+          ],
+        },
+      }),
+    );
+    try {
+      const events: Ev[] = [];
+      const ctx = makeCtx();
+      ctx.emit = evCollector(events) as typeof ctx.emit;
+      await expect(ch.submit(ctx)).resolves.toEqual({ ok: true, ref: "SUB1" });
+      // 1.10.0 > 1.9.9（数值比较而非字典序）；选中 V-HIGH 且同号 → 复用 PATCH
+      const patch = m.calls.find(
+        (c) => c.method === "PATCH" && c.url.endsWith("/v1/appStoreVersions/V-HIGH"),
+      )!;
+      expect(JSON.parse(patch.body as string).data.attributes).toEqual({
+        versionString: "1.2.3",
+        releaseType: "AFTER_APPROVAL",
+      });
+      expect(
+        events.some((e) => e.type === "phase" && e.message?.includes("改名 1.10.0 → 1.2.3")),
+      ).toBe(true);
     } finally {
       m.restore();
     }
@@ -1986,6 +2191,35 @@ describe("提审三查（docs/fastlane-adoption §3）", () => {
       m.restore();
     }
   });
+
+  it("active 判定过滤终态（COMPLETED）：已完成 submission 后有新草稿 → 复用新草稿；无 included 字段 → items 空数组", async () => {
+    const m = mockFetch(
+      routes({
+        // 终态在前（被过滤）、READY 草稿在后（active）；included 缺失（items=[]，!mine 且无他人条目 → 复用）
+        data: [
+          {
+            type: "reviewSubmissions",
+            id: "RS-DONE",
+            attributes: { state: "COMPLETED" },
+          },
+          { type: "reviewSubmissions", id: "RS-DRAFT", attributes: { state: "READY" } },
+        ],
+      }),
+    );
+    try {
+      await expect(ch.submit(makeCtx())).resolves.toEqual({ ok: true, ref: "RS-DRAFT" });
+      // 复用草稿（无条目 → POST items 到顶层端点关联 RS-DRAFT）
+      const item = m.calls.find(
+        (c) => c.method === "POST" && c.url.endsWith("/v1/reviewSubmissionItems"),
+      );
+      expect(JSON.parse(item!.body as string).data.relationships.reviewSubmission.data.id).toBe(
+        "RS-DRAFT",
+      );
+      expect(m.find("reviewSubmissions", "POST")).toBeUndefined();
+    } finally {
+      m.restore();
+    }
+  });
 });
 
 describe("stage build 号预检（§9）", () => {
@@ -2044,6 +2278,77 @@ describe("stage build 号预检（§9）", () => {
       tpSpy.mockRestore();
     }
   });
+
+  it("无 artifactPath（--skip-stage 语义）→ 跳过预检零请求；versionName 缺失仅 versionCode 时文案 ?", async () => {
+    const m = mockFetch([]);
+    const tpSpy = vi.spyOn(ch, "resolveTransporterPath").mockReturnValue(undefined);
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: "", stderr: "" } as never);
+    try {
+      // 测试替身：artifactPath 置空字符串（falsy）模拟无产物路径——避免对非可选字段 cast 删改
+      const bare: ChannelContext = { ...makeCtx(), artifactPath: "" };
+      await expect(ch.stage(bare)).resolves.toEqual({ ok: true });
+      expect(m.calls.length).toBe(0);
+    } finally {
+      tpSpy.mockRestore();
+      m.restore();
+    }
+  });
+
+  it("占用时报错含 versionName（可读文案全字段）", async () => {
+    const m = mockFetch([
+      { match: /\/v1\/apps\?/, response: { status: 200, json: { data: [app] } } },
+      {
+        match: /\/v1\/builds\?/,
+        response: {
+          status: 200,
+          json: {
+            data: [
+              { type: "builds", id: "B9", attributes: { version: "7", processingState: "VALID" } },
+            ],
+          },
+        },
+      },
+    ]);
+    try {
+      await expect(
+        ch.stage(makeCtx({ artifactVersion: { versionName: "1.2.3", versionCode: "7" } })),
+      ).rejects.toThrow(/版本 1\.2\.3 构建号 7 已在/);
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("预检查询抛错 → 预检跳过（best-effort），继续上传", async () => {
+    const tpSpy = vi.spyOn(ch, "resolveTransporterPath").mockReturnValue(undefined);
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: "", stderr: "" } as never);
+    const m = mockFetch([{ match: /\/v1\/apps\?/, response: { status: 500, json: {} } }]);
+    try {
+      await expect(
+        ch.stage(makeCtx({ artifactVersion: { versionName: "1.2.3", versionCode: "42" } })),
+      ).resolves.toEqual({ ok: true });
+    } finally {
+      tpSpy.mockRestore();
+      m.restore();
+    }
+  });
+
+  it("预检失败 warn 后上传继续（warn 文案断言）", async () => {
+    const tpSpy = vi.spyOn(ch, "resolveTransporterPath").mockReturnValue(undefined);
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: "", stderr: "" } as never);
+    const m = mockFetch([{ match: /\/v1\/apps\?/, response: { status: 500, json: {} } }]);
+    try {
+      const events: Ev[] = [];
+      const ctx = makeCtx({ artifactVersion: { versionName: "1.2.3", versionCode: "42" } });
+      ctx.emit = evCollector(events) as typeof ctx.emit;
+      await expect(ch.stage(ctx)).resolves.toEqual({ ok: true });
+      expect(events.some((e) => e.type === "warn" && e.message?.includes("build 号预检跳过"))).toBe(
+        true,
+      );
+    } finally {
+      tpSpy.mockRestore();
+      m.restore();
+    }
+  });
 });
 
 describe("status（appVersionState → ReviewStatus 映射）", () => {
@@ -2078,6 +2383,15 @@ describe("status（appVersionState → ReviewStatus 映射）", () => {
     );
     try {
       expect(await ch.status(makeCtx())).toEqual(expected);
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("apps 查询命中空（bundleId 不匹配）→ 报「未找到 bundleId 对应的 App」", async () => {
+    const m = mockFetch([{ match: /\/v1\/apps\?/, response: { status: 200, json: { data: [] } } }]);
+    try {
+      await expect(ch.status(makeCtx())).rejects.toThrow("ASC 未找到 bundleId=com.example.app");
     } finally {
       m.restore();
     }

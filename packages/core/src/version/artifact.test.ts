@@ -180,6 +180,51 @@ describe("readArtifactVersion — 来源正确性", () => {
     spawnMock.mockReturnValue({ status: 1 } as never);
     expect(readArtifactVersion("/tmp/app.ipa")).toBeUndefined();
   });
+
+  it(".ipa bplist00 但 plutil 转换失败 → undefined（不猜测）", () => {
+    spawnMock.mockImplementation(((...args: unknown[]) => {
+      const argv = mockArgv(args);
+      if (argv?.[0] === "-p" && argv.includes("Payload/*.app/Info.plist"))
+        return {
+          status: 0,
+          stdout: Buffer.concat([Buffer.from("bplist00"), Buffer.from([9, 9])]),
+        };
+      return { status: 1 }; // plutil 失败
+    }) as never);
+    expect(readArtifactVersion("/tmp/app.ipa")).toBeUndefined();
+  });
+
+  it(".ipa XML 无 CFBundle 键（两个 key 都未命中）→ undefined", () => {
+    spawnMock.mockImplementation(((...args: unknown[]) => {
+      const argv = mockArgv(args);
+      if (argv?.[0] === "-p" && argv.includes("Payload/*.app/Info.plist"))
+        return {
+          status: 0,
+          stdout: Buffer.from("<plist><dict><key>Other</key><string>x</string></dict></plist>"),
+        };
+      return { status: 1 };
+    }) as never);
+    expect(readArtifactVersion("/tmp/app.ipa")).toBeUndefined();
+  });
+
+  it(".ipa 仅 versionCode 命中（versionName 缺）→ 返回部分结果 versionName=undefined", () => {
+    spawnMock.mockImplementation(((...args: unknown[]) => {
+      const argv = mockArgv(args);
+      if (argv?.[0] === "-p" && argv.includes("Payload/*.app/Info.plist"))
+        return {
+          status: 0,
+          stdout: Buffer.from(
+            "<plist><dict><key>CFBundleVersion</key><string>77</string></dict></plist>",
+          ),
+        };
+      return { status: 1 };
+    }) as never);
+    expect(readArtifactVersion("/tmp/app.ipa")).toEqual({
+      versionName: undefined,
+      versionCode: "77",
+      source: "Info.plist",
+    });
+  });
 });
 
 describe("版本读取扩展名边界", () => {

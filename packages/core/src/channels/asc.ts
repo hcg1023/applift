@@ -146,19 +146,28 @@ export class AscChannel implements Channel {
   async stage(ctx: ChannelContext): Promise<StageResult> {
     const auth = this.resolveAuth(ctx);
 
-    // build 号预检（§9）：ios build 号全 app 唯一，占用则上传必失败——提前拦截省 5-15 分钟
+    // build 号预检（§9，best-effort）：ios build 号全 app 唯一，占用则上传必失败——提前拦截省 5-15 分钟；
+    // 查询失败（网络抖动/凭据问题）不阻断上传（真正的占用冲突由 Apple 上传侧报错兜底），仅提示
     const av = ctx.artifactPath ? readArtifactVersion(ctx.artifactPath) : undefined;
     if (av?.versionCode) {
-      const asc = new AscClient(auth);
-      const appId = await this.resolveAppId(asc, ctx);
-      const dup = await asc.get<AscListResponse<AscBuildAttrs>>(
-        `/v1/builds?filter[app]=${appId}&filter[version]=${encodeURIComponent(av.versionCode)}&limit=1`,
-      );
-      if (dup.data.length > 0)
-        throw new Error(
-          `build 号已被占用（版本 ${av.versionName ?? "?"} 构建号 ${av.versionCode} 已在 App Store Connect）` +
-            "——升 versionCode 重新出包后重试（versionCode 以工程文件为准）",
+      try {
+        const asc = new AscClient(auth);
+        const appId = await this.resolveAppId(asc, ctx);
+        const dup = await asc.get<AscListResponse<AscBuildAttrs>>(
+          `/v1/builds?filter[app]=${appId}&filter[version]=${encodeURIComponent(av.versionCode)}&limit=1`,
         );
+        if (dup.data.length > 0)
+          throw new Error(
+            `build 号已被占用（版本 ${av.versionName ?? "?"} 构建号 ${av.versionCode} 已在 App Store Connect）` +
+              "——升 versionCode 重新出包后重试（versionCode 以工程文件为准）",
+          );
+      } catch (e) {
+        if (e instanceof Error && e.message.includes("build 号已被占用")) throw e;
+        ctx.emit({
+          type: "warn",
+          message: `build 号预检跳过（查询失败，上传继续；占用冲突将由 Apple 上传侧报错）: ${e instanceof Error ? e.message : String(e)}`,
+        });
+      }
     }
 
     const transporter = this.resolveTransporterPath(ctx);
@@ -229,7 +238,13 @@ export class AscChannel implements Channel {
       const r = await spawnAsyncCapture(
         transporterPath,
         ["-m", "upload", "-jwt", jwt, "-assetFile", tmpIpa, "-k", "100000"],
-        { timeoutMs: 30 * 60 * 1000 },
+        {
+          timeoutMs: 30 * 60 * 1000,
+          // 流式透传错误行（上传 5-15min 期间失败原因实时可见，不必等进程退出）
+          onLine: (l) => {
+            if (l && /ERROR/i.test(l)) ctx.emit({ type: "progress", detail: l });
+          },
+        },
       );
       if (r.error) {
         if ("code" in r.error && r.error.code === "ETIMEDOUT")
