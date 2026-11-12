@@ -1,5 +1,86 @@
 # @applift/cli
 
+## 0.13.0
+
+### Minor Changes
+
+- c59bb17: iOS App Store 上架方式从固定手动发布改为三档可选（官方文档核查 2026-11-11：首版亦可自动发布，唯一强制手动场景为"预购且从未上架"）：
+
+  - **行为变更**：默认改为审核通过自动上架（releaseType=AFTER_APPROVAL），此前默认手动
+  - 配置 `ios.release: "auto" | "manual"` 固定项目约定（默认 auto）
+  - `--release-mode <auto|manual>` 单次覆盖配置；与 `--release-time` 互斥（定时上架仍走 `--release-time` → SCHEDULED）
+  - 提审确认界面对 iOS 自动上架同样给出"无法撤回"警示
+
+- a34931b: ASC 提审链路加固（fastlane 审查落地，docs/fastlane-adoption.md）：
+
+  - 提审前有界等待构建处理完成（30s 轮询 / 30min 上限，产物 versionName+versionCode 精确锚定防多 train 绑错包；X.Y≡X.Y.0 双格式兼容）
+  - stage 前 build 号占用预检（ios build 号全 app 唯一，提前拦截省一次无效上传）
+  - 提审幂等三查：已在审拒绝 / 未提交草稿复用 / 他人条目拒绝
+  - 可编辑版本状态机扩展：被拒四态可续用；PREPARE 异号改名；被拒异号报错人工处置
+  - AscClient：JWT 惰性续签 + iat-60 时钟偏移防御、GET 429/5xx 自动重试、401 重签、写操作不重试、协议未签专属提示
+  - 出口合规可配置代答（ios.exportCompliance，build 未声明才写）；提审预检规则化（warn/error 分级）
+  - iOS 分阶段发布开关（ios.phasedRelease，官方首版限制自动跳过）
+  - 渠道共享 pollUntil，AGC/oppo/pgyer 轮询统一（行为不变）
+
+- ba6ce88: 产品审查第二批（清零批次）：
+
+  **命名对齐**
+
+  - `ios.release` → `ios.releaseMode`（配置键/旗标 --release-mode/ctx 字段三处同名，消除一词三名；0.x 无存量迁移）
+
+  **配置清理**
+
+  - 删除 `ios.scheme`/`ios.workspace` 死键（声明"缺省自动推导"但 detectBundleIds 不读配置、无渠道消费——写了被无视）
+  - `beta.agc.testType` 支持 `"invite" | "open"` 语义枚举（兼容原 3/4 数字，内部归一）
+
+  **doctor 兑现 README 承诺**
+
+  - 展示项目 name、渠道并发生效值（含来源：项目/全局/默认）、iOS 提审三键状态（releaseMode/出口合规代答/分阶段发布）
+
+  **beta 路径错误人话化**
+
+  - beta 多渠道并行与 AGC 单平台路径的失败输出接入 errorHints（AGC 204144692 等高频码此前在 beta 是裸码）
+
+  **交互补齐**
+
+  - ASC 写操作 retryHint 指引补全为 `applift status --stores asc`（iOS-only 项目原指引执行即报错）
+  - OTA dry-run 分支 `--json` 输出结构化结果（stdout 纯净契约）
+  - `--submit` + `--dry-run` 同传提示"--submit 不生效"
+  - ASC 等构建文案对称化（"约 10 分钟，慢时 30 分钟；超时自动中止且重跑安全"）
+
+  **异步化**
+
+  - Transporter/altool 上传从 spawnSync 改异步 spawn（Promise.withResolvers + 流式捕获）：5-15 分钟上传期间事件循环不再冻结——spinner 动画、其他渠道进度、Ctrl-C 全部恢复正常
+
+- 08f00f1: 产品/交互审查落地：配置面"每个键都算数" + 交互面"每个等待可见"（PM/UE 两席审查产出，14 项修复）：
+
+  **配置接线（承诺但未接线的死配置）**
+
+  - `beta.agc.cleanup: false` 逃生口接线：此前 CLI 从未把配置写入 target，渠道侧清理恒开——配置关不掉旧测试版本 stop+delete（删数据类操作）；现两条 beta 路径（多渠道并行 / beta harmony）均透传，补 CLI 接线 e2e
+  - `defaultProfile`（~/.applift/config.toml）接入 profile 解析链：此前定义但零消费，README 优先级公理的全局层名存实亡；现为第四层（旗标 > applift use > 项目 profile > 全局 defaultProfile > default），use/status/doctor/release/beta/listing 六入口全接，doctor 与 use 展示新来源
+  - 删除 `uploadTimeoutMs` 死旋钮：零消费方（各渠道超时各自实现），配置调它毫无作用
+
+  **交互修复**
+
+  - `progress` 事件渲染接线：渠道轮询进度（ASC 等构建 30 分钟级、AGC 云端编译、OPPO 任务轮询）此前被 CLI 静默丢弃，终端零输出最长 30 分钟；现统一写 stderr（脱敏，保 --json stdout 纯净），beta 快捷路径接 spinner message
+  - 两段式提审确认文案按实际上架方式聚合展示（manual 用户此前被错误的"审核通过即自动上架"误导）
+  - `--release-mode scheduled` 报错补指路 `--release-time`；`--release-mode` 非 iOS 平台警告（对齐 --rollout 的"参数给了无人消费必须可见"原则）
+  - `--release-time` 对不支持定时的渠道（oppo/vivo/小米/googleplay）逐渠道警告——防"以为全渠道定时"的危险静默
+  - `version bump --no-commit` 输出锚点丢失警告（后续 beta 判定将停留上一锚点，可能重复建议 bump）
+
+### Patch Changes
+
+- 83fef55: 渠道并发数 `concurrency` 提升为项目级配置：`applift.config.ts` 可直接声明（渠道数是项目属性，如七安卓渠道全开需 ≥7）。优先级：项目 applift.config.ts > 全局 ~/.applift/config.toml（个人兜底，保留）> 默认 4。
+
+  取值放宽为 ≥1 整数、无上限（原全局 1-8 的上限移除）：pipeline 的 worker 池自限于渠道数（`min(concurrency, 渠道数)`），配大了也无害。
+
+- Updated dependencies [c59bb17]
+- Updated dependencies [a34931b]
+- Updated dependencies [ba6ce88]
+- Updated dependencies [08f00f1]
+- Updated dependencies [83fef55]
+  - @applift/core@0.13.0
+
 ## 0.12.1
 
 ### Patch Changes
