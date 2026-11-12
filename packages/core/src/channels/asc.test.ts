@@ -61,6 +61,7 @@ function makeCtx(
     target?: Record<string, string>;
     releaseTime?: string;
     artifactPath?: string;
+    updateDescription?: string;
   } = {},
 ): ChannelContext {
   return {
@@ -72,6 +73,7 @@ function makeCtx(
     target: overrides.target ?? { bundleId: "com.example.app" },
     artifactPath: overrides.artifactPath ?? "/tmp/app-release.ipa",
     releaseTime: overrides.releaseTime,
+    updateDescription: overrides.updateDescription,
     emit: () => {},
   } as unknown as ChannelContext;
 }
@@ -402,7 +404,7 @@ describe("submit（ASC REST 提审）", () => {
   const buildValid = {
     type: "builds",
     id: "B2",
-    attributes: { version: "42", processingState: "VALID" },
+    attributes: { version: "42", processingState: "VALID", usesNonExemptEncryption: false },
     relationships: { preReleaseVersion: { data: { type: "preReleaseVersions", id: "PR1" } } },
   };
   const buildProcessing = {
@@ -430,6 +432,11 @@ describe("submit（ASC REST 提审）", () => {
         },
       },
       {
+        match: /\/v1\/builds\/[^/]+$/,
+        method: "PATCH",
+        response: { status: 200, json: { data: { id: "B2" } } },
+      },
+      {
         match: /appStoreVersions\?filter\[platform\]/,
         response: { status: 200, json: overrides.versions ?? { data: [] } },
       },
@@ -448,6 +455,7 @@ describe("submit（ASC REST 提审）", () => {
       },
       {
         match: /appStoreVersionLocalizations/,
+        method: "GET",
         response: {
           status: 200,
           json: overrides.localizations ?? {
@@ -467,14 +475,20 @@ describe("submit（ASC REST 提审）", () => {
           },
         },
       },
+      {
+        // whatsNew 写入：PATCH appStoreVersionLocalizations/{id}
+        match: /\/v1\/appStoreVersionLocalizations\/[^/]+$/,
+        method: "PATCH",
+        response: { status: 200, json: { data: { id: "L1" } } },
+      },
       { match: /relationships\/builds/, response: { status: 200, json: { data: [] } } },
       {
-        match: /\/v1\/reviewSubmissions\/[^/]+\/items$/,
+        match: /\/v1\/reviewSubmissionItems$/,
         response: { status: 201, json: { data: { id: "RSI1" } } },
       },
       {
         match: /\/v1\/reviewSubmissions\/[^/]+$/,
-        response: { status: 200, json: { data: { id: "RS1", attributes: { action: "SUBMIT" } } } },
+        response: { status: 200, json: { data: { id: "RS1", attributes: { submitted: true } } } },
       },
       {
         match: /\/v1\/reviewSubmissions$/,
@@ -513,9 +527,18 @@ describe("submit（ASC REST 提审）", () => {
         },
       });
       // 5) 绑定构建（to-many，data 为数组）
-      const bind = m.find("relationships/builds")!;
-      expect(bind.method).toBe("PATCH");
-      expect(JSON.parse(bind.body as string)).toEqual({ data: [{ type: "builds", id: "B2" }] });
+      const bind = m.calls.find(
+        (c) => c.method === "PATCH" && /\/v1\/appStoreVersions\/[^/]+$/.test(c.url),
+      )!;
+      {
+        const bindBody = JSON.parse(bind.body as string);
+        // id 与请求 URL 上的版本 id 一致（既有版本 V1 或新建版本 VNEW，由用例路径决定）
+        expect(bind.url).toContain(`/v1/appStoreVersions/${bindBody.data.id}`);
+        expect(bindBody.data.type).toBe("appStoreVersions");
+        expect(bindBody.data.relationships).toEqual({
+          build: { data: { type: "builds", id: "B2" } },
+        });
+      }
       // 6) 提审三步流：POST reviewSubmissions（关联 App）
       const rs = m.calls.find(
         (c) => c.method === "POST" && c.url.endsWith("/v1/reviewSubmissions"),
@@ -529,13 +552,14 @@ describe("submit（ASC REST 提审）", () => {
       });
       // 7) POST reviewSubmissionItems（关联 appStoreVersion）
       const item = m.calls.find(
-        (c) => c.method === "POST" && c.url.includes("/v1/reviewSubmissions/SUB1/items"),
+        (c) => c.method === "POST" && c.url.endsWith("/v1/reviewSubmissionItems"),
       )!;
       expect(JSON.parse(item.body as string)).toEqual({
         data: {
           type: "reviewSubmissionItems",
           attributes: {},
           relationships: {
+            reviewSubmission: { data: { type: "reviewSubmissions", id: "SUB1" } },
             appStoreVersion: { data: { type: "appStoreVersions", id: "VNEW" } },
           },
         },
@@ -545,7 +569,7 @@ describe("submit（ASC REST 提审）", () => {
         (c) => c.method === "PATCH" && c.url.endsWith("/v1/reviewSubmissions/SUB1"),
       )!;
       expect(JSON.parse(confirm.body as string)).toEqual({
-        data: { type: "reviewSubmissions", attributes: { action: "SUBMIT" } },
+        data: { type: "reviewSubmissions", id: "SUB1", attributes: { submitted: true } },
       });
       // 所有请求带 Bearer JWT
       for (const c of m.calls) expect(c.headers.Authorization).toMatch(/^Bearer ey/);
@@ -556,6 +580,62 @@ describe("submit（ASC REST 提审）", () => {
       expect(events.some((e) => e.type === "progress" && e.detail?.includes("出口合规提示"))).toBe(
         true,
       );
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("--note 提供时：PATCH 每个本地化的 whatsNew（版本更新说明），预检与绑构建之间执行", async () => {
+    const m = mockFetch(submitRoutes());
+    try {
+      const events: Ev[] = [];
+      const ctx = makeCtx({ updateDescription: "修复若干问题，优化体验" });
+      ctx.emit = evCollector(events) as typeof ctx.emit;
+      await ch.submit(ctx);
+
+      // 两条本地化各一次 PATCH，body 形状 = JSON:API whatsNew
+      const patches = m.calls.filter(
+        (c) => c.method === "PATCH" && /\/v1\/appStoreVersionLocalizations\/[^/]+$/.test(c.url),
+      );
+      expect(patches.map((c) => c.url)).toEqual([
+        expect.stringContaining("/v1/appStoreVersionLocalizations/L1"),
+        expect.stringContaining("/v1/appStoreVersionLocalizations/L2"),
+      ]);
+      for (const p of patches) {
+        expect(JSON.parse(p.body as string)).toEqual({
+          data: {
+            type: "appStoreVersionLocalizations",
+            id: p.url.split("/").pop(),
+            attributes: { whatsNew: "修复若干问题，优化体验" },
+          },
+        });
+      }
+      // emit 逐本地化确认（无 locale 兜底显示 id）
+      expect(events.some((e) => e.detail?.includes("zh-Hans"))).toBe(true);
+      expect(events.some((e) => e.detail?.includes("L2"))).toBe(true);
+      // 顺序：whatsNew 写入在预检之后、绑构建之前
+      const idxPatch = m.calls.findIndex(
+        (c) => c.method === "PATCH" && c.url.includes("/v1/appStoreVersionLocalizations/"),
+      );
+      const idxBind = m.calls.findIndex(
+        (c) => c.method === "PATCH" && /\/v1\/appStoreVersions\/[^/]+$/.test(c.url),
+      );
+      expect(idxPatch).toBeGreaterThan(-1);
+      expect(idxPatch).toBeLessThan(idxBind);
+    } finally {
+      m.restore();
+    }
+  });
+
+  it("未提供 --note：不产生 whatsNew PATCH（不动 ASC 后台手填文案）", async () => {
+    const m = mockFetch(submitRoutes());
+    try {
+      await ch.submit(makeCtx());
+      expect(
+        m.calls.filter(
+          (c) => c.method === "PATCH" && /\/v1\/appStoreVersionLocalizations\/[^/]+$/.test(c.url),
+        ),
+      ).toHaveLength(0);
     } finally {
       m.restore();
     }
@@ -643,6 +723,45 @@ describe("submit（ASC REST 提审）", () => {
     }
   });
 
+  it("出口合规未声明：build usesNonExemptEncryption=null 时自动 PATCH false；已声明则不再重写", async () => {
+    const m = mockFetch(
+      submitRoutes({
+        builds: {
+          data: [
+            {
+              type: "builds",
+              id: "B2",
+              attributes: {
+                version: "42",
+                processingState: "VALID",
+                usesNonExemptEncryption: null,
+              },
+              relationships: {
+                preReleaseVersion: { data: { type: "preReleaseVersions", id: "PR1" } },
+              },
+            },
+          ],
+          included: [pre],
+        },
+      }),
+    );
+    try {
+      const ctx = makeCtx();
+      await ch.submit(ctx as unknown as ChannelContext);
+      const compliance = m.calls.find(
+        (c) => c.method === "PATCH" && /\/v1\/builds\/B2$/.test(c.url),
+      )!;
+      expect(JSON.parse(compliance.body as string)).toEqual({
+        data: { type: "builds", id: "B2", attributes: { usesNonExemptEncryption: false } },
+      });
+      // 已声明场景（submitRoutes 默认 buildValid 已带 false）无 builds PATCH
+    } finally {
+      expect(
+        m.calls.filter((c) => c.method === "PATCH" && /\/v1\/builds\//.test(c.url)),
+      ).toHaveLength(1);
+    }
+  });
+
   it("构建缺 processingState 字段 → 状态列表回退 UNKNOWN", async () => {
     const m = mockFetch(
       submitRoutes({ builds: { data: [{ type: "builds", id: "B1", attributes: {} }] } }),
@@ -658,7 +777,7 @@ describe("submit（ASC REST 提审）", () => {
     const noVersionBuild = {
       type: "builds",
       id: "B3",
-      attributes: { processingState: "VALID" },
+      attributes: { processingState: "VALID", usesNonExemptEncryption: false },
       relationships: { preReleaseVersion: { data: { type: "preReleaseVersions", id: "PR1" } } },
     };
     const m = mockFetch(submitRoutes({ builds: { data: [noVersionBuild], included: [pre] } }));
@@ -789,7 +908,9 @@ describe("submit（ASC REST 提审）", () => {
       await expect(ch.submit(makeCtx())).rejects.toThrow(
         /缺少商店描述（description），无法提审: en-US, L3/,
       );
-      expect(m.calls.find((c) => c.url.includes("relationships/builds"))).toBeUndefined();
+      expect(
+        m.calls.find((c) => c.method === "PATCH" && /\/v1\/appStoreVersions\/[^/]+$/.test(c.url)),
+      ).toBeUndefined();
       expect(m.calls.find((c) => c.url.includes("reviewSubmissions"))).toBeUndefined();
     } finally {
       m.restore();

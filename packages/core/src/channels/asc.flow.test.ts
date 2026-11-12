@@ -83,9 +83,9 @@ describe("asc flow: 同一渠道实例 altool stage → REST submit → status",
 
     const fetchMock = mockFetch([
       // 注意路由顺序：先匹配更长路径，避免 appStoreVersions 相互误命中
-      // reviewSubmissions 三步流：items 路由在前避免被基础路由先命中
+      // reviewSubmissions 三步流：条目创建走顶层 reviewSubmissionItems（/{id}/items 只读）
       {
-        match: "/items",
+        match: "/v1/reviewSubmissionItems",
         method: "POST",
         response: { json: { data: { type: "reviewSubmissionItems", id: "item-1" } } },
       },
@@ -133,7 +133,11 @@ describe("asc flow: 同一渠道实例 altool stage → REST submit → status",
               {
                 type: "builds",
                 id: BUILD_ID,
-                attributes: { version: "42", processingState: "VALID" },
+                attributes: {
+                  version: "42",
+                  processingState: "VALID",
+                  usesNonExemptEncryption: false,
+                },
                 relationships: {
                   preReleaseVersion: { data: { type: "preReleaseVersions", id: "pr-24" } },
                 },
@@ -181,10 +185,10 @@ describe("asc flow: 同一渠道实例 altool stage → REST submit → status",
       "/v1/apps?",
       "/v1/builds",
       "/v1/appStoreVersions", // POST 创建（版本列表 GET 命中 appStoreVersions? 路由在前）
-      "relationships/builds",
+      '"relationships":{"build":', // PATCH 版本本体，经 build（单数）关系绑构建
       "/v1/reviewSubmissions", // POST 创建 reviewSubmission
-      "/items", // POST 绑定版本到 submission item
-      '"action":"SUBMIT"', // PATCH 提交审核（以 body 特征定位）
+      "/v1/reviewSubmissionItems", // POST 条目（顶层资源，关联 submission+version）
+      '"submitted":true', // PATCH 确认提交（以 body 特征定位）
     ];
     let lastIdx = -1;
     for (const part of seq) {
@@ -215,9 +219,15 @@ describe("asc flow: 同一渠道实例 altool stage → REST submit → status",
       VERSION_STRING,
     );
     // 绑定的构建 id 来自 builds 查询结果
-    const bindBuild = ascCalls.find((c) => c.url.includes("relationships/builds"))!;
+    const bindBuild = ascCalls.find(
+      (c) => c.method === "PATCH" && /\/v1\/appStoreVersions\/[^/]+$/.test(c.url),
+    )!;
     expect(JSON.parse(bindBuild.body as string)).toEqual({
-      data: [{ type: "builds", id: BUILD_ID }],
+      data: {
+        type: "appStoreVersions",
+        id: VERSION_ID,
+        relationships: { build: { data: { type: "builds", id: BUILD_ID } } },
+      },
     });
     // reviewSubmissions 三步流断言：创建（关联 app）→ items（关联版本）→ PATCH SUBMIT
     const createSub = ascCalls.find(
@@ -226,14 +236,17 @@ describe("asc flow: 同一渠道实例 altool stage → REST submit → status",
     expect(JSON.parse(createSub.body as string).data.relationships).toEqual({
       app: { data: { type: "apps", id: APP_ID } },
     });
-    const addItem = ascCalls.find((c) => c.url.includes("/items") && c.method === "POST")!;
+    const addItem = ascCalls.find(
+      (c) => c.url.endsWith("/v1/reviewSubmissionItems") && c.method === "POST",
+    )!;
     expect(JSON.parse(addItem.body as string).data.relationships).toEqual({
+      reviewSubmission: { data: { type: "reviewSubmissions", id: SUBMISSION_ID } },
       appStoreVersion: { data: { type: "appStoreVersions", id: VERSION_ID } },
     });
     const patchSub = ascCalls.find(
       (c) => c.url.includes("/v1/reviewSubmissions/") && c.method === "PATCH",
     )!;
-    expect(JSON.parse(patchSub.body as string).data.attributes).toEqual({ action: "SUBMIT" });
+    expect(JSON.parse(patchSub.body as string).data.attributes).toEqual({ submitted: true });
     // iOS 默认手动发布（releaseType=MANUAL：审核通过后人工上架）
     expect(JSON.parse(createVersion.body as string).data.attributes.releaseType).toBe("MANUAL");
 
