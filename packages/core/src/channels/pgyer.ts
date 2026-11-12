@@ -5,6 +5,7 @@
 import path from "node:path";
 import { fileBlob } from "./shared/file-blob.js";
 import { sleep } from "../util.js";
+import { pollUntil, PollTimeoutError } from "./shared/poll.js";
 import type {
   Channel,
   ChannelCapabilities,
@@ -160,51 +161,57 @@ export class PgyerChannel implements Channel {
     if (!upRes.ok) throw new Error(`COS 上传失败 HTTP ${upRes.status}`);
 
     ctx.emit({ type: "phase", phase: "wait", message: "等待蒲公英处理" });
-    const deadline = Date.now() + 15 * 60 * 1000;
     let consecutiveErrors = 0;
-    while (Date.now() < deadline) {
-      await sleep(3000);
-      let info: BuildInfoResp;
-      try {
-        info = await pgyerPostFailover<BuildInfoResp>(ctx, "/apiv2/app/buildInfo", {
-          _api_key: apiKey,
-          buildKey,
-        });
-        consecutiveErrors = 0;
-      } catch (e) {
-        consecutiveErrors++;
-        const lastErr = e instanceof Error ? e.message : String(e);
-        ctx.emit({
-          type: "warn",
-          message: `buildInfo 状态查询失败（连续 ${consecutiveErrors}/10）: ${lastErr}`,
-        });
-        if (consecutiveErrors >= 10)
-          return {
-            ok: false,
-            error: `蒲公英状态查询持续失败（包已上传，可到控制台确认）: ${lastErr}`,
-          };
-        continue;
-      }
-      if (info.code === 0 && info.data?.buildShortcutUrl) {
-        ctx.emit({
-          type: "phase",
-          phase: "done",
-          message: `https://www.pgyer.com/${info.data.buildShortcutUrl}`,
-        });
-        return { ok: true, ref: buildKey };
-      }
-      // 1247 = buildKey 尚未就绪（COS 上传仍在入库）：视为处理中继续轮询（对拍 apkgo pgyer.go）；
-      // 其余非 0 码为明确失败，不再按 message 文案正则判败（会误杀“处理中”类文案）
-      if (info.code !== 0 && info.code !== 1247) {
-        return { ok: false, error: `蒲公英处理失败 ${info.code}: ${info.message ?? ""}` };
-      }
-      // code===0 但短链未出，或 1247 入库中 → 继续轮询
+    try {
+      await pollUntil({
+        label: "蒲公英处理",
+        intervalMs: 0, // 先 sleep 后查语义自理
+        timeoutMs: 15 * 60 * 1000,
+        attempt: async () => {
+          await sleep(3000);
+          let info: BuildInfoResp;
+          try {
+            info = await pgyerPostFailover<BuildInfoResp>(ctx, "/apiv2/app/buildInfo", {
+              _api_key: apiKey,
+              buildKey,
+            });
+            consecutiveErrors = 0;
+          } catch (e) {
+            consecutiveErrors++;
+            const lastErr = e instanceof Error ? e.message : String(e);
+            ctx.emit({
+              type: "warn",
+              message: `buildInfo 状态查询失败（连续 ${consecutiveErrors}/10）: ${lastErr}`,
+            });
+            if (consecutiveErrors >= 10)
+              throw new Error(`蒲公英状态查询持续失败（包已上传，可到控制台确认）: ${lastErr}`);
+            return { done: false as const };
+          }
+          if (info.code === 0 && info.data?.buildShortcutUrl) {
+            ctx.emit({
+              type: "phase",
+              phase: "done",
+              message: `https://www.pgyer.com/${info.data.buildShortcutUrl}`,
+            });
+            return { done: true as const, value: buildKey };
+          }
+          // 1247 = buildKey 尚未就绪（COS 仍在入库）：处理中继续轮询；其余非 0 码为明确失败
+          if (info.code !== 0 && info.code !== 1247) {
+            throw new Error(`蒲公英处理失败 ${info.code}: ${info.message ?? ""}`);
+          }
+          return { done: false as const };
+        },
+      });
+      return { ok: true, ref: buildKey };
+    } catch (e) {
+      if (e instanceof PollTimeoutError)
+        return {
+          ok: false,
+          error:
+            "蒲公英 15 分钟内未完成处理（大包云端处理慢属正常，可到 pgyer.com 控制台确认实际状态）",
+        };
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
-    return {
-      ok: false,
-      error:
-        "蒲公英 15 分钟内未完成处理（大包云端处理慢属正常，可到 pgyer.com 控制台确认实际状态）",
-    };
   }
 
   async submit(): Promise<SubmitResult> {

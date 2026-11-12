@@ -61,7 +61,7 @@ describe("ProjectConfigSchema 平台段", () => {
     expect(cfg.android?.pkgName).toBeUndefined();
     expect(Object.keys(cfg.android?.stores ?? {})).toEqual(["huawei", "yyb"]);
     expect(cfg.harmony?.bundleName).toBeUndefined();
-    expect(cfg.ios?.scheme).toBeUndefined();
+    expect(cfg.ios?.bundleId).toBeUndefined();
   });
 });
 
@@ -105,6 +105,16 @@ describe("ProjectConfigSchema android.stores 集成", () => {
   });
 });
 
+describe("ProjectConfigSchema.concurrency（项目级渠道并发）", () => {
+  it("≥1 整数即可（无上限：9/20 合法，worker 池自限渠道数）；0/非整数被拒；缺省 undefined", () => {
+    expect(ProjectConfigSchema.parse({ concurrency: 7 }).concurrency).toBe(7);
+    expect(ProjectConfigSchema.parse({ concurrency: 20 }).concurrency).toBe(20);
+    expect(ProjectConfigSchema.parse({}).concurrency).toBeUndefined();
+    expect(ProjectConfigSchema.safeParse({ concurrency: 0 }).success).toBe(false);
+    expect(ProjectConfigSchema.safeParse({ concurrency: 1.5 }).success).toBe(false);
+  });
+});
+
 describe("BetaConfigSchema（beta 多渠道）", () => {
   it("全空 → beta 可整体缺省，各渠道缺省值正确（pgyer.platforms=['android']、agc submit=false、testType=3）", () => {
     const config = ProjectConfigSchema.parse({});
@@ -115,6 +125,14 @@ describe("BetaConfigSchema（beta 多渠道）", () => {
     expect(beta.agc?.submit).toBe(false);
     expect(beta.agc?.testType).toBe(3);
     expect(beta.testflight).toBeUndefined();
+  });
+
+  it("testType 语义枚举（invite/open）与 AGC 原始枚举（3/4）互通，输出恒归一为 3/4", () => {
+    const norm = (v: unknown) => BetaConfigSchema.parse({ agc: { testType: v } }).agc?.testType;
+    expect(norm("invite")).toBe(3);
+    expect(norm("open")).toBe(4);
+    expect(norm(3)).toBe(3);
+    expect(norm(4)).toBe(4);
   });
 
   it("完整配置解析", () => {

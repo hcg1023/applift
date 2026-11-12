@@ -46,21 +46,31 @@ export function setProjectProfile(
 }
 
 /** 生效 profile 的来源（诊断展示用；--profile 旗标在调用方，最高优先级，不经此函数） */
-export type ProfileSource = "applift use（个人）" | "项目配置 profile（团队默认）" | "默认 default";
+export type ProfileSource =
+  | "applift use（个人）"
+  | "项目配置 profile（团队默认）"
+  | "全局 defaultProfile"
+  | "默认 default";
 
 /**
- * 解析项目生效 profile 及其来源：projects.json 个人选择 > 项目配置 profile（团队默认）> 'default'。
+ * 解析项目生效 profile 及其来源：
+ * projects.json 个人选择 > 项目配置 profile（团队默认）> 全局 defaultProfile（config.toml）> 'default'。
  * CLI 的 --profile 旗标在调用方以 `opts.profile ?? ...` 再盖一层（最高优先级，来源即"旗标"）。
+ * globalDefaultProfile 由调用方从 loadGlobalConfig().config.defaultProfile 传入——本模块不读全局
+ * 配置文件（层间依赖保持单向：profile-map 只管映射文件，不感知 config.toml 的加载/容错）。
  */
 export function resolveProfileSource(
   cwd: string,
   projectCfgProfile?: string,
   filePath = PROJECTS_MAP_PATH,
+  globalDefaultProfile?: string,
 ): { profile: string; source: ProfileSource } {
   const mapped = loadProjectProfileMap(filePath)[path.resolve(cwd)];
   if (mapped) return { profile: mapped, source: "applift use（个人）" };
   if (projectCfgProfile)
     return { profile: projectCfgProfile, source: "项目配置 profile（团队默认）" };
+  if (globalDefaultProfile && globalDefaultProfile !== "default")
+    return { profile: globalDefaultProfile, source: "全局 defaultProfile" };
   return { profile: "default", source: "默认 default" };
 }
 
@@ -69,6 +79,7 @@ export function resolveProfileFor(
   cwd: string,
   projectCfgProfile?: string,
   filePath = PROJECTS_MAP_PATH,
+  globalDefaultProfile?: string,
 ): string {
-  return resolveProfileSource(cwd, projectCfgProfile, filePath).profile;
+  return resolveProfileSource(cwd, projectCfgProfile, filePath, globalDefaultProfile).profile;
 }

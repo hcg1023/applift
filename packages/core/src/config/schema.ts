@@ -85,8 +85,11 @@ export const BetaConfigSchema = z.object({
       submit: z.boolean().default(false),
       /** 测试群组名（submit 时按名查 groupId 绑定；匹配不到报错提示到控制台建组） */
       group: z.string().optional(),
-      /** 3=邀请测试（默认）4=公开测试 */
-      testType: z.union([z.literal(3), z.literal(4)]).default(3),
+      /** 测试类型："invite"（邀请测试，默认）| "open"（公开测试）；兼容 AGC 原始枚举 3/4 */
+      testType: z
+        .union([z.literal("invite"), z.literal("open"), z.literal(3), z.literal(4)])
+        .transform((v) => (v === "invite" || v === 3 ? 3 : 4))
+        .default(3),
       /**
        * 隐私政策 URL（提审必填：AGC Testing API 校验 extInfo.privacyPolicy，
        * 控制台对应版本创建时的「自定义协议」步骤；缺失提审报 204144692
@@ -183,11 +186,23 @@ export const ProjectConfigSchema = z.object({
     .optional(),
   ios: z
     .object({
-      /** 缺省自动推导（工程 scheme 探测） */
-      scheme: z.string().optional(),
-      workspace: z.string().optional(),
       /** App Store Connect 按 bundleId 定位 App（asc 渠道 submit 用） */
       bundleId: z.string().optional(),
+      /**
+       * App Store 上架方式："auto"（默认，审核通过自动上架 releaseType=AFTER_APPROVAL）
+       * | "manual"（审核通过后手动上架 MANUAL）。--release-mode 单次覆盖；定时上架走 --release-time。
+       * 官方文档确认首版亦可自动发布（唯一强制手动场景=预购且从未上架，2026-11-11 核查）。
+       * 命名与旗标/ctx 对齐（releaseMode 三处同名；0.x 窗口自 ios.release 改名，无存量迁移）。
+       */
+      releaseMode: z.enum(["auto", "manual"]).default("auto"),
+      /** 出口合规代答：仅当 build 的 usesNonExemptEncryption 未声明（null）时 PATCH 代答；缺省不代答（保持提示） */
+      exportCompliance: z.object({ usesNonExemptEncryption: z.boolean() }).optional(),
+      /**
+       * 分阶段发布（phased release）：审核通过后 7 天内 1%→2%→5%→10%→20%→50%→100% 自动更新灰度
+       * （仅影响自动更新用户，手动更新不受限）。官方限制：仅后续版本可用
+       * （"not available for the first version of an app"）——首版提交时自动跳过并告警。
+       */
+      phasedRelease: z.boolean().default(false),
     })
     .optional(),
   /** 产物目录覆盖（非标准工程）：每平台 glob 数组，优先于框架内置 pattern（桌面平台 + 插件自报平台经 catchall 收） */
@@ -206,6 +221,11 @@ export const ProjectConfigSchema = z.object({
   version: VersionConfigSchema.optional(),
   /** 内测分发（beta 无平台参数时的多渠道并行配置） */
   beta: BetaConfigSchema.optional(),
+  /**
+   * 渠道并发数（≥1 整数，无上限——runLimited 的 worker 池自限于渠道数，配大了也无害）。
+   * 项目属性（由渠道数决定，如七安卓渠道全开需 ≥7）。优先级：此处 > 全局 > 默认 4
+   */
+  concurrency: z.number().int().min(1).optional(),
 });
 
 export type BetaConfig = z.infer<typeof BetaConfigSchema>;
@@ -214,10 +234,8 @@ export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 /** 全局行为配置（~/.applift/config.toml） */
 export const GlobalConfigSchema = z.object({
   defaultProfile: z.string().default("default"),
-  /** 渠道并发数 */
-  concurrency: z.number().int().min(1).max(8).default(4),
-  /** 上传超时（毫秒） */
-  uploadTimeoutMs: z.number().default(900_000),
+  /** 渠道并发数（≥1 整数，无上限——worker 池自限于渠道数；项目级 applift.config.ts concurrency 优先于此） */
+  concurrency: z.number().int().min(1).default(4),
   /** CI 无人值守豁免确认（等价把 L3 闸门前置到 CI 审批） */
   assumeYes: z.boolean().default(false),
 });

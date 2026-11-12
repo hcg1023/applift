@@ -47,10 +47,12 @@ describe("makeContext（P2-2 透传）", () => {
   it("extra 扩展字段透传到 ChannelContext，缺省不产生 undefined 以外的值", () => {
     const ctx = makeContext(stubChannel, { k: "v" }, { appId: "1" }, "/tmp/a.apk", "更新说明", {
       releaseTime: "2027-01-01T00:00:00Z",
+      releaseMode: "manual",
       remark: "提审备注",
       installPassword: "pw123",
     });
     expect(ctx.releaseTime).toBe("2027-01-01T00:00:00Z");
+    expect(ctx.releaseMode).toBe("manual");
     expect(ctx.remark).toBe("提审备注");
     expect(ctx.installPassword).toBe("pw123");
     expect(ctx.updateDescription).toBe("更新说明");
@@ -60,6 +62,7 @@ describe("makeContext（P2-2 透传）", () => {
 
     const bare = makeContext(stubChannel, {}, {}, "/tmp/a.apk", undefined);
     expect(bare.releaseTime).toBeUndefined();
+    expect(bare.releaseMode).toBeUndefined();
     expect(bare.remark).toBeUndefined();
     expect(bare.installPassword).toBeUndefined();
     expect(bare.updateDescription).toBeUndefined();
@@ -89,13 +92,47 @@ describe("makeContext emit 脱敏（SEC-002）", () => {
   });
 });
 
+describe("makeContext emit progress 渲染（长任务进度可见性）", () => {
+  it("progress 事件写 stderr（脱敏）——ASC 等构建/AGC 编译轮询不再静默", () => {
+    const ctx = makeContext(stubChannel, {}, {}, "/tmp/a.apk", undefined);
+    const writes: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((b) => {
+      writes.push(String(b));
+      return true;
+    });
+    try {
+      ctx.emit?.({ type: "progress", detail: "构建处理中（已等 5 分钟，第 10 次探测）" });
+      ctx.emit?.({ type: "progress", detail: "COS 上传完成 url?token=abc123secret 已入库" });
+    } finally {
+      spy.mockRestore();
+    }
+    const text = writes.join("");
+    expect(text).toContain("构建处理中（已等 5 分钟，第 10 次探测）");
+    expect(text).toContain("[REDACTED]");
+    expect(text).not.toContain("abc123secret");
+  });
+});
+
 describe("CLI 旗标面（P2-2 入口）", () => {
   it("release 暴露 --release-time/--remark；beta 暴露 --install-password", () => {
     const release = program.commands.find((c) => c.name() === "release");
     const beta = program.commands.find((c) => c.name() === "beta");
     expect(release?.options.map((o) => o.flags)).toContain("--release-time <rfc3339>");
+    expect(release?.options.map((o) => o.flags)).toContain("--release-mode <mode>");
     expect(release?.options.map((o) => o.flags)).toContain("--remark <text>");
     expect(beta?.options.map((o) => o.flags)).toContain("--install-password <pwd>");
+  });
+
+  it("--release-mode 非法值 / 与 --release-time 同给 → 入口报错", async () => {
+    await expect(
+      program.parseAsync(["release", "ios", "--release-mode", "whenever"], { from: "user" }),
+    ).rejects.toThrow(/--release-mode 只支持 auto \| manual/);
+    await expect(
+      program.parseAsync(
+        ["release", "ios", "--release-mode", "manual", "--release-time", "2027-01-01T00:00:00Z"],
+        { from: "user" },
+      ),
+    ).rejects.toThrow(/互斥/);
   });
 });
 
@@ -119,13 +156,13 @@ describe("release --dry-run 集成（P2-2 透传 / P2-5 钩子配置 / P3-7 警�
         "export default {",
         "  plugins: [rnFramework(), {",
         "    name: 'capture',",
-        "    'config:resolved': (config) => ({ ...config, android: { pkgName: 'com.demo', stores: { stub: { appId: 'from-hook' } } } }),",
+        "    'config:resolved': (config) => ({ ...config, android: { pkgName: 'com.demo', stores: { stub: { appId: 'from-hook' } } }, ios: { releaseMode: 'manual' } }),",
         "    'channel:register': (registry) => registry.register({",
         "      id: 'stub', label: '桩渠道',",
         "      capabilities: { stage: true, submit: true, scheduled: true, status: false },",
         "      plan: async (ctx) => {",
         "        globalThis.__appliftCaptured.push(ctx);",
-        "        return { channel: 'stub', platform: 'android', artifactVersion: '1.0.0', action: 'stage-only', afterApproval: ctx.releaseTime ? 'scheduled' : 'auto-publish' };",
+        "        return { channel: 'stub', platform: 'android', artifactVersion: '1.0.0', action: 'stage-only', afterApproval: ctx.releaseTime ? 'scheduled' : (ctx.releaseMode === 'manual' ? 'manual' : 'auto-publish') };",
         "      },",
         "      stage: async () => ({ ok: true }),",
         "      submit: async () => ({ ok: true }),",
@@ -191,6 +228,173 @@ describe("release --dry-run 集成（P2-2 透传 / P2-5 钩子配置 / P3-7 警�
     };
     expect(json.errors).toEqual({});
     expect(json.plans[0]?.afterApproval).toBe("scheduled");
+  });
+
+  it("ios.release 配置解析：旗标缺省时 ctx.releaseMode 取配置值", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-cli-ios-"));
+    const captured: ChannelContext[] = [];
+    const slot = globalThis as { __appliftCaptured2?: ChannelContext[] };
+    fs.writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({ name: "guard-demo-ios", dependencies: { "react-native": "0.84.0" } }),
+    );
+    slot.__appliftCaptured2 = captured;
+    fs.writeFileSync(
+      path.join(dir, "applift.config.ts"),
+      [
+        "import { rnFramework } from '@applift/core';",
+        "export default {",
+        "  ios: { releaseMode: 'manual' },",
+        "  plugins: [rnFramework(), {",
+        "    name: 'capture-ios',",
+        "    'channel:register': (registry) => {",
+        "      if (registry.get('stub-ios')) return;",
+        "      registry.register({",
+        "        id: 'stub-ios', label: '桩渠道(iOS)',",
+        "        capabilities: { stage: true, submit: true, scheduled: true, status: false },",
+        "        plan: async (ctx) => {",
+        "          globalThis.__appliftCaptured2.push(ctx);",
+        "          return { channel: 'stub-ios', platform: 'ios', artifactVersion: '1.0.0', action: 'stage-only', afterApproval: ctx.releaseMode === 'manual' ? 'manual' : 'auto-publish' };",
+        "        },",
+        "        stage: async () => ({ ok: true }),",
+        "        submit: async () => ({ ok: true }),",
+        "        status: async () => { throw new Error('not supported'); },",
+        "      });",
+        "    },",
+        "  }],",
+        "};",
+      ].join("\n"),
+    );
+    const stdoutWrites: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((b) => {
+      stdoutWrites.push(String(b));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await program.parseAsync(
+        ["release", "ios", "--cwd", dir, "--stores", "stub-ios", "--dry-run", "--json"],
+        { from: "user" },
+      );
+    } finally {
+      vi.restoreAllMocks();
+      delete slot.__appliftCaptured2;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    expect(captured.length).toBe(1);
+    expect(captured[0]?.releaseMode).toBe("manual");
+    const json = JSON.parse(stdoutWrites.join("")) as { plans: Array<{ afterApproval: string }> };
+    expect(json.plans[0]?.afterApproval).toBe("manual");
+  });
+
+  it("ios.exportCompliance 配置解析：ctx.exportCompliance 透传给渠道（旗标面缺省取配置）", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-cli-cmp-"));
+    const captured: ChannelContext[] = [];
+    const slot = globalThis as { __appliftCaptured3?: ChannelContext[] };
+    fs.writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({ name: "guard-demo-cmp", dependencies: { "react-native": "0.84.0" } }),
+    );
+    slot.__appliftCaptured3 = captured;
+    fs.writeFileSync(
+      path.join(dir, "applift.config.ts"),
+      [
+        "import { rnFramework } from '@applift/core';",
+        "export default {",
+        "  ios: { exportCompliance: { usesNonExemptEncryption: false } },",
+        "  plugins: [rnFramework(), {",
+        "    name: 'capture-cmp',",
+        "    'channel:register': (registry) => {",
+        "      if (registry.get('stub-cmp')) return;",
+        "      registry.register({",
+        "        id: 'stub-cmp', label: '桩渠道(CMP)',",
+        "        capabilities: { stage: true, submit: true, scheduled: true, status: false },",
+        "        plan: async (ctx) => {",
+        "          globalThis.__appliftCaptured3.push(ctx);",
+        "          return { channel: 'stub-cmp', platform: 'ios', artifactVersion: '1.0.0', action: 'stage-only', afterApproval: 'auto-publish' };",
+        "        },",
+        "        stage: async () => ({ ok: true }),",
+        "        submit: async () => ({ ok: true }),",
+        "        status: async () => { throw new Error('not supported'); },",
+        "      });",
+        "    },",
+        "  }],",
+        "};",
+      ].join("\n"),
+    );
+    const stdoutWrites: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((b) => {
+      stdoutWrites.push(String(b));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await program.parseAsync(
+        ["release", "ios", "--cwd", dir, "--stores", "stub-cmp", "--dry-run", "--json"],
+        { from: "user" },
+      );
+    } finally {
+      vi.restoreAllMocks();
+      delete slot.__appliftCaptured3;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    expect(captured.length).toBe(1);
+    expect(captured[0]?.exportCompliance).toEqual({ usesNonExemptEncryption: false });
+  });
+
+  it("ios.phasedRelease 配置解析：ctx.phasedRelease 透传给渠道", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-cli-phased-"));
+    const captured: ChannelContext[] = [];
+    const slot = globalThis as { __appliftCaptured4?: ChannelContext[] };
+    fs.writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({ name: "guard-demo-phased", dependencies: { "react-native": "0.84.0" } }),
+    );
+    slot.__appliftCaptured4 = captured;
+    fs.writeFileSync(
+      path.join(dir, "applift.config.ts"),
+      [
+        "import { rnFramework } from '@applift/core';",
+        "export default {",
+        "  ios: { phasedRelease: true },",
+        "  plugins: [rnFramework(), {",
+        "    name: 'capture-phased',",
+        "    'channel:register': (registry) => {",
+        "      if (registry.get('stub-phased')) return;",
+        "      registry.register({",
+        "        id: 'stub-phased', label: '桩渠道(PHASED)',",
+        "        capabilities: { stage: true, submit: true, scheduled: true, status: false },",
+        "        plan: async (ctx) => {",
+        "          globalThis.__appliftCaptured4.push(ctx);",
+        "          return { channel: 'stub-phased', platform: 'ios', artifactVersion: '1.0.0', action: 'stage-only', afterApproval: 'auto-publish' };",
+        "        },",
+        "        stage: async () => ({ ok: true }),",
+        "        submit: async () => ({ ok: true }),",
+        "        status: async () => { throw new Error('not supported'); },",
+        "      });",
+        "    },",
+        "  }],",
+        "};",
+      ].join("\n"),
+    );
+    const stdoutWrites: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((b) => {
+      stdoutWrites.push(String(b));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await program.parseAsync(
+        ["release", "ios", "--cwd", dir, "--stores", "stub-phased", "--dry-run", "--json"],
+        { from: "user" },
+      );
+    } finally {
+      vi.restoreAllMocks();
+      delete slot.__appliftCaptured4;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    expect(captured.length).toBe(1);
+    expect(captured[0]?.phasedRelease).toBe(true);
   });
 });
 

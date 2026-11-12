@@ -153,3 +153,64 @@ describe("命令级 e2e：beta <platform> 快捷路径触发 stage:after（基�
     }
   });
 });
+
+describe("命令级 e2e：beta.agc.cleanup=false 接线（CLI → target.cleanup → 渠道）", () => {
+  const slot = globalThis as unknown as { __cleanupSeen?: Array<{ cleanup?: string }> };
+
+  it("beta harmony：config cleanup:false → ctx.target.cleanup='false'（渠道跳过清理的契约键）", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "applift-cu-home-"));
+    const prevHome = process.env.APPLIFT_HOME;
+    process.env.APPLIFT_HOME = home;
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(
+      path.join(home, "credentials.json"),
+      `{"profiles":{"default":{"AGC_CLIENT_ID":"id","AGC_CLIENT_SECRET":"{{SECRET_9xk2mvbp}}"}}}`,
+    );
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-cu-proj-"));
+    fs.writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({ name: "cu-demo", dependencies: { "react-native": "0.84.0" } }),
+    );
+    fs.writeFileSync(
+      path.join(dir, "applift.config.ts"),
+      [
+        "// 桩配置：monkey-patch 真实 agc 单例捕获 ctx.target（F1 接线回归：cleanup 逃生口）",
+        "import { rnFramework } from '@applift/core';",
+        "export default {",
+        "  beta: { agc: { cleanup: false } },",
+        "  plugins: [rnFramework(), {",
+        "    name: 'cu-e2e-stub',",
+        "    'channel:register': (registry) => {",
+        "      const agc = registry.get('agc');",
+        "      if (!agc || agc.__cuStubbed) return;",
+        "      agc.__cuStubbed = true;",
+        "      agc.stage = async (ctx) => {",
+        "        globalThis.__cleanupSeen = [...(globalThis.__cleanupSeen ?? []), { cleanup: ctx.target.cleanup }];",
+        "        return { ok: true, ref: 'cu-stub-ref' };",
+        "      };",
+        "    },",
+        "  }],",
+        "};",
+      ].join("\n"),
+    );
+    const hap = path.join(dir, "demo-internaltesting.hap");
+    fs.writeFileSync(hap, "hap-bytes");
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    slot.__cleanupSeen = [];
+    try {
+      // 动态 import（例外）：APPLIFT_HOME 必须在 CLI 模块加载前就位，静态 import 会被提升读到真实 home
+      const { program } = await import("./index.js");
+      await program.parseAsync(["beta", "harmony", "--cwd", dir, "--artifact", hap, "--yes"], {
+        from: "user",
+      });
+      expect(slot.__cleanupSeen).toEqual([{ cleanup: "false" }]);
+    } finally {
+      vi.restoreAllMocks();
+      delete slot.__cleanupSeen;
+      fs.rmSync(dir, { recursive: true, force: true });
+      if (prevHome === undefined) delete process.env.APPLIFT_HOME;
+      else process.env.APPLIFT_HOME = prevHome;
+    }
+  });
+});

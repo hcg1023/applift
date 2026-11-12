@@ -19,10 +19,72 @@ import type { ChannelContext } from "../channel.js";
 import { AscChannel } from "./asc.js";
 import { mockFetch } from "../test-utils.js";
 
-vi.mock("node:child_process", () => ({ spawnSync: vi.fn() }));
-import { spawnSync } from "node:child_process";
+vi.mock("node:child_process", () => ({ spawnSync: vi.fn(), spawn: vi.fn() }));
+vi.mock("../version/artifact.js", () => ({ readArtifactVersion: vi.fn() }));
+import { readArtifactVersion } from "../version/artifact.js";
+vi.mocked(readArtifactVersion).mockReturnValue(undefined);
+import { EventEmitter } from "node:events";
+import { spawn, spawnSync } from "node:child_process";
 
-const spawnSyncMock = vi.mocked(spawnSync);
+const spawnMock = vi.mocked(spawn);
+// asc.test 同款 facade：上传引擎异步化（spawnAsyncCapture）后，spawnSync 风格断言零改动
+let nextResult:
+  | {
+      status: number | null;
+      stdout?: string;
+      stderr?: string;
+      error?: Error;
+    }
+  | undefined;
+const spawnCalls: Array<[string, string[], Record<string, unknown>]> = [];
+const spawnSyncMock = {
+  mockReturnValue(r: typeof nextResult) {
+    nextResult = r;
+  },
+  mockReset() {
+    nextResult = undefined;
+    spawnCalls.length = 0;
+  },
+  get mock() {
+    return { calls: spawnCalls };
+  },
+};
+spawnMock.mockImplementation(((cmd: string, args: string[], opts: Record<string, unknown>) => {
+  spawnCalls.push([cmd, args, opts]);
+  const mkStream = () => {
+    const handlers: Record<string, Array<(v?: string) => void>> = {};
+    return {
+      setEncoding: () => {},
+      on: (ev: string, fn: (v?: string) => void) => {
+        (handlers[ev] ??= []).push(fn);
+      },
+      emitData: (s: string) => (handlers.data ?? []).forEach((f) => f(s)),
+      emitEnd: () => (handlers.end ?? []).forEach((f) => f()),
+    };
+  };
+  const stdout = mkStream();
+  const stderr = mkStream();
+  const em = new EventEmitter() as EventEmitter & {
+    stdout: typeof stdout;
+    stderr: typeof stderr;
+  };
+  em.stdout = stdout;
+  em.stderr = stderr;
+  const r = nextResult;
+  queueMicrotask(() => {
+    if (r?.error) {
+      em.emit("error", r.error);
+      return;
+    }
+    if (r?.stdout) stdout.emitData(r.stdout);
+    if (r?.stderr) stderr.emitData(r.stderr);
+    stdout.emitEnd();
+    stderr.emitEnd();
+    em.emit("close", r === undefined ? 0 : r.status);
+  });
+  return em;
+}) as never);
+void spawnSync;
 const ASC_API = "api.appstoreconnect.apple.com";
 
 const APP_ID = "asc-app-1";
@@ -83,7 +145,13 @@ describe("asc flow: 同一渠道实例 altool stage → REST submit → status",
 
     const fetchMock = mockFetch([
       // 注意路由顺序：先匹配更长路径，避免 appStoreVersions 相互误命中
-      // reviewSubmissions 三步流：条目创建走顶层 reviewSubmissionItems（/{id}/items 只读）
+      // 提审三查：GET reviewSubmissions（无进行中提交 → 走 POST 创建）；
+      // 条目创建走顶层 reviewSubmissionItems（/{id}/items 只读，main 实测）
+      {
+        match: "reviewSubmissions",
+        method: "GET",
+        response: { json: { data: [], included: [] } },
+      },
       {
         match: "/v1/reviewSubmissionItems",
         method: "POST",
@@ -166,9 +234,10 @@ describe("asc flow: 同一渠道实例 altool stage → REST submit → status",
     // ---------- stage：altool 上传（TestFlight） ----------
     const stage = await channel.stage(ctx);
     expect(stage).toEqual({ ok: true });
-    // altool 参数完整：上传 ipa + 同一 KeyID/Issuer
-    const altoolArgs = spawnSyncMock.mock.calls[0]?.[1];
-    expect(spawnSyncMock.mock.calls[0]?.[0]).toBe("xcrun");
+    // stage 预检先 spawn unzip 读 Info.plist（mock 输出无版本 key → 读不出走兜底），altool 是 xcrun 调用
+    const altoolCall = spawnSyncMock.mock.calls.find((c) => c[0] === "xcrun");
+    const altoolArgs = altoolCall?.[1];
+    expect(altoolCall?.[0]).toBe("xcrun");
     expect(altoolArgs).toContain("--upload-app");
     expect(altoolArgs).toContain(ipaPath);
     expect(altoolArgs).toContain("--apiKey");
@@ -247,8 +316,10 @@ describe("asc flow: 同一渠道实例 altool stage → REST submit → status",
       (c) => c.url.includes("/v1/reviewSubmissions/") && c.method === "PATCH",
     )!;
     expect(JSON.parse(patchSub.body as string).data.attributes).toEqual({ submitted: true });
-    // iOS 默认手动发布（releaseType=MANUAL：审核通过后人工上架）
-    expect(JSON.parse(createVersion.body as string).data.attributes.releaseType).toBe("MANUAL");
+    // iOS 默认审核通过自动上架（releaseType=AFTER_APPROVAL；--release-mode manual 改手动，2026-11-11）
+    expect(JSON.parse(createVersion.body as string).data.attributes.releaseType).toBe(
+      "AFTER_APPROVAL",
+    );
 
     // ---------- status：appVersionState 映射 ReviewStatus（重新 mock 审核中状态） ----------
     fetchMock.restore();
@@ -290,6 +361,12 @@ describe("asc flow: 同一渠道实例 altool stage → REST submit → status",
       stderr: "",
     } as never);
     const fetchMock = mockFetch([
+      // 提审三查：GET reviewSubmissions（无进行中提交 → 走 POST 创建）
+      {
+        match: "reviewSubmissions",
+        method: "GET",
+        response: { json: { data: [], included: [] } },
+      },
       { match: "reviewSubmissions", method: "POST", response: { json: { data: [] } } }, // 无 id
       { match: "relationships/builds", response: { json: { data: [] } } },
       // 提审前预检路由（该用例预检通过后才走到 reviewSubmissions 失败点）

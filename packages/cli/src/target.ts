@@ -21,9 +21,16 @@ export function resolveChannelTarget(
     };
   }
   if (id === "asc") {
+    // exportCompliance（结构化）/ phasedRelease（布尔）/ releaseMode（走 ctx.releaseMode）不进 target
+    const {
+      exportCompliance: _exportCompliance,
+      phasedRelease: _phasedRelease,
+      releaseMode: _releaseMode,
+      ...iosCfg
+    } = config.ios ?? {};
     return {
       ...(detected.iosBundleId ? { bundleId: detected.iosBundleId } : {}),
-      ...config.ios,
+      ...iosCfg,
       ...store,
     };
   }

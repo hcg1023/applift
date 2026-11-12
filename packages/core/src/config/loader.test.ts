@@ -153,16 +153,12 @@ describe("loadGlobalConfig 容错", () => {
 
   it("有效 TOML 全字段解析", () => {
     const p = tmpFile("valid");
-    fs.writeFileSync(
-      p,
-      'defaultProfile = "company-b"\nconcurrency = 2\nuploadTimeoutMs = 1000\nassumeYes = true\n',
-    );
+    fs.writeFileSync(p, 'defaultProfile = "company-b"\nconcurrency = 2\nassumeYes = true\n');
     try {
       const { config: cfg } = loadGlobalConfig(p);
       expect(cfg).toEqual({
         defaultProfile: "company-b",
         concurrency: 2,
-        uploadTimeoutMs: 1000,
         assumeYes: true,
       });
     } finally {

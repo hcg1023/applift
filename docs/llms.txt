@@ -33,13 +33,14 @@
 - **退出码**：0=全部成功，1=有失败（逐渠道错误在 stderr/JSON）；listing 任一渠道失败 exit 1；status 中"暂未接入状态查询"的渠道不计入退出码
 - **--json**：stdout 输出结构化 JSON（stage 模式返回 `{stage:[...]}`，每项含 `ref`（渠道草稿引用，无则 null）；submit 模式返回 `{submit:[...]}`，每项含 `ref`（提审后的渠道引用，无则 null）；status 返回 `{status:[...]}`；dry-run 返回 `{dryRun,plans,errors}`）；渠道进度与人类渲染走 stderr
 - **错误格式**：`<渠道> 缺少 <KEY>（<获取指引>）`——可直接把指引转述给用户
-- **两段式安全**：stage 只传草稿；submit = 提审 = 审核通过自动上架（iOS 除外，默认 manual）
+- **两段式安全**：stage 只传草稿；submit = 提审 = 审核通过自动上架（iOS 默认亦自动 `ios.release:"auto"`；`ios.release:"manual"` 或 `--release-mode manual` 改手动；`--release-time` 定时上架，与 `--release-mode` 互斥）
 
 ## 配置模型
 
 - 优先级公理（所有键同链，高→低）：CLI flag > `APPLIFT_*` env > 个人（applift use → ~/.applift/projects.json）> 项目（.applift/ + applift.config.ts）> 全局（~/.applift）；`applift doctor` 打印生效值与来源
 - 凭据：两处 credentials.json 同形状 `{ profiles: { <名>: { KEY: 值 } } }`；项目逐键覆盖全局同名 profile；env 取值链 APPLIFT_<KEY> > 裸 KEY（仅 knownKeys 内）> 文件
 - 项目：`applift.config.ts`（逐层向上查找；stores 支持 ['oppo'] 数组 / {huawei:'appId'} 字符串 / 对象三种写法；包名自动推导，artifacts 仅非标工程需要；plugins 插件，导入自 `@applift/cli/plugins` 或 `@applift/core/plugins`，均带完整类型）。发布命令（beta/release）必须声明 framework 插件（rnFramework 等）；只读命令未声明时按全部标准位置探测
+- iOS（asc 渠道）：`ios.bundleId`（按 bundleId 定位 App）/ `ios.releaseMode: "auto"|"manual"`（默认 auto 审核通过自动上架；--release-mode 单次覆盖）/ `ios.exportCompliance.usesNonExemptEncryption`（可选代答，仅 build 未声明 null 时写入）/ `ios.phasedRelease`（默认 false；7 天分阶段灰度，官方首版限制自动跳过并告警）
 - 插件：vite 风格钩子（plan:before/stage:before/submit:before 可拦截可修改；channel:register/framework:register/update:register 分别注册渠道/框架/热更 provider）
 
 ## 扩展点
