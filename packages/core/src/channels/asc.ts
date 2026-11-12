@@ -14,7 +14,7 @@
  *   凭据 ASC_TRANSPORTER_PATH 可显式指定 iTMSTransporter 路径（校验存在性）；
  *   缺省探测默认安装路径，不存在则回退 altool。
  *   约定 p8 私钥：凭据 ASC_P8_PATH（支持 ~ 前缀）或 ~/.applift/private_keys/AuthKey_<ASC_KEY_ID>.p8
- * - submit: ASC REST API 提审（含提审前预检：本地化描述完备性），按 ASC 官方文档实现，未经真实链路验证；
+ * - submit: ASC REST API 提审（--note 写入各本地化 whatsNew「版本更新说明」；提审前预检：本地化描述完备性）；
  *   releaseType 三档（2026-11-11）：releaseTime→SCHEDULED 定时 / releaseMode=manual→MANUAL /
  *   默认 AFTER_APPROVAL 审核通过自动上架（官方确认首版亦可自动，唯一强制手动场景=预购且从未上架）
  *   官方文档: https://developer.apple.com/documentation/appstoreconnectapi
@@ -90,7 +90,7 @@ type AscBuildAttrs = {
 type AscPreReleaseAttrs = { version?: string };
 /** appStoreVersions 资源属性（appVersionState 枚举见 AppVersionState；releaseType: MANUAL / AFTER_APPROVAL / SCHEDULED） */
 type AscVersionAttrs = { versionString?: string; appVersionState?: string; releaseType?: string };
-/** appStoreVersionLocalizations 资源属性（description 为提审硬性要求） */
+/** appStoreVersionLocalizations 资源属性（description 为提审硬性要求；whatsNew 即「版本更新说明」） */
 type AscVersionLocAttrs = { locale?: string; description?: string };
 
 export class AscChannel implements Channel {
@@ -385,34 +385,38 @@ export class AscChannel implements Channel {
 
     // 3.5) 提审前预检（规则化，§8）：error 抛出阻断 / warn 仅提示
     await this.preflight(asc, versionId, ctx, warns);
+    // 3.6) 写入版本更新说明（--note → 各本地化 whatsNew；未提供时不动线上文案，main 实测链路引入）
+    await this.applyWhatsNew(asc, versionId, ctx);
 
-    // 4) 把构建绑定到版本（builds 为 to-many 关系，data 传数组）
-    await asc.request(`/v1/appStoreVersions/${versionId}/relationships/builds`, "PATCH", {
-      data: [{ type: "builds", id: build.buildId }],
+    // 4) 把构建绑定到版本：ASC 无 /relationships/builds 独立端点（404 PATH_ERROR，main 实测），
+    //    appStoreVersions 上的关系名为 build（单数、to-one），经 PATCH 本体 relationships.build 携带
+    await asc.request(`/v1/appStoreVersions/${versionId}`, "PATCH", {
+      data: {
+        type: "appStoreVersions",
+        id: versionId,
+        relationships: { build: { data: { type: "builds", id: build.buildId } } },
+      },
     });
 
-    // 4.5) 出口合规代答（§6）：build 未声明（null）才写——幂等判据（fastlane 同款）；
-    //      Info.plist 已声明（ITSAppUsesNonExemptEncryption）的 build 此处为非 null，自动跳过
+    // 4.5) 出口合规（§6 + main 实测 409 ENTITY_ERROR.ATTRIBUTE.REQUIRED）：build 未声明（null）
+    //      必须声明才能提审。配置 ios.exportCompliance 时按配置值代答；未配置时自动声明 false
+    //      （仅 HTTPS 标准加密属豁免——绝大多数 App 适用；需申报非豁免加密时配 exportCompliance 或 ASC 后台改）。
+    //      已声明的值不覆盖（幂等；Info.plist 已声明 ITSAppUsesNonExemptEncryption 的 build 非 null 自动跳过）
     if (build.attrs.usesNonExemptEncryption == null) {
-      if (ctx.exportCompliance) {
-        await asc.request(`/v1/builds/${build.buildId}`, "PATCH", {
-          data: {
-            type: "builds",
-            id: build.buildId,
-            attributes: { usesNonExemptEncryption: ctx.exportCompliance.usesNonExemptEncryption },
-          },
-        });
-        ctx.emit({
-          type: "progress",
-          detail: `已代答出口合规（usesNonExemptEncryption=${ctx.exportCompliance.usesNonExemptEncryption}）`,
-        });
-      } else {
-        ctx.emit({
-          type: "progress",
-          detail:
-            "出口合规提示：Info.plist 声明 ITSAppUsesNonExemptEncryption（按实际加密用途取值）可免每次提审被问询",
-        });
-      }
+      const declare = ctx.exportCompliance?.usesNonExemptEncryption ?? false;
+      await asc.request(`/v1/builds/${build.buildId}`, "PATCH", {
+        data: {
+          type: "builds",
+          id: build.buildId,
+          attributes: { usesNonExemptEncryption: declare },
+        },
+      });
+      ctx.emit({
+        type: "progress",
+        detail: ctx.exportCompliance
+          ? `已代答出口合规（usesNonExemptEncryption=${declare}，配置 ios.exportCompliance）`
+          : `build ${build.attrs.version ?? ""} 已自动声明出口合规（usesNonExemptEncryption=false，标准 HTTPS 豁免默认值；非豁免加密请配 ios.exportCompliance）`,
+      });
     }
 
     // 4.7) phased release（§7，7 天 1%→100% 自动更新灰度）。官方限制：仅后续版本可用
@@ -491,21 +495,24 @@ export class AscChannel implements Channel {
       reviewSubmissionId = created.data?.id ?? "";
       if (!reviewSubmissionId) throw new Error("ASC 创建 reviewSubmission 未返回 id");
     }
-    //    b) 添加条目（关联 appStoreVersion）——复用草稿且已含本版本条目时跳过，防重复
+    //    b) 添加条目：顶层 /v1/reviewSubmissionItems + reviewSubmission 关系（main 实测——
+    //       子路径 /reviewSubmissions/{id}/items 不存在）——复用草稿且已含本版本条目时跳过，防重复
     if (!mine) {
-      await asc.request(`/v1/reviewSubmissions/${reviewSubmissionId}/items`, "POST", {
+      await asc.request("/v1/reviewSubmissionItems", "POST", {
         data: {
           type: "reviewSubmissionItems",
           attributes: {},
           relationships: {
+            reviewSubmission: { data: { type: "reviewSubmissions", id: reviewSubmissionId } },
             appStoreVersion: { data: { type: "appStoreVersions", id: versionId } },
           },
         },
       });
     }
-    //    c) 确认提交（action=SUBMIT）
+    //    c) 确认提交：reviewSubmissions 无 action 属性（409 ATTRIBUTE.UNKNOWN，main 实测），
+    //       确认语义是 PATCH attributes.submitted = true，成功后 state 变 WAITING_FOR_REVIEW
     await asc.request(`/v1/reviewSubmissions/${reviewSubmissionId}`, "PATCH", {
-      data: { type: "reviewSubmissions", attributes: { action: "SUBMIT" } },
+      data: { type: "reviewSubmissions", id: reviewSubmissionId, attributes: { submitted: true } },
     });
     ctx.emit({
       type: "phase",
@@ -546,11 +553,12 @@ export class AscChannel implements Channel {
             detail: `构建处理中（已等 ${Math.round(elapsedMs / 60000)} 分钟，第 ${attempt} 次探测，${BUILD_POLL_MS / 1000}s 后重查）`,
           }),
         attempt: async () => {
+          // fields 显式请求 usesNonExemptEncryption（出口合规判定依赖；main 实测链路引入）
           const qs = anchored
             ? `filter[app]=${appId}&filter[preReleaseVersion]=${trainIds.join(",")}&filter[version]=${encodeURIComponent(av!.versionCode!)}`
             : `filter[app]=${appId}&sort=-uploadedDate&limit=20`;
           const builds = await asc.get<AscListResponse<AscBuildAttrs>>(
-            `/v1/builds?${qs}&include=preReleaseVersion`,
+            `/v1/builds?${qs}&include=preReleaseVersion&fields[builds]=version,uploadedDate,processingState,usesNonExemptEncryption`,
           );
           const valid = builds.data.find((b) => b.attributes?.processingState === "VALID");
           if (valid?.id) {
@@ -795,6 +803,37 @@ export class AscChannel implements Channel {
       ctx.emit({ type: "warn", message: msg });
     }
     ctx.emit({ type: "progress", detail: "提审预检通过" });
+  }
+
+  /**
+   * 写入「版本更新说明」（What's New）：ctx.updateDescription 提供时，PATCH 该版本
+   * 全部本地化记录的 whatsNew（与其他渠道消费 --note 的方式对齐：AGC newFeatures /
+   * Google Play releaseNotes / 荣耀 newFeature）。仅在 PREPARE_FOR_SUBMISSION 状态可写；
+   * IN_REVIEW 起锁定。未提供时不动线上文案（保留 ASC 后台手填的值）。
+   */
+  private async applyWhatsNew(
+    asc: AscClient,
+    versionId: string,
+    ctx: Pick<ChannelContext, "updateDescription" | "emit">,
+  ): Promise<void> {
+    const note = ctx.updateDescription?.trim();
+    if (!note) return;
+    const locs = await asc.get<AscListResponse<AscVersionLocAttrs>>(
+      `/v1/appStoreVersions/${versionId}/appStoreVersionLocalizations?limit=50`,
+    );
+    for (const loc of locs.data) {
+      await asc.request(`/v1/appStoreVersionLocalizations/${loc.id}`, "PATCH", {
+        data: {
+          type: "appStoreVersionLocalizations",
+          id: loc.id,
+          attributes: { whatsNew: note },
+        },
+      });
+      ctx.emit({
+        type: "progress",
+        detail: `已写入版本更新说明（What's New）：${loc.attributes?.locale ?? loc.id}`,
+      });
+    }
   }
 }
 
