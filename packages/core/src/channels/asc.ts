@@ -57,7 +57,12 @@ interface AscSingleResponse<A> {
 /** apps 资源属性 */
 type AscAppAttrs = { bundleId?: string; name?: string };
 /** builds 资源属性（processingState: PROCESSING / INVALID / FAILED / VALID） */
-type AscBuildAttrs = { version?: string; uploadedDate?: string; processingState?: string };
+type AscBuildAttrs = {
+  version?: string;
+  uploadedDate?: string;
+  processingState?: string;
+  usesNonExemptEncryption?: boolean | null;
+};
 /** preReleaseVersions 资源属性（version 即 CFBundleShortVersionString 营销版本号） */
 type AscPreReleaseAttrs = { version?: string };
 /** appStoreVersions 资源属性（appVersionState 枚举见 AppVersionState；releaseType: MANUAL / AFTER_APPROVAL / SCHEDULED） */
@@ -300,9 +305,25 @@ export class AscChannel implements Channel {
     // 2) 找最新已处理构建（processingState=VALID；altool 上传后约 10 分钟才从 PROCESSING 变 VALID）
     const builds = await ascGet<AscListResponse<AscBuildAttrs>>(
       jwt,
-      `/v1/builds?filter[app]=${app.id}&sort=-uploadedDate&limit=20&include=preReleaseVersion`,
+      `/v1/builds?filter[app]=${app.id}&sort=-uploadedDate&limit=20&include=preReleaseVersion&fields[builds]=version,uploadedDate,processingState,usesNonExemptEncryption`,
     );
     const build = builds.data.find((b) => b.attributes?.processingState === "VALID");
+    // 出口合规：提审要求 build 已声明 usesNonExemptEncryption，未声明(null)会 409
+    // ENTITY_ERROR.ATTRIBUTE.REQUIRED。仅在 null 时 PATCH false（仅 HTTPS 标准加密属豁免），
+    // 已声明的值不覆盖（幂等；需要申报非豁免加密时请在 ASC 后台/上传时自行声明）
+    if (build?.id && build.attributes?.usesNonExemptEncryption == null) {
+      await ascRequest(jwt, `/v1/builds/${build.id}`, "PATCH", {
+        data: {
+          type: "builds",
+          id: build.id,
+          attributes: { usesNonExemptEncryption: false },
+        },
+      });
+      ctx.emit({
+        type: "progress",
+        detail: `build ${build.attributes?.version ?? ""} 已声明出口合规（usesNonExemptEncryption=false）`,
+      });
+    }
     if (!build?.id) {
       const states =
         builds.data.map((b) => b.attributes?.processingState ?? "UNKNOWN").join(", ") || "无构建";

@@ -404,7 +404,7 @@ describe("submit（ASC REST 提审）", () => {
   const buildValid = {
     type: "builds",
     id: "B2",
-    attributes: { version: "42", processingState: "VALID" },
+    attributes: { version: "42", processingState: "VALID", usesNonExemptEncryption: false },
     relationships: { preReleaseVersion: { data: { type: "preReleaseVersions", id: "PR1" } } },
   };
   const buildProcessing = {
@@ -430,6 +430,11 @@ describe("submit（ASC REST 提审）", () => {
           status: 200,
           json: overrides.builds ?? { data: [buildValid], included: [pre] },
         },
+      },
+      {
+        match: /\/v1\/builds\/[^/]+$/,
+        method: "PATCH",
+        response: { status: 200, json: { data: { id: "B2" } } },
       },
       {
         match: /appStoreVersions\?filter\[platform\]/,
@@ -718,6 +723,45 @@ describe("submit（ASC REST 提审）", () => {
     }
   });
 
+  it("出口合规未声明：build usesNonExemptEncryption=null 时自动 PATCH false；已声明则不再重写", async () => {
+    const m = mockFetch(
+      submitRoutes({
+        builds: {
+          data: [
+            {
+              type: "builds",
+              id: "B2",
+              attributes: {
+                version: "42",
+                processingState: "VALID",
+                usesNonExemptEncryption: null,
+              },
+              relationships: {
+                preReleaseVersion: { data: { type: "preReleaseVersions", id: "PR1" } },
+              },
+            },
+          ],
+          included: [pre],
+        },
+      }),
+    );
+    try {
+      const ctx = makeCtx();
+      await ch.submit(ctx as unknown as ChannelContext);
+      const compliance = m.calls.find(
+        (c) => c.method === "PATCH" && /\/v1\/builds\/B2$/.test(c.url),
+      )!;
+      expect(JSON.parse(compliance.body as string)).toEqual({
+        data: { type: "builds", id: "B2", attributes: { usesNonExemptEncryption: false } },
+      });
+      // 已声明场景（submitRoutes 默认 buildValid 已带 false）无 builds PATCH
+    } finally {
+      expect(
+        m.calls.filter((c) => c.method === "PATCH" && /\/v1\/builds\//.test(c.url)),
+      ).toHaveLength(1);
+    }
+  });
+
   it("构建缺 processingState 字段 → 状态列表回退 UNKNOWN", async () => {
     const m = mockFetch(
       submitRoutes({ builds: { data: [{ type: "builds", id: "B1", attributes: {} }] } }),
@@ -733,7 +777,7 @@ describe("submit（ASC REST 提审）", () => {
     const noVersionBuild = {
       type: "builds",
       id: "B3",
-      attributes: { processingState: "VALID" },
+      attributes: { processingState: "VALID", usesNonExemptEncryption: false },
       relationships: { preReleaseVersion: { data: { type: "preReleaseVersions", id: "PR1" } } },
     };
     const m = mockFetch(submitRoutes({ builds: { data: [noVersionBuild], included: [pre] } }));
