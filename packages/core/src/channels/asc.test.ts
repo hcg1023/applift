@@ -1694,7 +1694,7 @@ describe("submit 等构建处理完成（docs/fastlane-adoption §2）", () => {
         match: /\/v1\/preReleaseVersions\?/,
         response: () => {
           pvCalls += 1;
-          return { status: 500, json: {} }; // 锚定查询失败 → resolveTrainIds 返回 []
+          return { status: 404, json: {} }; // 锚定查询失败（404 不触发 AscClient 重试，避免 fake-timer 真推进 14s） → resolveTrainIds 返回 []
         },
       },
       {
@@ -2321,7 +2321,7 @@ describe("stage build 号预检（§9）", () => {
   it("预检查询抛错 → 预检跳过（best-effort），继续上传", async () => {
     const tpSpy = vi.spyOn(ch, "resolveTransporterPath").mockReturnValue(undefined);
     spawnSyncMock.mockReturnValue({ status: 0, stdout: "", stderr: "" } as never);
-    const m = mockFetch([{ match: /\/v1\/apps\?/, response: { status: 500, json: {} } }]);
+    const m = mockFetch([{ match: /\/v1\/apps\?/, response: { status: 404, json: {} } }]);
     try {
       await expect(
         ch.stage(makeCtx({ artifactVersion: { versionName: "1.2.3", versionCode: "42" } })),
@@ -2335,7 +2335,7 @@ describe("stage build 号预检（§9）", () => {
   it("预检失败 warn 后上传继续（warn 文案断言）", async () => {
     const tpSpy = vi.spyOn(ch, "resolveTransporterPath").mockReturnValue(undefined);
     spawnSyncMock.mockReturnValue({ status: 0, stdout: "", stderr: "" } as never);
-    const m = mockFetch([{ match: /\/v1\/apps\?/, response: { status: 500, json: {} } }]);
+    const m = mockFetch([{ match: /\/v1\/apps\?/, response: { status: 404, json: {} } }]);
     try {
       const events: Ev[] = [];
       const ctx = makeCtx({ artifactVersion: { versionName: "1.2.3", versionCode: "42" } });
