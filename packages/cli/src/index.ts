@@ -1738,9 +1738,16 @@ program
       );
       const stores = Object.keys(config.android?.stores ?? {});
       // 与人读路径同构：仅在配置了渠道时解析凭据（resolveProfile 对缺 profile 报错，两路径同形）；
-      // activeProfile 字段镜像同名局部变量——无渠道时为 null（人读路径此时也不展示 profile）
+      // 机读契约多一层降级：profile 缺失不让报告中断——credRecord 落 {}（全渠道 missing），
+      // missing 清单必须送达消费方（GUI 据此引导补凭据），人读路径的报错文案不受影响
       let credRecord: Record<string, string> | undefined;
-      if (stores.length > 0) credRecord = resolveProfile(creds, profile, KNOWN_CREDENTIAL_KEYS);
+      if (stores.length > 0) {
+        try {
+          credRecord = resolveProfile(creds, profile, KNOWN_CREDENTIAL_KEYS);
+        } catch {
+          credRecord = {};
+        }
+      }
       // 逐渠道凭据核对与人读路径同规则：「或」型键任一备选存在即过；无元数据的渠道视为无必填键
       const storeRows = stores.map((id) => {
         const missing = (REQUIRED_KEYS_BY_CHANNEL[id] ?? []).filter((k) =>

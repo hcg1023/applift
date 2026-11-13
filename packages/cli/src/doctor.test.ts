@@ -172,4 +172,27 @@ describe("doctor --json（结构化体检报告）", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("已配置渠道但凭据 profile 缺失：--json 降级产出报告（ok=false、missing 清单送达、exit 1）", async () => {
+    // 无 credentials.json（profiles=[]）+ 项目配 pgyer 渠道 → resolveProfile 抛错场景
+    fs.rmSync(path.join(home, "credentials.json"), { force: true });
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-doctor-nocred-"));
+    writeProject(dir);
+    const cap = captureSplit();
+    try {
+      await program.parseAsync(["doctor", "--cwd", dir, "--json"], { from: "user" });
+      const report = JSON.parse(cap.stdout()); // stdout 仍是完整可解析 JSON（不因缺凭据中断）
+      expect(report.ok).toBe(false);
+      expect(report.profiles).toEqual([]);
+      expect(report.stores).toEqual([
+        { id: "pgyer", credentialsOk: false, missing: ["PGYER_API_KEY"] },
+      ]);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      cap.restore();
+      fs.rmSync(dir, { recursive: true, force: true });
+      writeCredentials(); // 还原给后续用例
+      process.exitCode = undefined;
+    }
+  });
 });
