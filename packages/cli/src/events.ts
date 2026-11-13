@@ -47,16 +47,21 @@ export interface EventChannelOptions {
 export class EventChannel {
   readonly #write: (line: string) => void;
   readonly #confirmTimeoutMs: number;
+  readonly #rl: readline.Interface;
   readonly #pending = new Map<string, Pending>();
 
   constructor(write: (line: string) => void, opts: EventChannelOptions = {}) {
     this.#write = write;
     this.#confirmTimeoutMs = opts.confirmTimeoutMs ?? 10 * 60_000;
     this.emit({ type: "hello", protocol: 1, cli: pkg.version });
-    const rl = readline.createInterface({ input: opts.input ?? process.stdin });
-    rl.on("line", (line) => this.#onLine(line));
+    this.#rl = readline.createInterface({ input: opts.input ?? process.stdin });
+    this.#rl.on("line", (line) => this.#onLine(line));
   }
 
+  /** 关闭 stdin 监听：readline 持有 stdin 引用会阻止进程自然退出（子进程模式发完 result 后调用） */
+  close(): void {
+    this.#rl.close();
+  }
   emit(e: OutEvent): void {
     this.#write(JSON.stringify(e) + "\n");
   }
@@ -67,6 +72,9 @@ export class EventChannel {
     choices: Array<{ value: string; label: string; recommended?: boolean }>,
   ): Promise<string> {
     this.emit({ type: "confirm_required", id, question, choices });
+    // 同 id 串扰防护：上一个同名确认未回写前再发起 = 协议侧 bug，fail-fast 而非静默覆盖
+    if (this.#pending.has(id))
+      return Promise.reject(new Error(`确认 ${id} 重复发起：上一确认尚未回写`));
     // ES2023 lib 无 Promise.withResolvers 类型——executor 形式
     return new Promise<string>((resolve, reject) => {
       const timer: NodeJS.Timeout = setTimeout(() => {

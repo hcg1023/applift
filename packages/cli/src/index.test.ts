@@ -8,7 +8,8 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 // 热更路径会写 history.jsonl：APPLIFT_HOME 必须在 core 加载前重定向（该常量 import 时求值），
 // 否则测试污染真实 ~/.applift（此前 release 路径一直隐性依赖真实机器凭据，重定向后显形）。
@@ -841,5 +842,127 @@ describe("未接入热更的平台走原生（provider.platforms 过滤）", () 
     // 不自动 bump：工程文件版本保持原样（升版本由用户跑 applift version bump）
     const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
     expect(pkg.version).toBe("4.0.0");
+  });
+});
+describe("beta --interactive-events（NDJSON 事件流，子进程级）", () => {
+  const CLI_BIN = fileURLToPath(new URL("../dist/bin.mjs", import.meta.url));
+  // 子进程不继承测试进程的环境改写：APPLIFT_HOME 必须显式传（否则 history 写真实 ~/.applift）
+  const childEnv = { ...process.env, APPLIFT_HOME: testHome };
+
+  /** 逐行解析子进程 stdout 的 NDJSON；waitFor 按谓词等事件，result 即结果事件 */
+  function collectEvents(proc: ChildProcess) {
+    const lines: Array<Record<string, unknown>> = [];
+    const waiters: Array<{
+      test: (l: Record<string, unknown>) => boolean;
+      resolve: (l: Record<string, unknown>) => void;
+    }> = [];
+    let resultResolve: (l: Record<string, unknown>) => void;
+    const result = new Promise<Record<string, unknown>>((res) => (resultResolve = res));
+    let buf = "";
+    proc.stdout!.on("data", (d: Buffer) => {
+      buf += d.toString();
+      let i: number;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const raw = buf.slice(0, i).trim();
+        buf = buf.slice(i + 1);
+        if (!raw) continue;
+        let e: Record<string, unknown>;
+        try {
+          e = JSON.parse(raw) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        lines.push(e);
+        if (e.type === "result") resultResolve(e);
+        for (let k = waiters.length - 1; k >= 0; k--) {
+          if (waiters[k]!.test(e)) {
+            waiters[k]!.resolve(e);
+            waiters.splice(k, 1);
+          }
+        }
+      }
+    });
+    proc.stderr!.on("data", () => {}); // 排空防背压（判定日志走 stderr）
+    const waitFor = (test: (l: Record<string, unknown>) => boolean) =>
+      new Promise<Record<string, unknown>>((res) => {
+        const found = lines.find(test);
+        if (found) res(found);
+        else waiters.push({ test, resolve: res });
+      });
+    return { lines, waitFor, result };
+  }
+
+  const closed = (proc: ChildProcess) =>
+    new Promise<{ code: number | null }>((res) => proc.on("close", (code) => res({ code })));
+
+  it(
+    "判定确认经 stdin 回写后完成发布（hello → stage/judgement → confirm → result）",
+    { timeout: 60_000 },
+    async () => {
+      const dir = otaProviderProject("ota");
+      try {
+        const proc = spawn(
+          process.execPath,
+          [CLI_BIN, "beta", "android", "--interactive-events", "--cwd", dir],
+          { stdio: ["pipe", "pipe", "pipe"], env: childEnv },
+        );
+        const ev = collectEvents(proc);
+        const hello = await ev.waitFor((l) => l.type === "hello");
+        expect(ev.lines[0]).toBe(hello);
+        expect(hello).toMatchObject({ type: "hello", protocol: 1 });
+        const judge = await ev.waitFor((l) => l.type === "stage" && l.stage === "judge");
+        expect(judge).toBeDefined();
+        const judgement = (await ev.waitFor((l) => l.type === "judgement")) as {
+          recommendation: string;
+          provider: string;
+        };
+        expect(judgement.recommendation).toBe("ota");
+        expect(judgement.provider).toBe("stub-update");
+        const confirmEvt = (await ev.waitFor((l) => l.type === "confirm_required")) as {
+          id: string;
+          choices: Array<{ value: string; recommended?: boolean }>;
+        };
+        expect(confirmEvt.id).toBe("delivery");
+        expect(confirmEvt.choices.find((c) => c.value === "ota")?.recommended).toBe(true);
+        proc.stdin!.write(JSON.stringify({ type: "confirm", id: "delivery", value: "ota" }) + "\n");
+        await ev.waitFor((l) => l.type === "stage" && l.stage === "publish");
+        const result = (await ev.result) as { ok: boolean; summary: Record<string, unknown> };
+        expect(result.ok).toBe(true);
+        expect(result.summary).toMatchObject({
+          versionName: "4.0.0-ota.1",
+          channel: "stub-update",
+          mode: "ota",
+        });
+        expect(await closed(proc)).toMatchObject({ code: 0 });
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it(
+    "beta 无 --interactive-events：stdout 不是 NDJSON（零侵入）",
+    { timeout: 60_000 },
+    async () => {
+      const dir = otaProviderProject("ota");
+      try {
+        const { stdout } = spawnSync(
+          process.execPath,
+          [CLI_BIN, "beta", "android", "--yes", "--cwd", dir],
+          { encoding: "utf8", env: childEnv },
+        );
+        expect(stdout.split("\n")[0]!.startsWith("{")).toBe(false);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("多渠道并行（beta 无 platform）+ --interactive-events → 入口报错", async () => {
+    await expect(
+      program.parseAsync(["beta", "--interactive-events", "--cwd", process.cwd()], {
+        from: "user",
+      }),
+    ).rejects.toThrow(/--interactive-events 仅支持单平台路径/);
   });
 });
