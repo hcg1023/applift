@@ -427,33 +427,34 @@ describe("声明式 framework 守卫（发布命令无插件声明必须报错�
     }
   });
 });
-describe("beta/release 热更路由集成（判定 → 推荐 → 热更执行）", () => {
-  function otaProviderProject(recommendation: "ota" | "native" | "uncertain"): string {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-ota-"));
-    fs.writeFileSync(
-      path.join(dir, "package.json"),
-      JSON.stringify({ name: "ota-demo", dependencies: { "react-native": "0.84.0" } }),
-    );
-    fs.writeFileSync(
-      path.join(dir, "applift.config.ts"),
-      [
-        "import { rnFramework } from '@applift/core';",
-        "export default {",
-        "  plugins: [rnFramework(), {",
-        "    name: 'stub-update',",
-        "    'update:register': (providers) => providers.push({",
-        "      id: 'stub-update', frameworks: ['rn'],",
-        `      judge: () => ({ recommendation: '${recommendation}', confidence: 'high', evidence: [{ path: 'src/a.ts', rule: 'JS 层', note: '' }] }),`,
-        "      publishToBeta: async (ctx) => { (globalThis.__otaCaptured ??= []).push({ kind: 'publishToBeta', platform: ctx.platform }); return { versionName: '4.0.0-ota.1', versionId: 1 }; },",
-        "      promoteToProd: async (ctx) => { (globalThis.__otaCaptured ??= []).push({ kind: 'promoteToProd', platform: ctx.platform }); return { versionName: '4.0.0-ota.1' }; },",
-        "    }),",
-        "  }],",
-        "};",
-      ].join("\n"),
-    );
-    return dir;
-  }
+/** 桩热更工程：RN framework + stub update provider（judge 可配置推荐值；platforms 缺省全平台命中） */
+function otaProviderProject(recommendation: "ota" | "native" | "uncertain"): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-ota-"));
+  fs.writeFileSync(
+    path.join(dir, "package.json"),
+    JSON.stringify({ name: "ota-demo", dependencies: { "react-native": "0.84.0" } }),
+  );
+  fs.writeFileSync(
+    path.join(dir, "applift.config.ts"),
+    [
+      "import { rnFramework } from '@applift/core';",
+      "export default {",
+      "  plugins: [rnFramework(), {",
+      "    name: 'stub-update',",
+      "    'update:register': (providers) => providers.push({",
+      "      id: 'stub-update', frameworks: ['rn'],",
+      `      judge: () => ({ recommendation: '${recommendation}', confidence: 'high', evidence: [{ path: 'src/a.ts', rule: 'JS 层', note: '' }] }),`,
+      "      publishToBeta: async (ctx) => { (globalThis.__otaCaptured ??= []).push({ kind: 'publishToBeta', platform: ctx.platform }); return { versionName: '4.0.0-ota.1', versionId: 1 }; },",
+      "      promoteToProd: async (ctx) => { (globalThis.__otaCaptured ??= []).push({ kind: 'promoteToProd', platform: ctx.platform }); return { versionName: '4.0.0-ota.1' }; },",
+      "    }),",
+      "  }],",
+      "};",
+    ].join("\n"),
+  );
+  return dir;
+}
 
+describe("beta/release 热更路由集成（判定 → 推荐 → 热更执行）", () => {
   it("beta 判定 ota + --yes → 走热更（publishToBeta），不进原生管线", async () => {
     const dir = otaProviderProject("ota");
     const slot = globalThis as { __otaCaptured?: Array<{ kind: string; platform: string }> };
@@ -602,6 +603,96 @@ describe("beta/release 热更路由集成（判定 → 推荐 → 热更执行�
         }),
       ).rejects.toThrow(/判定为原生发版[\s\S]*--delivery native/);
     } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("beta --dry-run --json 判定预览（发版向导第一步，不发布）", () => {
+  it("beta <platform> --dry-run --json 输出判定预览，不进任何发布分支", async () => {
+    const dir = otaProviderProject("ota");
+    const slot = globalThis as { __otaCaptured?: unknown[] };
+    slot.__otaCaptured = [];
+    const out = vi.spyOn(process.stdout, "write").mockImplementation((b) => {
+      return true;
+    });
+    try {
+      await program.parseAsync(["beta", "android", "--cwd", dir, "--dry-run", "--json"], {
+        from: "user",
+      });
+      // stdout 纯 JSON 契约：整体可解析 = 判定日志（clack log 走 stderr）未混入
+      const r = JSON.parse(out.mock.calls.flat().join("")) as {
+        platform: string;
+        provider: string | null;
+        recommendation: string | null;
+        confidence: string | null;
+        evidence: Array<{ path: string; rule: string }>;
+        note: string;
+      };
+      expect(r.platform).toBe("android");
+      expect(r.provider).toBe("stub-update");
+      expect(r.recommendation).toBe("ota");
+      expect(r.confidence).toBe("high");
+      expect(r.evidence.length).toBeGreaterThan(0);
+      expect(r.evidence[0]).toMatchObject({ path: "src/a.ts", rule: "JS 层" });
+      expect(r.note).toContain("ota");
+      // 不发布：不调热更 provider，history 无该工程新条目
+      expect(slot.__otaCaptured).toEqual([]);
+      const entries = core.readEntries(
+        { channel: "stub-update" },
+        path.join(testHome, "history.jsonl"),
+      );
+      expect(entries.filter((e) => e.cwd === dir)).toHaveLength(0);
+    } finally {
+      out.mockRestore();
+      delete slot.__otaCaptured;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("beta --dry-run 无 provider 平台：provider/recommendation=null，原生语义", async () => {
+    // 桩 provider platforms 只含 android → beta harmony 路由 null（未接入热更）
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-dry-native-"));
+    fs.writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({ name: "dry-native", dependencies: { "react-native": "0.84.0" } }),
+    );
+    fs.writeFileSync(
+      path.join(dir, "applift.config.ts"),
+      [
+        "import { rnFramework } from '@applift/core';",
+        "export default {",
+        "  plugins: [rnFramework(), {",
+        "    name: 'scoped-update',",
+        "    'update:register': (providers) => providers.push({",
+        "      id: 'scoped-update', frameworks: ['rn'], platforms: ['android'],",
+        "      judge: () => ({ recommendation: 'ota', confidence: 'high', evidence: [] }),",
+        "      publishToBeta: async () => { throw new Error('不应走热更'); },",
+        "      promoteToProd: async () => ({ versionName: 'x' }),",
+        "    }),",
+        "  }],",
+        "};",
+      ].join("\n"),
+    );
+    const out = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      await program.parseAsync(["beta", "harmony", "--cwd", dir, "--dry-run", "--json"], {
+        from: "user",
+      });
+      const r = JSON.parse(out.mock.calls.flat().join("")) as {
+        provider: string | null;
+        recommendation: string | null;
+        confidence: string | null;
+        evidence: unknown[];
+        note: string;
+      };
+      expect(r.provider).toBeNull();
+      expect(r.recommendation).toBeNull();
+      expect(r.confidence).toBeNull();
+      expect(r.evidence).toEqual([]);
+      expect(r.note).toContain("原生");
+    } finally {
+      out.mockRestore();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });

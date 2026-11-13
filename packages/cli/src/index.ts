@@ -39,6 +39,7 @@ import {
   tagReleaseVersion,
   suggestFramework,
   collectReleaseDiff,
+  type DeliveryJudgement,
   routeDelivery,
   detectBundleIds,
   findArtifacts,
@@ -76,11 +77,26 @@ function requireFramework(cwd: string, extra: FrameworkAdapter[]): FrameworkAdap
   return framework;
 }
 
-/** 热更路由结果：mode=ota 时携带匹配的 provider；explicit=用户显式选定（--delivery 或交互 select） */
+/** 热更路由结果：mode=ota 时携带匹配的 provider；explicit=用户显式选定（--delivery 或交互 select）。
+ * judgement 随行携带：beta --dry-run 预览报告直接消费（provider/置信度/证据），不二次调 judge */
 interface DeliveryDecision {
   mode: "ota" | "native";
   provider?: UpdateProvider;
   explicit: boolean;
+  judgement?: DeliveryJudgement;
+}
+
+/** beta --dry-run --json 的 stdout 报告（applift-ui 发版向导第一步消费）：判定预览，不发布 */
+interface BetaDryRunReport {
+  platform: string;
+  /** 判定 provider id；null = 无热更 provider（原生路径） */
+  provider: string | null;
+  /** 判定推荐；null = 未路由（无 provider） */
+  recommendation: "ota" | "native" | "uncertain" | null;
+  confidence: "high" | "medium" | "low" | null;
+  evidence: Array<{ path: string; rule: string; note?: string }>;
+  /** 人读摘要（UI 直接展示） */
+  note: string;
 }
 
 /**
@@ -92,7 +108,13 @@ async function resolveDeliveryMode(
   cwd: string,
   host: PluginHost | undefined,
   framework: FrameworkAdapter,
-  opts: { yes: boolean; delivery?: string; json?: boolean; dryRun?: boolean },
+  opts: {
+    yes: boolean;
+    delivery?: string;
+    json?: boolean;
+    /** 预览模式（beta --dry-run）：只判定不解析投递方式——uncertain 照实携带不中止 */
+    preview?: boolean;
+  },
   platform?: string,
 ): Promise<DeliveryDecision | null> {
   const providers: UpdateProvider[] = [];
@@ -117,19 +139,31 @@ async function resolveDeliveryMode(
     return null;
   }
   const { provider, judgement } = route;
-  p.log.info(
-    `本次发布判定：${pc.bold(judgement.recommendation)}（confidence: ${judgement.confidence}，by ${provider.id}）`,
-  );
+  // 判定日志：--json 下走 stderr（stdout 纯 JSON 契约）——clack log 写 stdout，混入会破坏整体可解析
+  if (opts.json)
+    process.stderr.write(
+      `本次发布判定：${judgement.recommendation}（confidence: ${judgement.confidence}，by ${provider.id}）\n`,
+    );
+  else
+    p.log.info(
+      `本次发布判定：${pc.bold(judgement.recommendation)}（confidence: ${judgement.confidence}，by ${provider.id}）`,
+    );
   for (const e of judgement.evidence.slice(0, 20)) {
-    p.log.message(`  ${pc.dim(e.path)} — ${e.rule}${e.note ? pc.dim(`（${e.note}）`) : ""}`);
+    const line = `  ${pc.dim(e.path)} — ${e.rule}${e.note ? pc.dim(`（${e.note}）`) : ""}`;
+    if (opts.json) process.stderr.write(`${line}\n`);
+    else p.log.message(line);
   }
+  // 预览：不解析 mode、不确认、不中止（uncertain 是合法输出）——mode 占位 ota，预览调用方不消费它
+  if (opts.preview) return { mode: "ota", explicit: false, provider, judgement };
+
   let mode: "ota" | "native";
   let explicit: boolean;
   if (opts.delivery === "ota" || opts.delivery === "native") {
     mode = opts.delivery;
     explicit = true;
-  } else if (opts.yes || opts.json || opts.dryRun || !process.stdout.isTTY) {
-    // 非交互（--yes / --json / --dry-run / 无 TTY）：用推荐值；灰区必须显式指定，不猜
+  } else if (opts.yes || opts.json || !process.stdout.isTTY) {
+    // 非交互（--yes / --json / 无 TTY）：用推荐值；灰区必须显式指定，不猜。
+    // --dry-run 不在此列：预览模式 uncertain 也照实输出（不发布就没有"代答"风险）
     if (judgement.recommendation === "uncertain") {
       throw new Error(
         "判定不确定（灰区）：非交互模式无法代答，请用 --delivery ota|native 显式指定投递方式",
@@ -152,7 +186,7 @@ async function resolveDeliveryMode(
     mode = choice;
     explicit = true; // 交互选择即用户意图（含选原生包：用户看过证据后拍板）
   }
-  return { mode, explicit, provider: mode === "ota" ? provider : undefined };
+  return { mode, explicit, provider: mode === "ota" ? provider : undefined, judgement };
 }
 
 const program = new Command("applift");
@@ -571,6 +605,8 @@ program
     "投递方式：ota（热更）| native（原生包）；缺省按判定推荐，CI uncertain 时必须显式",
   )
   .option("--yes", "跳过 bump/发布确认（CI）")
+  .option("--dry-run", "只出判定预览，不发布")
+  .option("--json", "结构化输出（stdout 给机器，渲染抑制）")
   .option(
     "--bump [level]",
     "判定为原生·需 bump 时自动声明版本（major|minor|patch|<semver>，缺省用推断）；完成后引导重建",
@@ -587,6 +623,8 @@ program
         bump?: boolean | string;
         delivery?: string;
         yes?: boolean;
+        dryRun?: boolean;
+        json?: boolean;
         cwd: string;
       },
     ) => {
@@ -628,9 +666,40 @@ program
           {
             yes: Boolean(cmdOpts.yes),
             delivery: cmdOpts.delivery,
+            json: Boolean(cmdOpts.json),
+            preview: Boolean(cmdOpts.dryRun),
           },
           platform,
         );
+        // ---------- 判定预览（--dry-run）：只报告不发布——发版向导第一步消费 ----------
+        if (cmdOpts.dryRun) {
+          const j = decision?.judgement;
+          const report: BetaDryRunReport = j
+            ? {
+                platform,
+                provider: decision?.provider?.id ?? null,
+                recommendation: j.recommendation,
+                confidence: j.confidence,
+                evidence: j.evidence.slice(0, 50).map((e) => ({
+                  path: e.path,
+                  rule: e.rule,
+                  ...(e.note ? { note: e.note } : {}),
+                })),
+                note: `判定：${j.recommendation}（${j.confidence}）`,
+              }
+            : {
+                platform,
+                provider: null,
+                recommendation: null,
+                confidence: null,
+                evidence: [],
+                note: "未接入热更（原生路径）",
+              };
+          // stdout 纯 JSON 契约（与 doctor/validate 同写法）：console.log 绕过测试捕获
+          if (cmdOpts.json) process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+          else p.log.message(report.note);
+          return; // 不进任何发布分支（热更/原生/多渠道全短路）
+        }
         if (decision?.mode === "ota" && decision.provider) {
           if (cmdOpts.bump !== undefined || projCfg.beta?.autoBump === true)
             p.log.warn("判定为热更（ota）：--bump / beta.autoBump 不生效（热更不动原生版本号）");
@@ -1182,7 +1251,6 @@ program
         yes: Boolean(opts.yes) || Boolean(global.assumeYes),
         delivery: opts.delivery,
         json: isJson,
-        dryRun: Boolean(opts.dryRun),
       },
       platform,
     );
