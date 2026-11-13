@@ -179,18 +179,18 @@ applift release harmony --delivery ota --rollout 20   # 测试通道最新热更
 stdout 每行一个 JSON 事件，stdin 每行一个 JSON 回写；首事件 `hello` 携带协议版本，末事件 `result` 收口（失败也是 result，`ok:false` + `error`）。确认等待上限 10 分钟，超时 CLI 主动取消。互斥守卫：与 `--json` 互斥；仅支持单平台路径；不支持 `--bump`（`beta.autoBump` 在事件流下跳过 bump 引导、直接原生管线）。
 
 ````
-→ {"type":"hello","protocol":1,"cli":"applift/4.x.x"}
+→ {"type":"hello","protocol":1,"cli":"0.13.0"}
 → {"type":"stage","stage":"judge"}
 → {"type":"judgement","platform":"harmony","recommendation":"native","confidence":"high","provider":"rn-update","evidence":[{"path":"android/app/src/main/MainActivity.kt","rule":"原生代码"}]}
 → {"type":"confirm_required","id":"delivery","question":"投递方式","choices":[{"value":"ota","label":"热更（推荐：否）"},{"value":"native","label":"原生包（直接用现有产物发内测）","recommended":true}]}
 ← {"type":"confirm","id":"delivery","value":"native"}        # stdin 回写一行 JSON
-→ {"type":"stage","stage":"publish"}
-→ {"type":"progress","stage":"publish","channel":"pgyer","pct":50,"msg":"上传中"}
+→ {"type":"stage","stage":"upload"}
+→ {"type":"progress","stage":"upload","channel":"pgyer","msg":"上传中"}
 → {"type":"log","level":"info","msg":"蒲公英发布成功"}
 → {"type":"result","ok":true,"summary":{"mode":"native","channel":"pgyer","versionName":"4.0.0"}}
 ````
 
-`result.summary.mode` 取值：`ota`（热更发布）/ `native`（原生发布）/ `preview`（`--dry-run` 判定预览）；原生路径判定需 bump 时以 `result(ok:false)` 收口并附引导文案（error 字段），UI 据此引导先跑 `applift version bump`。
+`result.summary.mode` 取值：`ota`（热更发布）/ `native`（原生发布）/ `preview`（`--dry-run` 判定预览）。事件流下投递决策恒为用户拍板（confirm 回写即 explicit），原生判定直接走发布管线（失败如「未找到构建产物」以 `result(ok:false)` 收口）；三态 bump 引导仅存在于非事件流模式（stderr + exit 1，不发事件）。
 
 ## 开发
 
