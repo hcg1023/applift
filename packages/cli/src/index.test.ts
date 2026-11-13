@@ -965,4 +965,89 @@ describe("beta --interactive-events（NDJSON 事件流，子进程级）", () =>
       }),
     ).rejects.toThrow(/--interactive-events 仅支持单平台路径/);
   });
+
+  it("--interactive-events 与 --json 互斥（含 --dry-run 三 flag 同传）→ 入口报错", async () => {
+    await expect(
+      program.parseAsync(
+        ["beta", "android", "--interactive-events", "--json", "--dry-run", "--cwd", process.cwd()],
+        { from: "user" },
+      ),
+    ).rejects.toThrow(/--interactive-events 与 --json 互斥/);
+  });
+
+  it("--interactive-events + --bump（显式）→ 入口报错（bump 编排未事件化）", async () => {
+    await expect(
+      program.parseAsync(
+        ["beta", "android", "--interactive-events", "--bump", "--cwd", process.cwd()],
+        { from: "user" },
+      ),
+    ).rejects.toThrow(/--interactive-events 暂不支持 --bump/);
+  });
+
+  it(
+    "beta.autoBump=true + flag：不触发 bump 编排（confirm 回写即 explicit，绕过三态引导），stdout 流完整",
+    { timeout: 60_000 },
+    async () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-autobump-"));
+      fs.writeFileSync(
+        path.join(dir, "package.json"),
+        JSON.stringify({
+          name: "ota-demo",
+          version: "4.0.0",
+          dependencies: { "react-native": "0.84.0" },
+        }),
+      );
+      fs.writeFileSync(
+        path.join(dir, "applift.config.ts"),
+        [
+          "import { rnFramework } from '@applift/core';",
+          "export default {",
+          "  beta: { autoBump: true },",
+          "  plugins: [rnFramework(), {",
+          "    name: 'stub-update',",
+          "    'update:register': (providers) => providers.push({",
+          "      id: 'stub-update', frameworks: ['rn'],",
+          "      judge: () => ({ recommendation: 'native', confidence: 'high', evidence: [{ path: 'src/native.kt', rule: '原生代码', note: '' }] }),",
+          "      publishToBeta: async () => { throw new Error('不应走热更'); },",
+          "      promoteToProd: async () => ({ versionName: 'x' }),",
+          "    }),",
+          "  }],",
+          "};",
+        ].join("\n"),
+      );
+      spawnSync("git", ["init", "-q"], { cwd: dir });
+      spawnSync("git", ["config", "user.email", "t@t"], { cwd: dir });
+      spawnSync("git", ["config", "user.name", "t"], { cwd: dir });
+      spawnSync("git", ["add", "-A"], { cwd: dir });
+      spawnSync("git", ["commit", "-qm", "init"], { cwd: dir });
+      try {
+        const proc = spawn(
+          process.execPath,
+          [CLI_BIN, "beta", "android", "--interactive-events", "--cwd", dir],
+          { stdio: ["pipe", "pipe", "pipe"], env: childEnv },
+        );
+        const ev = collectEvents(proc);
+        const confirmEvt = await ev.waitFor((l) => l.type === "confirm_required");
+        expect(confirmEvt.id).toBe("delivery");
+        proc.stdin!.write(
+          JSON.stringify({ type: "confirm", id: "delivery", value: "native" }) + "\n",
+        );
+        const result = (await ev.result) as { ok: boolean; error?: string };
+        expect(result.ok).toBe(false);
+        expect(result.error).toMatch(/未找到构建产物/);
+        // stdout 流完整性：所有行都是合法 NDJSON 事件（无 clack 文本混入）
+        expect(ev.lines.length).toBeGreaterThan(0);
+        expect(ev.lines.every((l) => typeof l.type === "string")).toBe(true);
+        expect(ev.lines[0]).toMatchObject({ type: "hello", protocol: 1 });
+        expect(ev.lines.at(-1)).toMatchObject({ type: "result", ok: false });
+        expect(await closed(proc)).toMatchObject({ code: 1 });
+        // autoBump 未生效：工程版本未被改动（bump 编排未被调用）
+        expect(JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")).version).toBe(
+          "4.0.0",
+        );
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });

@@ -71,10 +71,10 @@ export class EventChannel {
     question: string,
     choices: Array<{ value: string; label: string; recommended?: boolean }>,
   ): Promise<string> {
-    this.emit({ type: "confirm_required", id, question, choices });
-    // 同 id 串扰防护：上一个同名确认未回写前再发起 = 协议侧 bug，fail-fast 而非静默覆盖
+    // 同 id 串扰防护：上一个同名确认未回写前再发起 = 协议侧 bug，fail-fast（先于 emit，不污染事件流）
     if (this.#pending.has(id))
       return Promise.reject(new Error(`确认 ${id} 重复发起：上一确认尚未回写`));
+    this.emit({ type: "confirm_required", id, question, choices });
     // ES2023 lib 无 Promise.withResolvers 类型——executor 形式
     return new Promise<string>((resolve, reject) => {
       const timer: NodeJS.Timeout = setTimeout(() => {

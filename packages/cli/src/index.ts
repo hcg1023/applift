@@ -673,9 +673,21 @@ program
       throw new Error(
         "--json 当前仅支持 --dry-run 判定预览（完整机读输出走 --interactive-events）",
       );
+    // 事件流与 --json 抢 stdout：dry-run 分支 json 优先级更高会写多行 JSON 报告且不发 result，流即损坏
+    if (cmdOpts.interactiveEvents && cmdOpts.json)
+      throw new Error(
+        "--interactive-events 与 --json 互斥（判定结果走 judgement 事件，报告走 result 事件）",
+      );
     // 一期 UI 只走单平台向导：多渠道并行的事件流语义（进度归并/部分失败）未定案
     if (cmdOpts.interactiveEvents && !platform)
       throw new Error("--interactive-events 仅支持单平台路径：applift beta <platform>");
+    // --bump 显式 flag + 事件流：bump 编排（clack 直写 stdout + p.confirm 消费 stdin）未事件化。
+    // autoBump 不需要入口守卫：confirm 回写即 explicit，三态引导（autoBump 消费点）在事件流下不可达，
+    // 分支内仍有防御性守卫兜底
+    if (cmdOpts.interactiveEvents && cmdOpts.bump !== undefined)
+      throw new Error(
+        "--interactive-events 暂不支持 --bump（bump 编排未事件化）：请移除 --bump 或单独跑 applift version bump",
+      );
     if (!cmdOpts.interactiveEvents) return runBeta(platform, cmdOpts);
     const events = new EventChannel((line) => process.stdout.write(line));
     try {
@@ -877,6 +889,12 @@ async function runBeta(platform: string | undefined, cmdOpts: BetaCmdOpts, event
       }
       // 原生·需 bump：--bump / beta.autoBump 直接声明（写文件 + CHANGELOG + commit，不打 tag）
       if (cmdOpts.bump !== undefined || projCfg.beta?.autoBump === true) {
+        // bump 编排（clack 直写 stdout + p.confirm 消费 stdin）未事件化：与事件流互斥。
+        // autoBump 来自项目配置，UI 无法回避——必须在此 fail-fast（wrapper catch 自动补 result(ok:false)）
+        if (events)
+          throw new Error(
+            "--interactive-events 暂不支持 --bump / beta.autoBump（bump 编排未事件化）：请移除 --bump 或单独跑 applift version bump",
+          );
         const level =
           typeof cmdOpts.bump === "string" && cmdOpts.bump !== "" ? cmdOpts.bump : undefined;
         const globalCfg = loadGlobalConfig().config;
@@ -895,12 +913,6 @@ async function runBeta(platform: string | undefined, cmdOpts: BetaCmdOpts, event
           `然后重跑: applift beta ${platform} --delivery native`,
           `然后重跑: ${pc.cyan(`applift beta ${platform} --delivery native`)}`,
         );
-        // 事件流收口：UI 等 result 才结束向导（此分支语义 = bump 已完成、待重建重跑）
-        events?.emit({
-          type: "result",
-          ok: true,
-          summary: { mode: "bump-required", platform },
-        });
         return;
       }
       let recommend = "";
