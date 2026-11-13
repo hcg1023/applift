@@ -628,6 +628,14 @@ program
         cwd: string;
       },
     ) => {
+      // 旗标守卫（任何发布路径前）：--dry-run/--json 目前只有单平台判定预览一个消费点，
+      // 静默忽略会让「预览」意图在多渠道路径变成真实发布（探测 → 上传 → 写 history）
+      if (cmdOpts.dryRun && !platform)
+        throw new Error("--dry-run 仅支持 beta <platform> 单平台判定预览");
+      if (cmdOpts.json && !cmdOpts.dryRun)
+        throw new Error(
+          "--json 当前仅支持 --dry-run 判定预览（完整机读输出走 --interactive-events）",
+        );
       setupChannels();
       const {
         host,

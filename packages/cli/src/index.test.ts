@@ -696,6 +696,44 @@ describe("beta --dry-run --json 判定预览（发版向导第一步，不发布
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("beta --dry-run 无 platform：入口守卫拒绝（多渠道并行无判定语义，不静默真实发布）", async () => {
+    // 多渠道 fixture：若无守卫，此调用会进入 pgyer 真实发布流程（探测产物 → 渠道上传 → 写 history）
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-dry-guard-"));
+    fs.writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({
+        name: "dry-guard",
+        version: "4.0.0",
+        dependencies: { "react-native": "0.84.0" },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(dir, "applift.config.ts"),
+      "import { rnFramework } from '@applift/core';\nexport default { plugins: [rnFramework()], beta: { pgyer: { platforms: ['android'] } } };",
+    );
+    try {
+      await expect(
+        program.parseAsync(["beta", "--cwd", dir, "--dry-run", "--yes"], { from: "user" }),
+      ).rejects.toThrow(/--dry-run 仅支持 beta <platform>/);
+      // 守卫在任何发布路径前中止：history 无该工程条目
+      const entries = core.readEntries({}, path.join(testHome, "history.jsonl"));
+      expect(entries.filter((e) => e.cwd === dir)).toHaveLength(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("beta --json 无 --dry-run：明确报错（不静默接受无人消费的机读旗标）", async () => {
+    const dir = otaProviderProject("ota");
+    try {
+      await expect(
+        program.parseAsync(["beta", "android", "--cwd", dir, "--json"], { from: "user" }),
+      ).rejects.toThrow(/--json 当前仅支持 --dry-run 判定预览/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("未接入热更的平台走原生（provider.platforms 过滤）", () => {
