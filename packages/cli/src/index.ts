@@ -1941,6 +1941,8 @@ import { registerListingCommand } from "./listing.js";
 registerListingCommand(program, { setup: setupChannels, registry });
 import { REQUIRED_KEYS_BY_CHANNEL, CHANNEL_HINTS, KNOWN_CREDENTIAL_KEYS } from "./channel-meta.js";
 registerLifecycleCommands(program, { setup: setupChannels, registry });
+import { registerValidateCommand } from "./validate.js";
+registerValidateCommand(program, { setup: setupChannels, registry });
 
 program
   .command("channels")
