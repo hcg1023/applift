@@ -289,17 +289,26 @@ export default defineConfig({
       const isJson = Boolean(cmdOpts.json);
       const results: Array<{
         channel: string;
+        platform: string; // 一期：storeIds 全来自 config.android.stores → "android"；ios/harmony 渠道接入 status 时由渠道层映射扩展
+        version?: string; // ReviewStatus 无线上版本——一期不造数据，置 undefined
         state: string;
         live?: boolean;
         reason?: string;
         error?: string;
+        fetchedAt: string; // 单渠道时间戳（ISO）
       }> = [];
       let hasError = false;
       if (!isJson) p.intro(pc.bgBlue(pc.black(" applift status ")));
       for (const id of storeIds) {
         const channel = registryRef.registry.get(id);
         if (!channel) {
-          results.push({ channel: id, state: "unknown", error: "未知渠道" });
+          results.push({
+            channel: id,
+            platform: "android",
+            state: "unknown",
+            error: "未知渠道",
+            fetchedAt: new Date().toISOString(),
+          });
           hasError = true;
           if (!isJson) p.log.error(`${id}: 未知渠道`);
           continue;
@@ -307,12 +316,23 @@ export default defineConfig({
         // target 取值链与 release 一致：stores 渠道配置 > 平台段配置 > 包名自动推导
         const target = resolveChannelTarget(id, config, detected);
         if (!channel.capabilities.status) {
-          results.push({ channel: id, state: "unknown", error: "该渠道状态查询暂未接入" });
+          results.push({
+            channel: id,
+            platform: "android",
+            state: "unknown",
+            error: "该渠道状态查询暂未接入",
+            fetchedAt: new Date().toISOString(),
+          });
           continue;
         }
         try {
           const st = await channel.status({ credentials: profile, target });
-          results.push({ channel: id, ...st });
+          results.push({
+            channel: id,
+            platform: "android",
+            ...st,
+            fetchedAt: new Date().toISOString(),
+          });
           if (!isJson) {
             const icon =
               st.state === "approved"
@@ -335,12 +355,22 @@ export default defineConfig({
         } catch (e) {
           // status 查询抛错可能内嵌凭据/响应体：--json results 与人话提示共用同一脱敏值
           const msg = redactText((e as Error).message);
-          results.push({ channel: id, state: "unknown", error: msg });
+          results.push({
+            channel: id,
+            platform: "android",
+            state: "unknown",
+            error: msg,
+            fetchedAt: new Date().toISOString(),
+          });
           hasError = true;
           if (!isJson) p.log.error(`${channel.label}: ${msg}`);
         }
       }
-      if (isJson) process.stdout.write(JSON.stringify({ status: results }, null, 2) + "\n");
+      // StatusReport：ui-server StatusAggregator 消费（顶层 fetchedAt + 每项 platform/fetchedAt）
+      if (isJson)
+        process.stdout.write(
+          JSON.stringify({ fetchedAt: new Date().toISOString(), results }, null, 2) + "\n",
+        );
       else p.outro("状态查询完成");
       if (hasError) process.exitCode = 1;
     });
