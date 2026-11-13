@@ -69,6 +69,28 @@ function capture(): { out: () => string; restore: () => void } {
   };
 }
 
+/** stdout / stderr 分离捕获（--json 纯净性断言需要：stdout 只能有 JSON，人读日志走 stderr） */
+function captureSplit(): { stdout: () => string; stderr: () => string; restore: () => void } {
+  const out: string[] = [];
+  const err: string[] = [];
+  const so = vi.spyOn(process.stdout, "write").mockImplementation((b) => {
+    out.push(String(b));
+    return true;
+  });
+  const se = vi.spyOn(process.stderr, "write").mockImplementation((b) => {
+    err.push(String(b));
+    return true;
+  });
+  return {
+    stdout: () => out.join(""),
+    stderr: () => err.join(""),
+    restore: () => {
+      so.mockRestore();
+      se.mockRestore();
+    },
+  };
+}
+
 describe("doctor（配置来源可解释性）", () => {
   it("输出优先级公理、profile 来源、env 覆盖键名与热更 provider，全绿退出", async () => {
     writeCredentials();
@@ -115,6 +137,36 @@ describe("doctor（配置来源可解释性）", () => {
     try {
       await program.parseAsync(["doctor", "--cwd", dir], { from: "user" });
       expect(cap.out()).toContain("profile=personal，来源: applift use（个人）");
+    } finally {
+      cap.restore();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("doctor --json（结构化体检报告）", () => {
+  it("输出 DoctorJsonReport（stdout 纯 JSON，人读日志不进 stdout）", async () => {
+    writeCredentials();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-doctor-json-"));
+    writeProject(dir);
+    const cap = captureSplit();
+    try {
+      await program.parseAsync(["doctor", "--cwd", dir, "--json"], { from: "user" });
+      // stdout 纯净契约：整体就是一份 JSON（多余人读文本会让 parse 失败）
+      const report = JSON.parse(cap.stdout());
+      expect(report.ok).toBe(true);
+      expect(report.cwd).toBe(dir);
+      expect(report.framework).toEqual({ id: "rn", label: "React Native" });
+      expect(report.bundleIds).toEqual({});
+      expect(report.profiles).toEqual(["default"]);
+      expect(report.activeProfile).toEqual({
+        name: "default",
+        source: "项目配置 profile（团队默认）",
+      });
+      expect(report.stores).toEqual([{ id: "pgyer", credentialsOk: true, missing: [] }]);
+      expect(report.updateProviders).toEqual([{ id: "stub-update", platforms: ["harmony"] }]);
+      expect(report.channels).toEqual([]);
+      expect(cap.stderr()).not.toContain("{"); // 反向：JSON 不漏进 stderr
     } finally {
       cap.restore();
       fs.rmSync(dir, { recursive: true, force: true });

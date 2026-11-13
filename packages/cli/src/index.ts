@@ -1693,12 +1693,90 @@ function renderSummary(
     );
   }
 }
+/** doctor --json 结构化体检报告（ui-server 消费；字段来源与人读路径同源） */
+interface DoctorJsonReport {
+  ok: boolean;
+  cwd: string;
+  framework: { id: string; label: string } | null;
+  suggestedFramework: { id: string; label: string } | null;
+  bundleIds: { android?: string; harmony?: string; ios?: string; iosScheme?: string };
+  profiles: string[];
+  activeProfile: { name: string; source: string } | null;
+  stores: Array<{ id: string; credentialsOk: boolean; missing: string[] }>;
+  updateProviders: Array<{ id: string; platforms: string[] | null }>;
+  channels: string[];
+}
 
 program
   .command("doctor")
   .description("体检：框架/凭据/渠道配置")
   .option("--cwd <dir>", "项目目录", process.cwd())
-  .action(async (cmdOpts: { cwd: string }) => {
+  .option("--json", "结构化输出（stdout 给机器）")
+  .action(async (cmdOpts: { cwd: string; json?: boolean }) => {
+    setupChannels();
+    if (cmdOpts.json) {
+      // stdout 纯 JSON 契约：人读渲染（p.intro/log）全部跳过，数据收集与人读路径同源同链
+      const { host } = await loadPluginHost(cmdOpts.cwd);
+      const registered: FrameworkAdapter[] = [];
+      await host?.broadcast("framework:register", { cwd: cmdOpts.cwd }, registered);
+      let framework: FrameworkAdapter | null = null;
+      try {
+        framework = resolveFramework(cmdOpts.cwd, registered);
+      } catch {
+        framework = null; // 声明错误（多个/不匹配）：机读形态以 framework=null 表达，建议字段照常探测
+      }
+      const ids = detectBundleIds(cmdOpts.cwd);
+      const creds = loadCredentialsLayered(cmdOpts.cwd);
+      const profileNames = Object.keys(creds.profiles);
+      const { config } = await loadProjectConfig(cmdOpts.cwd);
+      // 与人读路径同链：projects.json 个人选择 > 项目配置团队默认 > 全局 defaultProfile
+      const { profile, source: profileSource } = resolveProfileSource(
+        cmdOpts.cwd,
+        config.profile,
+        undefined,
+        loadGlobalConfig().config.defaultProfile,
+      );
+      const stores = Object.keys(config.android?.stores ?? {});
+      // 与人读路径同构：仅在配置了渠道时解析凭据（resolveProfile 对缺 profile 报错，两路径同形）；
+      // activeProfile 字段镜像同名局部变量——无渠道时为 null（人读路径此时也不展示 profile）
+      let credRecord: Record<string, string> | undefined;
+      if (stores.length > 0) credRecord = resolveProfile(creds, profile, KNOWN_CREDENTIAL_KEYS);
+      // 逐渠道凭据核对与人读路径同规则：「或」型键任一备选存在即过；无元数据的渠道视为无必填键
+      const storeRows = stores.map((id) => {
+        const missing = (REQUIRED_KEYS_BY_CHANNEL[id] ?? []).filter((k) =>
+          k.includes(" 或 ") ? !k.split(" 或 ").some((alt) => credRecord?.[alt]) : !credRecord?.[k],
+        );
+        return { id, credentialsOk: missing.length === 0, missing };
+      });
+      const updateProviders: UpdateProvider[] = [];
+      await host?.broadcast("update:register", { cwd: cmdOpts.cwd }, updateProviders);
+      const suggested = framework ? null : suggestFramework(cmdOpts.cwd);
+      const report: DoctorJsonReport = {
+        ok: profileNames.length > 0 && storeRows.every((s) => s.credentialsOk),
+        cwd: cmdOpts.cwd,
+        framework: framework ? { id: framework.id, label: framework.label } : null,
+        suggestedFramework: suggested ? { id: suggested.id, label: suggested.label } : null,
+        bundleIds: {
+          android: ids.androidPkgName,
+          harmony: ids.harmonyBundleName,
+          ios: ids.iosBundleId,
+          iosScheme: ids.iosScheme,
+        },
+        profiles: profileNames,
+        activeProfile: credRecord ? { name: profile, source: profileSource } : null,
+        stores: storeRows,
+        updateProviders: updateProviders.map((pr) => ({
+          id: pr.id,
+          platforms: pr.platforms ?? null,
+        })),
+        channels: config.beta
+          ? (["pgyer", "agc", "testflight"] as const).filter((c) => config.beta?.[c])
+          : [],
+      };
+      process.stdout.write(JSON.stringify(report, null, 2) + "\n"); // console.log 持有独立 stdout 引用，绕过测试捕获；与 channels --json 同写法
+      if (!report.ok) process.exitCode = 1; // 与人读路径一致：存在待修复项 exit 1（CI 可判失败）
+      return;
+    }
     setupChannels();
     p.intro(pc.bgBlue(pc.black(" applift doctor ")));
     // 框架段：声明（插件注册）为事实，探测仅作建议——两者不一致时提示
