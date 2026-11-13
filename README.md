@@ -158,8 +158,39 @@ applift release harmony --delivery ota --rollout 20   # 测试通道最新热更
 ## AI / CI
 
 - `--json` 结构化输出（channels/status/history/listing/release 支持；stdout 纯净，进度走 stderr）；退出码 0=全成 1=有败
-- `applift channels --json` 自发现；`--yes` 无人值守；错误信息自带"缺什么键去哪拿"
-- Agent 技能文档：`SKILL.md`（可装入 Claude Code/Cursor）/ `docs/llms.txt`
+- `applift channels --json` 自发现；`--yes` 无人值守；错误信息自带"缺什么键去哪拿"；Agent 技能文档：`SKILL.md`（可装入 Claude Code/Cursor）/ `docs/llms.txt`
+
+### 机读接口（applift-ui / Agent 消费）
+
+| 命令 | 用途 | stdout 形态 |
+| --- | --- | --- |
+| `applift validate <path> --json` | 目录是否为合法 applift 工程（添加项目即时校验） | `ProjectValidation` 单对象 |
+| `applift doctor --cwd <dir> --json` | 体检报告：框架/包名/凭据/渠道逐项核对 | `DoctorJsonReport` 单对象 |
+| `applift beta <platform> --dry-run --json` | 热更判定预览（只判定不发布，无需凭据） | `BetaDryRunReport` 单对象 |
+| `applift beta <platform> --interactive-events` | 发版向导全流程事件流（见下） | stdout=NDJSON 事件，stdin=确认回写 |
+| `applift status --stores a,b --json` | 各渠道审核状态矩阵 | `{fetchedAt, results[]}`（每项含 `platform`/`fetchedAt`） |
+
+`validate` 报告要点：`ok`/`configFound`/`framework`（声明或 null）/`suggestedFramework`/`bundleIds`/`platforms`/`appliftAvailable`（工程依赖是否可执行 applift）；config 缺失或解析失败产出 `ok:false` 报告而非中断。`doctor --json` 与人读路径同源同链，profile 缺失时降级为 `ok:false` 仍出完整报告（`stores[].missing` 清单照常送达，UI 据此引导补凭据）。
+
+`beta --dry-run` 守卫：`--dry-run` 仅支持单平台（无 platform 拒绝）；`--json` 仅支持 `--dry-run` 判定预览（完整机读输出走 `--interactive-events`）。报告含 `provider`/`recommendation`（ota|native|uncertain，可为 null=未接入热更）/`confidence`/`evidence`/`note`（人读摘要）。
+
+#### `--interactive-events` 协议（NDJSON）
+
+stdout 每行一个 JSON 事件，stdin 每行一个 JSON 回写；首事件 `hello` 携带协议版本，末事件 `result` 收口（失败也是 result，`ok:false` + `error`）。确认等待上限 10 分钟，超时 CLI 主动取消。互斥守卫：与 `--json` 互斥；仅支持单平台路径；不支持 `--bump`（`beta.autoBump` 在事件流下跳过 bump 引导、直接原生管线）。
+
+````
+→ {"type":"hello","protocol":1,"cli":"applift/4.x.x"}
+→ {"type":"stage","stage":"judge"}
+→ {"type":"judgement","platform":"harmony","recommendation":"native","confidence":"high","provider":"rn-update","evidence":[{"path":"android/app/src/main/MainActivity.kt","rule":"原生代码"}]}
+→ {"type":"confirm_required","id":"delivery","question":"投递方式","choices":[{"value":"ota","label":"热更（推荐：否）"},{"value":"native","label":"原生包（直接用现有产物发内测）","recommended":true}]}
+← {"type":"confirm","id":"delivery","value":"native"}        # stdin 回写一行 JSON
+→ {"type":"stage","stage":"publish"}
+→ {"type":"progress","stage":"publish","channel":"pgyer","pct":50,"msg":"上传中"}
+→ {"type":"log","level":"info","msg":"蒲公英发布成功"}
+→ {"type":"result","ok":true,"summary":{"mode":"native","channel":"pgyer","versionName":"4.0.0"}}
+````
+
+`result.summary.mode` 取值：`ota`（热更发布）/ `native`（原生发布）/ `preview`（`--dry-run` 判定预览）；原生路径判定需 bump 时以 `result(ok:false)` 收口并附引导文案（error 字段），UI 据此引导先跑 `applift version bump`。
 
 ## 开发
 

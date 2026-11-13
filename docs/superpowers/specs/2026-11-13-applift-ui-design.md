@@ -44,7 +44,8 @@ applift-ui：applift 的图形界面。解决三个痛点——多渠道审核�
    - `→ stage / judgement / confirm_required / progress / log / result`
    - `← {"type":"confirm","id":...,"value":...}`（stdin 一行 JSON 回写）
    - 确认等待上限 10 分钟，超时 CLI 主动取消；SIGTERM 在 stage 边界停下。
-3. 补充命令面：`applift projects validate <path> --json`（添加项目即时校验）；`applift beta <p> --dry-run --json`（判定预览，发版向导第一步）。
+   - 互斥守卫：与 `--json` 互斥；仅支持单平台路径；不支持 `--bump`（`beta.autoBump` 在事件流下跳过 bump 引导）。`result.summary.mode` 取值集合：`ota` / `native` / `preview`（`--dry-run` 预览；需 bump 的原生路径以 `result(ok:false)` + 引导文案收口）。
+3. 补充命令面：`applift validate <path> --json`（单级命令，添加项目即时校验）；`applift beta <platform> --dry-run --json`（判定预览，发版向导第一步）。
 4. `--json` 输出进契约测试（快照级）；协议不匹配明确报错并提示升级。
 
 ## 5. 错误处理与降级
