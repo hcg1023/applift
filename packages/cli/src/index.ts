@@ -1419,7 +1419,9 @@ program
       host,
       framework,
       {
-        yes: Boolean(opts.yes) || Boolean(global.assumeYes),
+        // --dry-run 复刻旧语义：非交互出计划（自动用推荐值 + uncertain 中止），
+        // 避免 TTY 下弹 select 挂死伪 TTY 自动化（beta 走 preview 分支，不受影响）
+        yes: Boolean(opts.dryRun) || Boolean(opts.yes) || Boolean(global.assumeYes),
         delivery: opts.delivery,
         json: isJson,
       },

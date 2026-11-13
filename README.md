@@ -182,7 +182,7 @@ stdout 每行一个 JSON 事件，stdin 每行一个 JSON 回写；首事件 `he
 → {"type":"hello","protocol":1,"cli":"0.13.0"}
 → {"type":"stage","stage":"judge"}
 → {"type":"judgement","platform":"harmony","recommendation":"native","confidence":"high","provider":"rn-update","evidence":[{"path":"android/app/src/main/MainActivity.kt","rule":"原生代码"}]}
-→ {"type":"confirm_required","id":"delivery","question":"投递方式","choices":[{"value":"ota","label":"热更（推荐：否）"},{"value":"native","label":"原生包（直接用现有产物发内测）","recommended":true}]}
+→ {"type":"confirm_required","id":"delivery","question":"投递方式","choices":[{"value":"ota","label":"热更（推荐：否）","recommended":false},{"value":"native","label":"原生包（直接用现有产物发内测）","recommended":true}]}
 ← {"type":"confirm","id":"delivery","value":"native"}        # stdin 回写一行 JSON
 → {"type":"stage","stage":"upload"}
 → {"type":"progress","stage":"upload","channel":"pgyer","msg":"上传中"}

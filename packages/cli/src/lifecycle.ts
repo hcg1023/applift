@@ -309,7 +309,7 @@ export default defineConfig({
       const isJson = Boolean(cmdOpts.json);
       const results: Array<{
         channel: string;
-        platform: string; // 一期：storeIds 全来自 config.android.stores → "android"；ios/harmony 渠道接入 status 时由渠道层映射扩展
+        platform: string; // 渠道 id 经 platformForChannel 映射：agc→harmony、asc→ios、其余→android
         version?: string; // ReviewStatus 无线上版本——一期不造数据，置 undefined
         state: string;
         live?: boolean;

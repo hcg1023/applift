@@ -543,6 +543,29 @@ describe("beta/release 热更路由集成（判定 → 推荐 → 热更执行�
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+  it("release --dry-run 伪 TTY 下不弹 select（零侵入不变量：dry-run 自动用推荐值出计划）", async () => {
+    // 回归：resolveDeliveryMode 移除 dryRun 非交互触发后，TTY 下 release --dry-run
+    // 会落入 p.select 挂死伪 TTY 自动化；调用点须以 yes 代答复刻旧语义
+    const realTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+    const dir = otaProviderProject("ota");
+    const slot = globalThis as { __otaCaptured?: unknown[] };
+    slot.__otaCaptured = [];
+    try {
+      await program.parseAsync(["release", "harmony", "--cwd", dir, "--dry-run"], {
+        from: "user",
+      });
+      expect(slot.__otaCaptured).toEqual([]); // 判定走非交互分支出计划，未挂交互等待
+    } finally {
+      Object.defineProperty(process.stdout, "isTTY", {
+        value: realTTY,
+        configurable: true,
+      });
+
+      delete slot.__otaCaptured;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   it("非交互（无 TTY）且判定 uncertain、未给 --delivery/--yes → 直接报错要求显式指定，不挂交互", async () => {
     const dir = otaProviderProject("uncertain");
