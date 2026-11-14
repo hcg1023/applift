@@ -117,8 +117,8 @@ export class StatusAggregator {
     }
   }
 
-  /** 当前档位间隔（前台/后台） */
-  private currentIntervalMs(): number {
+  /** 当前档位间隔（前台/后台）——公开给 /api/health 透出服务端真话 */
+  currentIntervalMs(): number {
     return this.visible ? this.fgMs : this.bgMs;
   }
 

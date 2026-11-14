@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { Server } from "node:http";
+import type { Server, IncomingMessage } from "node:http";
+import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { AppliftRunner, RunningTask } from "./runner.js";
 import type { FeedEvent, ProjectSnapshot } from "./aggregator.js";
-
 /** 任务事件 = 阶段一 OutEvent 原样转发（packages/cli/src/events.ts 契约） */
 export type TaskEvent = { type?: string } & Record<string, unknown>;
 
@@ -24,6 +24,25 @@ const ARCHIVE_MAX = 20;
 const DEFAULT_CONFIRM_TIMEOUT_MS = 10 * 60_000;
 /** WS 挂载路径：独立于静态路由，升级请求按 path 过滤，不劫持其他升级 */
 const WS_PATH = "/ws";
+/** 上行消息大小上限：协议消息最大几十字节，1MiB 已远超需求（防异常客户端撑爆内存） */
+const MAX_PAYLOAD_BYTES = 1024 * 1024;
+
+/**
+ * Origin 校验（I-2）：浏览器必须来自本机页面，否则任意网页可读全量广播 + 代确认发版。
+ * 允许 http://127.0.0.1[:port] 与 http://localhost[:port]（port 缺省或与服务端口一致）；
+ * 无 Origin 的非浏览器客户端（node:ws / curl 等）放行。
+ */
+export function isAllowedOrigin(origin: string, serverPort: number): boolean {
+  let u: URL;
+  try {
+    u = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "http:") return false;
+  if (u.hostname !== "127.0.0.1" && u.hostname !== "localhost") return false;
+  return u.port === "" || u.port === String(serverPort);
+}
 
 interface ActiveTask {
   taskId: string;
@@ -81,7 +100,7 @@ export class WsChannel {
   }
 
   attach(httpServer: Server): void {
-    this.wss = new WebSocketServer({ server: httpServer, path: WS_PATH });
+    this.wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_BYTES });
     this.wss.on("connection", (ws) => {
       this.clients.add(ws);
       this.onConnectionsChange?.(this.clients.size);
@@ -96,6 +115,25 @@ export class WsChannel {
         this.clients.delete(ws);
         this.onConnectionsChange?.(this.clients.size);
       });
+    });
+    // 升级前置 Origin 校验（noServer 手动路由：path 过滤沿用，不劫持其他升级）
+    httpServer.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+      const wss = this.wss;
+      if (wss === undefined || req.url !== WS_PATH) {
+        socket.destroy();
+        return;
+      }
+      const origin = req.headers.origin;
+      if (origin !== undefined) {
+        const addr = httpServer.address();
+        const port = addr !== null && typeof addr === "object" ? addr.port : undefined;
+        if (port === undefined || !isAllowedOrigin(origin, port)) {
+          // socket.end 而非 write+destroy：先 flush 响应再关，客户端才能收到 403
+          socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+          return;
+        }
+      }
+      wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
     });
   }
 

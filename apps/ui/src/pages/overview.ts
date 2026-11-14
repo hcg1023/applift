@@ -52,8 +52,14 @@ function openMenu(anchor: HTMLElement, ctx: PageCtx, id: string, name: string): 
         toast(`移除失败：${err instanceof Error ? err.message : String(err)}`);
       }
     } else if (act === "recheck") {
-      // 一期无 REST 触发（aggregator.refreshNow 未对外）；服务端轮询会自然刷新，给真话
-      toast(`重新检查暂未接入：状态按设置的间隔自动刷新（${loadSettings().fgMinutes} 分钟内）`);
+      // 服务端真话：当前档位实际轮询间隔（前台/后台随连接态切换；连接后亦有即时刷新）
+      try {
+        const h = await ctx.client.health();
+        const min = Math.max(1, Math.round((h.refreshIntervalMs ?? 300_000) / 60_000));
+        toast(`状态由服务端自动刷新（当前每 ${min} 分钟一轮，页面打开/刷新即即时刷新）`);
+      } catch {
+        toast("状态由服务端自动刷新，页面打开/刷新即即时刷新");
+      }
     }
   });
   document.body.appendChild(pop);

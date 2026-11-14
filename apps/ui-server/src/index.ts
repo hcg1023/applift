@@ -71,10 +71,16 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
     onSnapshot: (s: ProjectSnapshot) => ws.broadcastSnapshot(s),
     onFeed: (e: FeedEvent) => ws.broadcastFeed(e),
   });
+  let prevConnections = 0;
   const ws = new WsChannel({
     // cwd 由 startBetaTask 调用方传入（REST 路由按 registry 解析项目目录）
     runnerFactory,
-    onConnectionsChange: (count) => aggregator.setVisible(count > 0),
+    onConnectionsChange: (count) => {
+      aggregator.setVisible(count > 0);
+      // 首连（0→1）即时刷新：spec「聚焦即刷新」——不等下一轮定时器（前台档最短也有 1min 空窗）
+      if (count > 0 && prevConnections === 0) aggregator.refreshNow().catch(() => {});
+      prevConnections = count;
+    },
   });
   let closing = false;
   const close = async (): Promise<void> => {
@@ -87,6 +93,8 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
   const server = await startUiServer({
     port: opts.port,
     staticDir: opts.staticDir ?? defaultStaticDir(),
+    // 「重新检查」toast 的服务端真话：当前档位（前台/后台）实际轮询间隔
+    healthInfo: () => ({ refreshIntervalMs: aggregator.currentIntervalMs() }),
     registry,
     extraApiHandlers: [
       // POST /api/tasks/beta + /api/tasks/dry-run：发版向导入口（T8）——registry 查项目拿 cwd
@@ -115,5 +123,7 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
   // 先于项目路由注册？不——startUiServer 内 registry 路由先入列，shutdown 靠前缀区分，无冲突
   ws.attach(server.httpServer);
   aggregator.setVisible(true); // 启动即开前台档轮询（无连接后转后台档）
+  // 冷启动即时一轮：首轮快照进 lastSnapshots 缓存，首个连接即刻有数据（不等定时器）
+  aggregator.refreshNow().catch(() => {});
   return { port: server.port, close, aggregator, ws };
 }

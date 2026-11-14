@@ -315,3 +315,38 @@ describe("UiClient 任务 REST", () => {
     client.stop();
   });
 });
+
+describe("UiClient task.end 缓存（I-4 竞态）", () => {
+  it("task.end 早于 taskId 回填到达也入缓存；环形 ≤20 淘汰最旧", async () => {
+    let push: ((raw: string) => void) | undefined;
+    const client = new UiClient({
+      httpBase: "http://x",
+      fetchImpl: (async () => new Response("{}")) as unknown as typeof fetch,
+      socketFactory: (_url, onMessage) => {
+        push = onMessage;
+        return { send: () => {}, close: () => {} };
+      },
+    });
+    await client.start();
+    push?.(JSON.stringify({ t: "task.end", taskId: "t-1", code: 3 }));
+    expect(client.taskEndCode("t-1")).toBe(3);
+    for (let i = 2; i <= 21; i++) {
+      push?.(JSON.stringify({ t: "task.end", taskId: `t-${i}`, code: 0 }));
+    }
+    expect(client.taskEndCode("t-1")).toBeUndefined(); // 超过 20 条淘汰最旧
+    expect(client.taskEndCode("t-21")).toBe(0);
+    client.stop();
+  });
+
+  it("health：透出服务端 refreshIntervalMs", async () => {
+    const client = new UiClient({
+      httpBase: "http://x",
+      fetchImpl: (async () =>
+        new Response(
+          JSON.stringify({ ok: true, refreshIntervalMs: 300000 }),
+        )) as unknown as typeof fetch,
+      socketFactory: () => ({ send: () => {}, close: () => {} }),
+    });
+    await expect(client.health()).resolves.toEqual({ ok: true, refreshIntervalMs: 300000 });
+  });
+});

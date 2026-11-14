@@ -18,8 +18,10 @@ export function sendJson(res: ServerResponse, status: number, body: unknown): vo
   res.end(JSON.stringify(body));
 }
 
-/** 本仓库 CLI 入口：apps/ui-server/src → ../../../packages/cli/dist/bin.mjs（构建后 dist 同深度） */
+/** CLI bin 定位：`applift ui` spawn server 时经 APPLIFT_CLI_BIN 传入真实 bin 绝对路径（发布安装布局下仓库相对路径不存在）；仓库相对路径仅开发回退 */
 export function cliBinPath(): string {
+  const fromEnv = process.env.APPLIFT_CLI_BIN;
+  if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv;
   return fileURLToPath(new URL("../../../packages/cli/dist/bin.mjs", import.meta.url));
 }
 const VALIDATE_TIMEOUT_MS = 60_000; // validate 为只读探测（findUp/config 解析），60s 远超正常耗时
@@ -64,6 +66,12 @@ export interface ProjectRoutesOptions {
   validate?: (path: string) => Promise<ValidateReport>;
 }
 
+/** Host 校验（与 /api/shutdown 同款）：浏览器页面可对任意地址发 no-cors 写请求（DNS rebinding 同理），仅认本机 Host */
+function isLocalHostHeader(req: IncomingMessage): boolean {
+  const hostname = (req.headers.host ?? "").split(":")[0];
+  return hostname === "127.0.0.1" || hostname === "localhost";
+}
+
 /** /api/projects 增删改查路由；约定：本模块不捕获未命中路径 */
 export function createProjectRoutes(opts: ProjectRoutesOptions): ApiHandler {
   const validate = opts.validate ?? validateProject;
@@ -71,6 +79,14 @@ export function createProjectRoutes(opts: ProjectRoutesOptions): ApiHandler {
   return async (req, res) => {
     const url = (req.url ?? "").split("?")[0] ?? "";
     const method = req.method ?? "GET";
+
+    // Host 校验（与 /api/tasks、/api/shutdown 同款）：写操作仅认本机 Host——浏览器页面可对任意地址发 no-cors POST/DELETE
+    const projectsRoute =
+      url === "/api/projects" || url === "/api/projects/" || /^\/api\/projects\/[^/]+$/.test(url);
+    if (projectsRoute && method !== "GET" && !isLocalHostHeader(req)) {
+      sendJson(res, 403, { ok: false, error: "forbidden host" });
+      return true;
+    }
 
     if (url === "/api/projects" || url === "/api/projects/") {
       if (method === "GET") {
@@ -165,9 +181,8 @@ export function createTaskRoutes(opts: TaskRoutesOptions): ApiHandler {
   return async (req, res) => {
     const url = (req.url ?? "").split("?")[0] ?? "";
     if (url !== "/api/tasks/beta" && url !== "/api/tasks/dry-run") return false;
-    // Host 校验（与 /api/shutdown 同款）：浏览器页面可对任意地址发 no-cors POST，仅认本机 Host
-    const hostname = (req.headers.host ?? "").split(":")[0];
-    if (hostname !== "127.0.0.1" && hostname !== "localhost") {
+    // Host 校验：同 /api/projects 写操作款（见 isLocalHostHeader 注释）
+    if (!isLocalHostHeader(req)) {
       sendJson(res, 403, { ok: false, error: "forbidden host" });
       return true;
     }

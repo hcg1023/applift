@@ -316,6 +316,8 @@ export class UiClient {
   private reconnectTimer: number | undefined;
   private closed = false;
   private connState: ConnectionState = "reconnecting";
+  /** 近期 task.end 缓存（taskId→code，插入序环形 ≤20）：REST 尚未回填 taskId 时先到的 task.end 不丢（I-4 竞态） */
+  private readonly recentTaskEnds = new Map<string, number>();
 
   constructor(opts: UiClientOptions = {}) {
     const loc = typeof location === "object" ? location : undefined;
@@ -353,6 +355,20 @@ export class UiClient {
   onTaskEnd(fn: (taskId: string, code: number) => void): () => void {
     this.taskEndListeners.add(fn);
     return () => this.taskEndListeners.delete(fn);
+  }
+
+  /** 近期已结束任务的退出码（waitTaskEnd 先查此缓存再挂等待——task.end 可能早于 taskId 回填到达） */
+  taskEndCode(taskId: string): number | undefined {
+    return this.recentTaskEnds.get(taskId);
+  }
+
+  private recordTaskEnd(taskId: string, code: number): void {
+    this.recentTaskEnds.set(taskId, code);
+    while (this.recentTaskEnds.size > 20) {
+      const oldest = this.recentTaskEnds.keys().next().value;
+      if (oldest === undefined) break;
+      this.recentTaskEnds.delete(oldest);
+    }
   }
 
   private emit(): void {
@@ -396,7 +412,10 @@ export class UiClient {
         }
         this.state.apply(m);
         if (m.t === "task") for (const fn of this.taskListeners) fn(m.taskId, m.data);
-        else if (m.t === "task.end") for (const fn of this.taskEndListeners) fn(m.taskId, m.code);
+        else if (m.t === "task.end") {
+          this.recordTaskEnd(m.taskId, m.code);
+          for (const fn of this.taskEndListeners) fn(m.taskId, m.code);
+        }
         this.emit();
       },
       () => {
@@ -464,5 +483,10 @@ export class UiClient {
 
   cancel(taskId: string): void {
     this.socket?.send(encodeCancel(taskId));
+  }
+
+  /** 服务端健康信息（含当前轮询档位间隔 refreshIntervalMs——「重新检查」toast 的服务端真话） */
+  async health(): Promise<{ ok: boolean; refreshIntervalMs?: number }> {
+    return this.json("/api/health");
   }
 }

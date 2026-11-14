@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
 import { startUiServer } from "./http.js";
+import { cliBinPath } from "./routes.js";
 import { ProjectRegistry } from "./registry.js";
 import type { ProjectEntry } from "./registry.js";
 
@@ -211,6 +212,66 @@ describe("/api/projects REST 路由", () => {
     expect(badType.status).toBe(400);
 
     expect(await rawDelete(srv.port, "/api/projects/%zz")).toBe(404);
+    await srv.close();
+  });
+});
+
+describe("cliBinPath（C-1 发布布局 bin 定位）", () => {
+  const prev = process.env.APPLIFT_CLI_BIN;
+  const restore = (): void => {
+    if (prev === undefined) delete process.env.APPLIFT_CLI_BIN;
+    else process.env.APPLIFT_CLI_BIN = prev;
+  };
+
+  it("APPLIFT_CLI_BIN 存在时优先（`applift ui` spawn server 时注入真实 bin 绝对路径）", () => {
+    process.env.APPLIFT_CLI_BIN = "/npm/lib/node_modules/@applift/cli/dist/bin.mjs";
+    expect(cliBinPath()).toBe("/npm/lib/node_modules/@applift/cli/dist/bin.mjs");
+    restore();
+  });
+
+  it("env 缺失回退仓库相对路径（开发布局）；空白 env 视同缺失", () => {
+    delete process.env.APPLIFT_CLI_BIN;
+    expect(cliBinPath()).toMatch(/packages[\\/]cli[\\/]dist[\\/]bin\.mjs$/);
+    process.env.APPLIFT_CLI_BIN = "   ";
+    expect(cliBinPath()).toMatch(/packages[\\/]cli[\\/]dist[\\/]bin\.mjs$/);
+    restore();
+  });
+});
+
+describe("/api/projects Host 校验（I-3）", () => {
+  it("非 GET 方法外域 Host → 403；GET 不受影响", async () => {
+    const staticDir = await mkdtempStatic("<html>h</html>");
+    const storeDir = await mkdtemp(join(tmpdir(), "ui-server-host-"));
+    tmpDirs.push(storeDir);
+    const srv = await startUiServer({
+      staticDir,
+      registry: new ProjectRegistry(join(storeDir, "projects.json")),
+    });
+
+    // node:http 原生请求伪造 Host（fetch 按 spec 静默丢弃 Host 禁改头）
+    const raw = (method: string, path: string, host: string): Promise<number> => {
+      const { promise, resolve } = Promise.withResolvers<number>();
+      const req = httpRequest(
+        {
+          host: "127.0.0.1",
+          port: srv.port,
+          path,
+          method,
+          headers: { host, "content-type": "application/json" },
+        },
+        (r) => resolve(r.statusCode ?? 0),
+      );
+      req.on("error", () => resolve(0));
+      req.end(method === "POST" ? JSON.stringify({}) : undefined);
+      return promise;
+    };
+
+    expect(await raw("POST", "/api/projects", "evil.example")).toBe(403);
+    expect(await raw("DELETE", "/api/projects/x", "evil.example")).toBe(403);
+    // GET 只读不受限（外域 Host 也放行——无副作用）
+    expect(await raw("GET", "/api/projects", "evil.example")).toBe(200);
+    // 本机 Host 写操作放行（过了 Host 关后按正常语义校验 body）
+    expect(await raw("POST", "/api/projects", "127.0.0.1")).toBe(400); // path 缺失 → 400（已过 Host 关）
     await srv.close();
   });
 });

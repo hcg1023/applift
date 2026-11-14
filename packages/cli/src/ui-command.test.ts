@@ -5,7 +5,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import type * as cp from "node:child_process";
 
@@ -73,6 +73,8 @@ describe("startUi", () => {
     expect(call.args).toEqual(["/fake/server/main.mjs", "--port", "47888"]);
     expect(call.opts.detached).toBe(true);
     expect(call.opts.stdio).toBe("ignore");
+    // C-1：发布布局 bin 注入——APPLIFT_CLI_BIN = resolve(argv[1])（server 侧 cliBinPath 优先读它）
+    expect(call.opts.env?.APPLIFT_CLI_BIN).toBe(resolve(process.argv[1] ?? ""));
     expect(vi.mocked(call.child.unref as () => void)).toHaveBeenCalled();
     expect(await readFile(portFile, "utf8")).toBe("47888");
     expect(openImpl).toHaveBeenCalledWith("http://127.0.0.1:47888");

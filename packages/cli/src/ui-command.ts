@@ -7,7 +7,7 @@
 import { exec, spawn } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import type { Command } from "commander";
 
@@ -130,6 +130,8 @@ export async function startUi(
   const child = spawnImpl(process.execPath, [serverEntry, "--port", String(port)], {
     detached: true,
     stdio: "ignore",
+    // 发布布局下 ui-server 内的仓库相对 cliBinPath() 不存在——把真实 bin 绝对路径带给 server（C-1）
+    env: { ...process.env, APPLIFT_CLI_BIN: resolve(process.argv[1] ?? "") },
   });
   child.unref();
 

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import WebSocket, { type RawData, type WebSocket as WsSocket } from "ws";
 import { startUiServer, type UiServerHandle } from "./http.js";
 import { AppliftRunner } from "./runner.js";
-import { WsChannel } from "./ws.js";
+import { WsChannel, isAllowedOrigin } from "./ws.js";
 import type { FeedEvent, ProjectSnapshot } from "./aggregator.js";
 
 /** ws 下行消息（服务端 → 客户端协议） */
@@ -326,6 +326,66 @@ process.stdout.write(JSON.stringify({type:"result",ok:true})+"\\n");`,
     );
     const { channel } = await setup(`node ${stub}`);
     for (let i = 0; i < 25; i++) channel.startBetaTask(`p${i}`, "android", { cwd: projDir });
-    await vi.waitFor(() => expect(channel.archivedTasks()).toHaveLength(20));
+    // 25 个 stub spawn 在慢机可能超 vi.waitFor 默认 1s——放宽到 5s（历史 flake，与逻辑无关）
+    await vi.waitFor(() => expect(channel.archivedTasks()).toHaveLength(20), { timeout: 5000 });
+  });
+
+  it("I-2 Origin 校验：外域 Origin 403 拒连；无 Origin / 本机 Origin 放行", async () => {
+    const { port } = await setup();
+
+    const responseStatus = (ws: WsSocket): Promise<number> => {
+      const { promise, resolve } = Promise.withResolvers<number>();
+      ws.once("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0));
+      ws.once("error", () => resolve(0)); // 兜底：部分路径直接 error 不带响应
+      return promise;
+    };
+    const opened = (ws: WsSocket): Promise<void> => {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      ws.once("open", resolve);
+      ws.once("error", reject);
+      return promise;
+    };
+
+    // 外域网页（可读全量广播 + 代确认发版的攻击面）→ 403
+    const evil = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+      headers: { origin: "http://evil.example" },
+    });
+    const status = await responseStatus(evil);
+    expect(status).toBe(403);
+    evil.terminate();
+
+    // 端口不匹配的本机 Origin（http://localhost:其他端口）→ 403
+    const evilPort = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+      headers: { origin: `http://localhost:${port + 1}` },
+    });
+    const status2 = await responseStatus(evilPort);
+    expect(status2).toBe(403);
+    evilPort.terminate();
+
+    // 合法本机 Origin（127.0.0.1 与 localhost、带匹配端口）→ 放行
+    for (const origin of [
+      `http://127.0.0.1:${port}`,
+      `http://localhost:${port}`,
+      "http://localhost",
+    ]) {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers: { origin } });
+      await opened(ws);
+      ws.close();
+    }
+
+    // 无 Origin 的非浏览器客户端（node:ws 默认不带）→ 放行（首个用例的 connect 已隐式覆盖，此处显式）
+    const bare = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await opened(bare);
+    bare.close();
+  });
+
+  it("isAllowedOrigin 单元：协议/主机/端口矩阵", () => {
+    expect(isAllowedOrigin("http://127.0.0.1:47600", 47600)).toBe(true);
+    expect(isAllowedOrigin("http://localhost:47600", 47600)).toBe(true);
+    expect(isAllowedOrigin("http://localhost", 47600)).toBe(true); // 缺省端口放行
+    expect(isAllowedOrigin("http://localhost:1", 47600)).toBe(false); // 端口不匹配
+    expect(isAllowedOrigin("http://evil.example", 47600)).toBe(false);
+    expect(isAllowedOrigin("https://127.0.0.1:47600", 47600)).toBe(false); // 非本机页面协议
+    expect(isAllowedOrigin("not a url", 47600)).toBe(false);
   });
 });

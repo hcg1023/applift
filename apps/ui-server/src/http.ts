@@ -4,6 +4,7 @@ import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { ProjectRegistry } from "./registry.js";
 import { createProjectRoutes, sendJson, type ApiHandler } from "./routes.js";
+import pkg from "../package.json" with { type: "json" };
 
 export interface UiServerHandle {
   /** 实际监听端口（port: 0 时由系统分配） */
@@ -25,6 +26,8 @@ export interface UiServerOptions {
   apiHandler?: ApiHandler;
   /** 追加路由（apiHandler 之后的扩展点；T8 任务路由） */
   extraApiHandlers?: ApiHandler[];
+  /** /api/health 追加字段（每次请求现算——如当前轮询档位间隔） */
+  healthInfo?: () => Record<string, unknown>;
 }
 
 const MIME: Record<string, string> = {
@@ -44,7 +47,7 @@ const MIME: Record<string, string> = {
   ".map": "application/json; charset=utf-8",
 };
 
-const VERSION = "0.1.0";
+const VERSION = pkg.version;
 
 /** 解析静态路径：拒绝越界（..），目录落 index.html；返回 null 表示 404 */
 async function resolveStatic(staticRoot: string, urlPath: string): Promise<string | null> {
@@ -80,9 +83,10 @@ async function handle(
   res: ServerResponse,
   staticRoot: string,
   apiHandlers: ApiHandler[],
+  healthInfo?: () => Record<string, unknown>,
 ): Promise<void> {
   if (req.method === "GET" && (req.url === "/api/health" || req.url === "/api/health/")) {
-    sendJson(res, 200, { ok: true, version: VERSION });
+    sendJson(res, 200, { ok: true, version: VERSION, ...(healthInfo?.() ?? {}) });
     return;
   }
   for (const apiHandler of apiHandlers) {
@@ -110,7 +114,7 @@ export async function startUiServer(opts: UiServerOptions): Promise<UiServerHand
   if (opts.apiHandler) apiHandlers.push(opts.apiHandler);
   apiHandlers.push(...(opts.extraApiHandlers ?? []));
   const httpServer = createServer((req, res) => {
-    handle(req, res, staticRoot, apiHandlers).catch((err: unknown) => {
+    handle(req, res, staticRoot, apiHandlers, opts.healthInfo).catch((err: unknown) => {
       if (!res.headersSent) sendJson(res, 500, { ok: false, error: String(err) });
       else res.destroy();
     });

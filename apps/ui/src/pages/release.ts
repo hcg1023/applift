@@ -174,7 +174,16 @@ function settle(taskId: string, r: TaskOutcome): void {
   w(r);
 }
 
-function waitTaskEnd(taskId: string): Promise<TaskOutcome> {
+function waitTaskEnd(client: UiClient, taskId: string): Promise<TaskOutcome> {
+  // I-4 竞态：task.end 可能早于 REST 回填 taskId 到达——onTaskEnd 当时因 taskId 未回填丢弃，靠 UiClient 缓存收口
+  const cached = client.taskEndCode(taskId);
+  if (cached !== undefined) {
+    return Promise.resolve(
+      cached === 0
+        ? { ok: true, summary: {} }
+        : { ok: false, summary: {}, error: `任务异常退出（code=${cached}）` },
+    );
+  }
   const { promise, resolve } = Promise.withResolvers<TaskOutcome>();
   taskWaiters.set(taskId, resolve);
   return promise;
@@ -744,7 +753,7 @@ async function runQueue(ctx: PageCtx): Promise<void> {
         // REST 往返期间用户已点取消（当时 taskId 未回走了本地收口）：补杀真实任务
         ctx.client.cancel(taskId);
       }
-      outcome = await waitTaskEnd(taskId);
+      outcome = await waitTaskEnd(ctx.client, taskId);
     } catch (err) {
       outcome = { ok: false, summary: {}, error: err instanceof Error ? err.message : String(err) };
     }
@@ -778,6 +787,11 @@ function bindStep3(el: HTMLElement, ctx: PageCtx): void {
     state.cancelled = true;
     if (exec !== null && exec.taskId !== "") {
       ctx.client.cancel(exec.taskId);
+      // 同步收口本地等待者：不等服务端 task.end 往返（迟到时 settle 已无 waiter，幂等）
+      if (exec.result === null) {
+        exec.result = { ok: false, summary: {}, error: "已取消" };
+      }
+      settle(exec.taskId, exec.result);
       toast("已请求取消");
     } else {
       state.queue = [];

@@ -4,7 +4,7 @@
  */
 import http from "node:http";
 import net from "node:net";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -152,5 +152,38 @@ describe("createServer 组合层", () => {
     expect(res.status).toBe(404);
     const health = await fetch(`http://127.0.0.1:${server.port}/api/health`);
     expect(health.status).toBe(200);
+  });
+
+  it("I-1 冷启动即时刷新：createServer 后不等定时器即有 snapshot；health 透出 refreshIntervalMs", async () => {
+    const dir = await tmpDir();
+    await writeFile(join(dir, "index.html"), "<html>ui</html>", "utf8");
+    const registry = new ProjectRegistry(join(dir, "projects.json"));
+    await registry.add(dir);
+    let statusCalls = 0;
+    const runnerFactory = (): AppliftRunner => {
+      statusCalls++;
+      return stubRunner();
+    };
+    const server = await createServer({ registry, runnerFactory, staticDir: dir, port: 0 });
+    servers.push(server);
+
+    // 启动即发起一轮（不等前台档默认 5min 定时器）
+    await vi.waitFor(() => expect(statusCalls).toBeGreaterThan(0));
+
+    // 首个 WS 连接即刻拿到缓存 snapshot（连接即回放，不等下一轮轮询）
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    ws.on("message", (raw) => {
+      if (String(raw).includes('"t":"snapshot"')) resolve();
+    });
+    ws.once("error", reject);
+    await promise;
+    ws.close();
+
+    // health 带服务端当前档位间隔（前台档默认 5min）
+    const health = (await (await fetch(`http://127.0.0.1:${server.port}/api/health`)).json()) as {
+      refreshIntervalMs?: number;
+    };
+    expect(health.refreshIntervalMs).toBe(5 * 60_000);
   });
 });
