@@ -15,7 +15,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
+  "dependencies": {
+    "ws": "^8.23.0"
+  },
   "devDependencies": {
+    "@types/ws": "^8.18.2",
     "tsdown": "^0.23.1"
   }
 }

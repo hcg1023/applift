@@ -4,3 +4,5 @@ export { ProjectRegistry, defaultStorePath } from "./registry.js";
 export type { ProjectEntry } from "./registry.js";
 export { createProjectRoutes, validateProject } from "./routes.js";
 export type { ApiHandler, ProjectRoutesOptions, ValidateReport } from "./routes.js";
+export { WsChannel } from "./ws.js";
+export type { ArchivedTask, TaskEvent } from "./ws.js";
