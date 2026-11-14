@@ -132,4 +132,12 @@ describe("status --json 契约（StatusReport 包装）", () => {
     expect(platformForChannel("huawei")).toBe("android");
     expect(platformForChannel("unknown-x")).toBe("android");
   });
+
+  it("platformForChannel：渠道自带 platform 声明优先于 id 映射", () => {
+    expect(platformForChannel("pgyer", { platform: "ios" })).toBe("ios");
+    expect(platformForChannel("agc", { platform: "android" })).toBe("android");
+    expect(platformForChannel("private-x", { platform: "harmony" })).toBe("harmony");
+    // 无声明回落 id 映射
+    expect(platformForChannel("agc", {})).toBe("harmony");
+  });
 });

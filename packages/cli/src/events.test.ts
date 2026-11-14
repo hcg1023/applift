@@ -92,6 +92,26 @@ describe("EventChannel", () => {
     await expect(e2).resolves.toMatchObject({ message: "stdin 已关闭" });
   });
 
+  it("close() 后新建 confirm 直接 reject（不再等 10min 超时）", async () => {
+    const ch = new EventChannel(() => {}, { input: new PassThrough() });
+    ch.close();
+    await expect(
+      ch.confirm("delivery", "投递方式", [{ value: "ota", label: "热更" }]),
+    ).rejects.toMatchObject({ message: "stdin 已关闭" });
+  });
+
+  it("stdin EOF 后新建 confirm 直接 reject（closed 标志由 close 事件置位）", async () => {
+    const inputs = new PassThrough();
+    const ch = new EventChannel(() => {}, { input: inputs });
+    // ES2023 lib 无 Promise.withResolvers 类型（与 events.ts 同款 executor 形式）
+    const closed = new Promise<void>((resolve) => inputs.once("close", resolve));
+    inputs.end(); // EOF → readline close → #closed = true
+    await closed;
+    await expect(
+      ch.confirm("delivery", "投递方式", [{ value: "ota", label: "热更" }]),
+    ).rejects.toMatchObject({ message: "stdin 已关闭" });
+  });
+
   it("confirm 默认超时 10 分钟", async () => {
     vi.useFakeTimers();
     const ch = new EventChannel(() => {}, { input: new PassThrough() });

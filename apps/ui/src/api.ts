@@ -485,6 +485,13 @@ export class UiClient {
     this.socket?.send(encodeCancel(taskId));
   }
 
+  /** 服务端轮询档位热接入（PUT /api/settings，毫秒；clamp 在服务端护栏内） */
+  async applyIntervals(foregroundMs: number, backgroundMs: number): Promise<void> {
+    await this.json("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ foregroundMs, backgroundMs }),
+    });
+  }
   /** 服务端健康信息（含当前轮询档位间隔 refreshIntervalMs——「重新检查」toast 的服务端真话） */
   async health(): Promise<{ ok: boolean; refreshIntervalMs?: number }> {
     return this.json("/api/health");

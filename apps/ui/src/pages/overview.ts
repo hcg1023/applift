@@ -1,6 +1,6 @@
 import { classify, type UiClient } from "../api.js";
 import type { HostAdapter } from "../host.js";
-import { esc, loadSettings, relTime, toast } from "../util.js";
+import { esc, freshness, loadSettings, relTime, toast } from "../util.js";
 
 export interface PageCtx {
   client: UiClient;
@@ -129,6 +129,9 @@ export function renderOverview(ctx: PageCtx): HTMLElement {
             <span class="oc"><b class="c-ok">${c.ok}</b>已上架</span>
             <span class="oc"><b class="c-wait">${c.wait}</b>审核中</span>
             <span class="oc"><b class="c-err">${c.err}</b>被拒</span>
+          </div>
+          <div class="ov-fresh${freshness(snap.fetchedAt).warn ? " fresh-warn" : ""}">
+            ${esc(freshness(snap.fetchedAt).text)}
           </div>
           <div class="ov-latest">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>

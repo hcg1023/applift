@@ -1,5 +1,5 @@
 import { classify, type ChannelSnapshot } from "../api.js";
-import { esc, relTime, toast } from "../util.js";
+import { esc, freshness, relTime, toast } from "../util.js";
 import type { PageCtx } from "./overview.js";
 
 /** 当前筛选存活于模块级：跨重渲染保持用户选择 */
@@ -12,8 +12,9 @@ const FILTERS: Array<{ key: string; label: string }> = [
   { key: "err", label: "被拒" },
 ];
 
-function channelRow(ch: ChannelSnapshot): string {
+function channelRow(ch: ChannelSnapshot, fetchedAt: string): string {
   const st = classify(ch.state);
+  const fresh = freshness(fetchedAt);
   const expanded =
     filter === "all" &&
     (ch.state === "rejected" || ch.reason !== undefined || ch.error !== undefined) &&
@@ -27,7 +28,7 @@ function channelRow(ch: ChannelSnapshot): string {
         ${ch.reason !== undefined || ch.error !== undefined ? `<div class="row-sub" style="display:none"></div>` : ""}
       </div>
       <span class="st c-${st.key}"><span class="dot d-${st.key}"></span>${esc(st.label)}</span>
-      <span class="fresh">${esc(relTime(Date.parse(ch.fetchedAt) || Date.now()))}</span>
+      <span class="fresh${fresh.warn ? " fresh-warn" : ""}">${esc(fresh.text)}</span>
       ${detail}
     </div>
     ${expanded ? rejectDetail(ch) : ""}`;
@@ -90,7 +91,7 @@ export function renderProject(ctx: PageCtx, id: string): HTMLElement {
     listHtml =
       items.length === 0
         ? `<div class="state-box"><div class="big">—</div><div>没有匹配该筛选的渠道</div></div>`
-        : `<div class="group" id="statusList">${items.map((ch) => channelRow(ch)).join("")}</div>`;
+        : `<div class="group" id="statusList">${items.map((ch) => channelRow(ch, snap.fetchedAt)).join("")}</div>`;
   }
 
   el.innerHTML = `

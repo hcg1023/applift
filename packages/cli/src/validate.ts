@@ -55,9 +55,12 @@ function detectAppliftAvailable(cwd: string): boolean {
 export async function validateProject(cwd: string): Promise<ProjectValidation> {
   const dir = path.resolve(cwd);
   const configPath = findUp(dir, "applift.config.ts");
+  // monorepo 探测锚定：bundleIds/appliftAvailable 跟 loadProjectConfig 的 cfgDir（config 命中目录），
+  // 子包校验按根工程算而非输入子目录（子包无 app.json/package.json 依赖时不再误判）
+  const cfgDir = configPath !== null ? path.dirname(configPath) : dir;
   // 探测类字段与 config 无关，缺 config 也照常给（UI 引导 applift init 需要）
   const suggested = suggestFramework(dir);
-  const ids = detectBundleIds(dir);
+  const ids = detectBundleIds(cfgDir);
   const platforms = [
     ...(ids.androidPkgName ? ["android"] : []),
     ...(ids.harmonyBundleName ? ["harmony"] : []),
@@ -73,7 +76,7 @@ export async function validateProject(cwd: string): Promise<ProjectValidation> {
       iosScheme: ids.iosScheme,
     },
     platforms,
-    appliftAvailable: detectAppliftAvailable(dir),
+    appliftAvailable: detectAppliftAvailable(cfgDir),
   };
   if (!configPath) {
     return {

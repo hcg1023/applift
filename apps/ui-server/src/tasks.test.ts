@@ -1,12 +1,13 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { request } from "node:http";
 import { join } from "node:path";
 import { startUiServer } from "./http.js";
-import { createTaskRoutes, type BetaDryRunReport } from "./routes.js";
+import { createSettingsRoutes, createTaskRoutes, type BetaDryRunReport } from "./routes.js";
 import { ProjectRegistry } from "./registry.js";
 import { AppliftRunner, type RunResult } from "./runner.js";
+import { clampIntervalSettings } from "./aggregator.js";
 
 const tmpDirs: string[] = [];
 afterAll(async () => {
@@ -288,5 +289,128 @@ describe("任务路由（POST /api/tasks/beta + /api/tasks/dry-run）", () => {
     expect(body.ok).toBe(false);
     expect(body.error).toContain("无法解析");
     await srv.close();
+  });
+});
+
+describe("任务去重（POST /api/tasks/beta 409）", () => {
+  it("ws 桥拒绝同项目同平台重复任务 → 409 且 error 带既有 taskId", async () => {
+    const storeDir = await mkdtemp(join(tmpdir(), "tasks-dedupe-"));
+    tmpDirs.push(storeDir);
+    const projDir = join(storeDir, "app");
+    await mkdir(projDir, { recursive: true });
+    const registry = new ProjectRegistry(join(storeDir, "projects.json"));
+    const entry = await registry.add(projDir);
+    const staticDir = await mkdtemp(join(tmpdir(), "tasks-dedupe-static-"));
+    tmpDirs.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<html>t</html>", "utf8");
+    const srv = await startUiServer({
+      staticDir,
+      registry,
+      extraApiHandlers: [
+        createTaskRoutes({
+          registry,
+          runnerFactory: (cwd) => new AppliftRunner({ cwd }),
+          startBetaTask: (projectId, platform) => {
+            if (projectId === entry.id && platform === "android")
+              throw new Error(`该项目 android 平台已有进行中的任务（taskId: existed-1）`);
+            return "new-1";
+          },
+        }),
+      ],
+    });
+    const res = await fetch(`http://127.0.0.1:${srv.port}/api/tasks/beta`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId: entry.id, platform: "android" }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("existed-1");
+    await srv.close();
+  });
+});
+
+describe("PUT /api/settings（轮询档位热接入）", () => {
+  it("clamp 护栏 + aggregator.setIntervals 生效 + settings.json 持久化", async () => {
+    const storeDir = await mkdtemp(join(tmpdir(), "settings-test-"));
+    tmpDirs.push(storeDir);
+    const settingsPath = join(storeDir, "settings.json");
+    const applied: Array<{ fg: number; bg: number }> = [];
+    const staticDir = await mkdtemp(join(tmpdir(), "settings-static-"));
+    tmpDirs.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<html>t</html>", "utf8");
+    const srv = await startUiServer({
+      staticDir,
+      extraApiHandlers: [
+        createSettingsRoutes({
+          setIntervals: (fg, bg) => applied.push({ fg, bg }),
+          settingsPath,
+        }),
+      ],
+    });
+    const base = `http://127.0.0.1:${srv.port}`;
+
+    // 正常值：毫秒直传
+    const ok = await fetch(`${base}/api/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ foregroundMs: 120_000, backgroundMs: 3_600_000 }),
+    });
+    expect(ok.status).toBe(200);
+    expect(applied).toEqual([{ fg: 120_000, bg: 3_600_000 }]);
+    expect(JSON.parse(await readFile(settingsPath, "utf8"))).toEqual({
+      foregroundMs: 120_000,
+      backgroundMs: 3_600_000,
+    });
+
+    // 低于护栏：clamp 到最短档（前台 1min / 后台 15min）
+    const clamped = await fetch(`${base}/api/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ foregroundMs: 1_000, backgroundMs: 5_000 }),
+    });
+    expect(clamped.status).toBe(200);
+    expect(applied[1]).toEqual({ fg: 60_000, bg: 900_000 });
+
+    // 非数字 → 400；非 PUT → 405
+    const bad = await fetch(`${base}/api/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ foregroundMs: "fast" }),
+    });
+    expect(bad.status).toBe(400);
+    const wrongMethod = await fetch(`${base}/api/settings`, { method: "GET" });
+    expect(wrongMethod.status).toBe(405);
+    // 非本机 Host → 403（no-cors 写防护，原始 host 头）
+    const forbidden = await new Promise<{ status: number }>((resolve) => {
+      const req = request(
+        {
+          host: "127.0.0.1",
+          port: srv.port,
+          path: "/api/settings",
+          method: "PUT",
+          headers: { host: "evil.example" },
+        },
+        (res) => {
+          res.resume();
+          resolve({ status: res.statusCode ?? 0 });
+        },
+      );
+      req.end();
+    });
+    expect(forbidden.status).toBe(403);
+    await srv.close();
+  });
+
+  it("clampIntervalSettings：缺省/非有限值回落默认档（5min/60min）", () => {
+    expect(clampIntervalSettings(undefined, undefined)).toEqual({
+      foregroundMs: 300_000,
+      backgroundMs: 3_600_000,
+    });
+    expect(clampIntervalSettings(Number.NaN, Infinity)).toEqual({
+      foregroundMs: 300_000,
+      backgroundMs: 3_600_000,
+    });
   });
 });

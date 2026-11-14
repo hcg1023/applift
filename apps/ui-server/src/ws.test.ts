@@ -388,4 +388,29 @@ process.stdout.write(JSON.stringify({type:"result",ok:true})+"\\n");`,
     expect(isAllowedOrigin("https://127.0.0.1:47600", 47600)).toBe(false); // 非本机页面协议
     expect(isAllowedOrigin("not a url", 47600)).toBe(false);
   });
+
+  it("任务去重：同 projectId+platform 已有活跃任务 → 拒绝且错误带既有 taskId", async () => {
+    const stub = await tmpFile(
+      "hang-stub.cjs",
+      `process.stdout.write(JSON.stringify({type:"hello"})+"\\n");
+setInterval(()=>{},60000);`,
+    );
+    const { port, channel } = await setup(`node ${stub}`);
+    const client = connect(port);
+    const taskId = channel.startBetaTask("p1", "android", { cwd: projDir });
+    await client.next((m) => m.t === "task");
+    // 同项目同平台再发起：抛错带既有 taskId
+    expect(() => channel.startBetaTask("p1", "android", { cwd: projDir })).toThrow(
+      new RegExp(taskId),
+    );
+    // 不同平台 / 不同项目不受影响
+    expect(() => channel.startBetaTask("p1", "ios", { cwd: projDir })).not.toThrow();
+    expect(() => channel.startBetaTask("p2", "android", { cwd: projDir })).not.toThrow();
+    // 原任务结束后可再次发起
+    client.ws.send(JSON.stringify({ t: "task.cancel", taskId }));
+    await client.next((m) => m.t === "task.end" && m.taskId === taskId);
+    expect(() => channel.startBetaTask("p1", "android", { cwd: projDir })).not.toThrow();
+    client.ws.close();
+    await channel.close();
+  });
 });

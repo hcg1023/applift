@@ -23,7 +23,7 @@ import {
 } from "@applift/core";
 import { resolveChannelTarget } from "./target.js";
 import type { Command } from "commander";
-import type { ChannelRegistry } from "@applift/core";
+import type { Channel, ChannelRegistry } from "@applift/core";
 import { KNOWN_CREDENTIAL_KEYS } from "./channel-meta.js";
 
 /** 各渠道在 init/status 场景需要的凭据键与获取指引（导出供与 CREDENTIAL_GROUPS 一致性测试对拍） */
@@ -81,8 +81,13 @@ export const CREDENTIAL_GROUPS: Record<string, string[]> = {
 /**
  * status 条目的平台归属：status 渠道清单来自 config.android.stores（android），
  * 但 agc/asc 渠道本身可被 --stores 点名查询——按渠道 id 映射真实平台。
+ * 插件渠道可用 Channel.platform 自带声明，优先于 id 映射。
  */
-export function platformForChannel(id: string): "android" | "ios" | "harmony" {
+export function platformForChannel(
+  id: string,
+  channel?: Pick<Channel, "platform">,
+): "android" | "ios" | "harmony" {
+  if (channel?.platform) return channel.platform;
   if (id === "agc") return "harmony";
   if (id === "asc") return "ios";
   return "android";
@@ -338,7 +343,7 @@ export default defineConfig({
         if (!channel.capabilities.status) {
           results.push({
             channel: id,
-            platform: platformForChannel(id),
+            platform: platformForChannel(id, channel),
             state: "unknown",
             error: "该渠道状态查询暂未接入",
             fetchedAt: new Date().toISOString(),
@@ -350,7 +355,7 @@ export default defineConfig({
           results.push({
             channel: id,
             ...st, // 渠道返回值先展开：CLI 补充字段（platform/fetchedAt）不被渠道覆盖
-            platform: platformForChannel(id),
+            platform: platformForChannel(id, channel),
             fetchedAt: new Date().toISOString(),
           });
           if (!isJson) {
@@ -377,7 +382,7 @@ export default defineConfig({
           const msg = redactText((e as Error).message);
           results.push({
             channel: id,
-            platform: platformForChannel(id),
+            platform: platformForChannel(id, channel),
             state: "unknown",
             error: msg,
             fetchedAt: new Date().toISOString(),

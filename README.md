@@ -207,6 +207,12 @@ stdout 每行一个 JSON 事件，stdin 每行一个 JSON 回写；首事件 `he
 
 `result.summary.mode` 取值：`ota`（热更发布）/ `native`（原生发布）/ `preview`（`--dry-run` 判定预览）。事件流下投递决策恒为用户拍板（confirm 回写即 explicit），原生判定直接走发布管线（失败如「未找到构建产物」以 `result(ok:false)` 收口）；三态 bump 引导仅存在于非事件流模式（stderr + exit 1，不发事件）。
 
+字段细则：
+
+- `stage` 事件取值枚举：`judge`（热更判定）/ `publish`（ota 热更发布，仅 ota 路径）/ `upload`（native 原生传包，仅 native 路径）。`progress.stage` 与最近一次 `stage` 事件同值。
+- `pct` 为保留字段（0-100 进度百分比）：当前渠道 API 均无确定性进度，一期不填；消费方按可选处理，不得假设必现。
+- ui-server WS 桥（`ws://127.0.0.1:<port>/ws`）在 CLI 事件外另有下行封装：`{"t":"task","taskId","data":<CLI 事件>}` 逐事件转发；`{"t":"task.end","taskId","code"}` 任务收口（子进程退出码）；`{"t":"tasks","data":[...]}` 新连接时回看的归档任务（最近 20 条，ring buffer）。上行 `{"t":"confirm",...}` / `{"t":"task.cancel",...}` 按 taskId 路由。
+
 ## 开发
 
 ```bash

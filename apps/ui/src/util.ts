@@ -72,6 +72,13 @@ export function relTime(ts: number, now = Date.now()): string {
   return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
+/** 状态新鲜度标注：ProjectSnapshot.fetchedAt → 「x 分钟前更新」；>30min 标 stale（橙色 warn） */
+export function freshness(iso: string, now = Date.now()): { text: string; warn: boolean } {
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return { text: "— 更新", warn: true };
+  return { text: `${relTime(ts, now)}更新`, warn: now - ts > 30 * 60_000 };
+}
+
 let toastTimer: number | undefined;
 
 export function toast(msg: string): void {

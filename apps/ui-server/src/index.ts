@@ -1,15 +1,26 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { StatusAggregator } from "./aggregator.js";
+import { StatusAggregator, clampIntervalSettings } from "./aggregator.js";
 import type { FeedEvent, ProjectSnapshot } from "./aggregator.js";
 import { startUiServer } from "./http.js";
-import { ProjectRegistry, defaultStorePath } from "./registry.js";
-import { cliBinPath, createTaskRoutes, sendJson } from "./routes.js";
+import {
+  ProjectRegistry,
+  atomicWriteFile,
+  defaultSettingsPath,
+  defaultStorePath,
+} from "./registry.js";
+import { cliBinPath, createSettingsRoutes, createTaskRoutes, sendJson } from "./routes.js";
 import { AppliftRunner } from "./runner.js";
 import { WsChannel } from "./ws.js";
 
 export { startUiServer } from "./http.js";
 export type { UiServerHandle, UiServerOptions } from "./http.js";
-export { ProjectRegistry, defaultStorePath } from "./registry.js";
+export {
+  ProjectRegistry,
+  atomicWriteFile,
+  defaultSettingsPath,
+  defaultStorePath,
+} from "./registry.js";
 export type { ProjectEntry } from "./registry.js";
 export {
   createProjectRoutes,
@@ -28,7 +39,7 @@ export type {
 export { WsChannel } from "./ws.js";
 export type { HostAdapter } from "./host.js";
 export type { ArchivedTask, TaskEvent } from "./ws.js";
-export { StatusAggregator } from "./aggregator.js";
+export { StatusAggregator, clampIntervalSettings } from "./aggregator.js";
 export type { ChannelSnapshot, FeedEvent, ProjectSnapshot } from "./aggregator.js";
 export { AppliftRunner } from "./runner.js";
 
@@ -71,6 +82,18 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
     onSnapshot: (s: ProjectSnapshot) => ws.broadcastSnapshot(s),
     onFeed: (e: FeedEvent) => ws.broadcastFeed(e),
   });
+  // 启动读取 settings.json（注册表同目录）：上次 PUT /api/settings 的档位跨重启保留；缺失/损坏回落默认档
+  const settingsPath = defaultSettingsPath();
+  try {
+    const saved = JSON.parse(readFileSync(settingsPath, "utf8")) as {
+      foregroundMs?: unknown;
+      backgroundMs?: unknown;
+    };
+    const applied = clampIntervalSettings(saved.foregroundMs, saved.backgroundMs);
+    aggregator.setIntervals(applied.foregroundMs, applied.backgroundMs);
+  } catch {
+    // 默认档
+  }
   let prevConnections = 0;
   const ws = new WsChannel({
     // cwd 由 startBetaTask 调用方传入（REST 路由按 registry 解析项目目录）
@@ -97,6 +120,11 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
     healthInfo: () => ({ refreshIntervalMs: aggregator.currentIntervalMs() }),
     registry,
     extraApiHandlers: [
+      // PUT /api/settings：轮询档位热接入（clamp 护栏 + settings.json 持久化，启动读取）
+      createSettingsRoutes({
+        setIntervals: (fg, bg) => aggregator.setIntervals(fg, bg),
+        settingsPath,
+      }),
       // POST /api/tasks/beta + /api/tasks/dry-run：发版向导入口（T8）——registry 查项目拿 cwd
       createTaskRoutes({
         registry,

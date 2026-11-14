@@ -755,7 +755,10 @@ async function runQueue(ctx: PageCtx): Promise<void> {
       }
       outcome = await waitTaskEnd(ctx.client, taskId);
     } catch (err) {
-      outcome = { ok: false, summary: {}, error: err instanceof Error ? err.message : String(err) };
+      const msg = err instanceof Error ? err.message : String(err);
+      // 发起失败（如同项目同平台重复任务 409）：明确 toast，错误同时进结果卡
+      toast(msg);
+      outcome = { ok: false, summary: {}, error: msg };
     }
     if (state.phase !== 3) return; // 离开向导（等待者已被 detach 收口）——不再写结果
     state.results.set(platform, outcome);

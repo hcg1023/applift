@@ -160,6 +160,12 @@ export class WsChannel {
     platform: string,
     opts: { args?: string[]; cwd: string; confirmTimeoutMs?: number },
   ): string {
+    // 同 projectId+platform 去重：已有活跃任务再发起 = 重复发版，拒绝并回带既有 taskId
+    for (const { task } of this.activeTasks.values()) {
+      if (task.projectId === projectId && task.platform === platform) {
+        throw new Error(`该项目 ${platform} 平台已有进行中的任务（taskId: ${task.taskId}）`);
+      }
+    }
     const taskId = randomUUID();
     const runner = this.runnerFactory(opts.cwd);
     const timeoutMs = opts.confirmTimeoutMs ?? DEFAULT_CONFIRM_TIMEOUT_MS;

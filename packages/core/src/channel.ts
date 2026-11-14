@@ -95,6 +95,11 @@ export type ReviewStatus =
 export interface Channel {
   id: string;
   label: string;
+  /**
+   * 平台归属声明（可选）：插件渠道可自带（如 pushy=android、私有渠道=harmony）；
+   * status 等按渠道 id 推平台的消费方优先读此声明，缺省回落 id 映射（agc→harmony、asc→ios、其余→android）。
+   */
+  platform?: "android" | "ios" | "harmony";
   capabilities: ChannelCapabilities;
   /** 平台错误码 → 人话提示（平台内聚：与本渠道实现放一起，humanize 层消费） */
   errorHints?: Record<string, string>;

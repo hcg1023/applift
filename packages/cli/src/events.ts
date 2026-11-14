@@ -49,7 +49,8 @@ export class EventChannel {
   readonly #confirmTimeoutMs: number;
   readonly #rl: readline.Interface;
   readonly #pending = new Map<string, Pending>();
-
+  /** close() 后为 true：EOF 再新建确认直接 reject（不再等 10min 超时） */
+  #closed = false;
   constructor(write: (line: string) => void, opts: EventChannelOptions = {}) {
     this.#write = write;
     this.#confirmTimeoutMs = opts.confirmTimeoutMs ?? 10 * 60_000;
@@ -57,6 +58,7 @@ export class EventChannel {
     this.#rl = readline.createInterface({ input: opts.input ?? process.stdin });
     this.#rl.on("line", (line) => this.#onLine(line));
     this.#rl.on("close", () => {
+      this.#closed = true;
       // stdin EOF（父进程断开/误关）：pending 确认永远等不到回写，全部 reject 而非悬挂到超时
       for (const p of this.#pending.values()) {
         clearTimeout(p.timer);
@@ -68,6 +70,7 @@ export class EventChannel {
 
   /** 关闭 stdin 监听：readline 持有 stdin 引用会阻止进程自然退出（子进程模式发完 result 后调用） */
   close(): void {
+    this.#closed = true;
     this.#rl.close();
   }
   emit(e: OutEvent): void {
@@ -82,6 +85,8 @@ export class EventChannel {
     // 同 id 串扰防护：上一个同名确认未回写前再发起 = 协议侧 bug，fail-fast（先于 emit，不污染事件流）
     if (this.#pending.has(id))
       return Promise.reject(new Error(`确认 ${id} 重复发起：上一确认尚未回写`));
+    // stdin 已关闭（EOF/close()）：新确认永远等不到回写，直接失败而非悬挂到超时
+    if (this.#closed) return Promise.reject(new Error("stdin 已关闭"));
     this.emit({ type: "confirm_required", id, question, choices });
     // ES2023 lib 无 Promise.withResolvers 类型——executor 形式
     return new Promise<string>((resolve, reject) => {

@@ -60,8 +60,8 @@ const SWITCHES: Array<{ key: SwitchKey; title: string; sub: string; label: strin
   },
 ];
 
-/** 通用设置：轮询 stepper（护栏 clamp）/ 通知开关 / 外观；localStorage 持久化 */
-export function renderSettings(_ctx: PageCtx): HTMLElement {
+/** 通用设置：轮询 stepper（护栏 clamp + PUT /api/settings 服务端热接入）/ 通知开关 / 外观 */
+export function renderSettings(ctx: PageCtx): HTMLElement {
   const settings = loadSettings();
   const el = document.createElement("section");
   el.className = "page";
@@ -96,7 +96,7 @@ export function renderSettings(_ctx: PageCtx): HTMLElement {
 
   el.innerHTML = `
     <h1>通用设置</h1>
-    <p class="page-sub">调整后立即保存，对所有项目生效（当前会话本地生效，服务端热接入为后续任务）。</p>
+    <p class="page-sub">调整后立即保存并对服务端轮询热生效（重启后保留）。</p>
     <div class="group-title">自动检查</div>
     <div class="group" id="checkGroup">${stepperHtml}</div>
     <div class="group-title">通知</div>
@@ -129,6 +129,12 @@ export function renderSettings(_ctx: PageCtx): HTMLElement {
     if (key === "fg") settings.fgMinutes = clamped;
     else settings.bgMinutes = clamped;
     saveSettings(settings);
+    // 服务端热接入：失败仅 toast（本地档位仍生效为前端展示值，下次成功写入时对齐）
+    void ctx.client
+      .applyIntervals(settings.fgMinutes * 60_000, settings.bgMinutes * 60_000)
+      .catch((err: unknown) =>
+        toast(`服务端轮询间隔保存失败：${err instanceof Error ? err.message : String(err)}`),
+      );
     wrap.querySelector(".val")!.textContent = `${clamped} 分钟`;
   });
 

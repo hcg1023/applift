@@ -102,4 +102,34 @@ describe("validate", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("monorepo 子包：appliftAvailable/bundleIds 锚定 config 命中目录（根工程）而非输入子目录", () => {
+    // 根工程：config + app.json 三端标识 + applift 依赖；子包：空目录（无 package.json/app.json）
+    fs.writeFileSync(
+      path.join(proj, "package.json"),
+      JSON.stringify({ name: "root", devDependencies: { "@applift/cli": "^0.13.0" } }),
+    );
+    fs.writeFileSync(
+      path.join(proj, "app.json"),
+      JSON.stringify({
+        android: { applicationId: "com.demo.app" },
+        harmony: { bundleName: "com.demo.app.hm" },
+        ios: { bundleIdentifier: "com.demo.app.ios" },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(proj, "applift.config.ts"),
+      `import { defineConfig, rnFramework } from "@applift/core";\nexport default defineConfig({ name: "demo", plugins: [rnFramework()] });\n`,
+    );
+    const pkg = path.join(proj, "packages", "mobile");
+    fs.mkdirSync(pkg, { recursive: true });
+    const r = cli(["validate", pkg, "--json"]);
+    expect(r.code).toBe(0);
+    const v = JSON.parse(r.stdout);
+    expect(v.ok).toBe(true);
+    expect(v.path).toBe(pkg); // path 仍是输入目录（UI 去哪发版）
+    expect(v.appliftAvailable).toBe(true); // 根 package.json 依赖（子包无 package.json 也不再误判 false）
+    expect(v.bundleIds.android).toBe("com.demo.app"); // 锚定根 app.json
+    expect(v.platforms).toEqual(["android", "harmony", "ios"]);
+  });
 });

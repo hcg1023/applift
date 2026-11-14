@@ -54,6 +54,28 @@ const STATUS_TIMEOUT_MS = 120_000;
 
 const clamp = (v: number, min: number) => Math.max(v, min);
 
+/** 服务端轮询档位持久化形态（settings.json；PUT /api/settings 契约） */
+export interface IntervalSettings {
+  foregroundMs: number;
+  backgroundMs: number;
+}
+
+/** PUT /api/settings 的 clamp 复用护栏：非有限值回落默认档，与 setIntervals 同一规则 */
+export function clampIntervalSettings(
+  foregroundMs?: unknown,
+  backgroundMs?: unknown,
+): IntervalSettings {
+  return {
+    foregroundMs:
+      typeof foregroundMs === "number" && Number.isFinite(foregroundMs)
+        ? clamp(foregroundMs, FG_MIN_MS)
+        : FG_DEFAULT_MS,
+    backgroundMs:
+      typeof backgroundMs === "number" && Number.isFinite(backgroundMs)
+        ? clamp(backgroundMs, BG_MIN_MS)
+        : BG_DEFAULT_MS,
+  };
+}
 /** baseline 轮转阈值：追加前超 1MiB 则保留后半写回 */
 const BASELINE_ROTATE_BYTES = 1024 * 1024;
 

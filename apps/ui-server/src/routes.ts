@@ -1,7 +1,8 @@
 import { AppliftRunner } from "./runner.js";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { ProjectRegistry, type ProjectEntry } from "./registry.js";
+import { ProjectRegistry, atomicWriteFile, type ProjectEntry } from "./registry.js";
+import { clampIntervalSettings } from "./aggregator.js";
 
 /** applift validate --json 的结构化结果（关注字段子集，透传 report 给前端） */
 export interface ValidateReport {
@@ -223,10 +224,17 @@ export function createTaskRoutes(opts: TaskRoutesOptions): ApiHandler {
         return true;
       }
       // UI 任务固定事件流模式（NDJSON + stdin 确认回写）；调用方只补白名单业务参数
-      const taskId = startBetaTask(projectId, platform, {
-        args: ["--interactive-events", ...sanitized.args],
-        cwd: entry.path,
-      });
+      let taskId: string;
+      try {
+        taskId = startBetaTask(projectId, platform, {
+          args: ["--interactive-events", ...sanitized.args],
+          cwd: entry.path,
+        });
+      } catch (e) {
+        // 同项目同平台已有活跃任务（ws 去重拒绝）：409，error 文案内含既有 taskId
+        sendJson(res, 409, { ok: false, error: (e as Error).message });
+        return true;
+      }
       sendJson(res, 200, { ok: true, taskId });
       return true;
     }
@@ -245,6 +253,56 @@ export function createTaskRoutes(opts: TaskRoutesOptions): ApiHandler {
         error: `applift beta --dry-run 输出无法解析（exit=${code}）${stderr.trim()}`,
       });
     }
+    return true;
+  };
+}
+
+export interface SettingsRoutesOptions {
+  /** 热接入目标：clamp 后立即生效（重建轮询定时器） */
+  setIntervals: (foregroundMs: number, backgroundMs: number) => void;
+  /** settings.json 路径（注册表同目录；启动读取、PUT 写入） */
+  settingsPath: string;
+}
+
+/** PUT /api/settings：服务端轮询档位热接入（clamp 复用 aggregator 护栏）+ 持久化 */
+export function createSettingsRoutes(opts: SettingsRoutesOptions): ApiHandler {
+  const { setIntervals, settingsPath } = opts;
+  return async (req, res) => {
+    if ((req.url ?? "").split("?")[0] !== "/api/settings") return false;
+    if (!isLocalHostHeader(req)) {
+      sendJson(res, 403, { ok: false, error: "forbidden host" });
+      return true;
+    }
+    if (req.method !== "PUT") {
+      sendJson(res, 405, { ok: false, error: "method not allowed" });
+      return true;
+    }
+    const body = await readJsonBody(req, res);
+    if (body !== null && "tooLarge" in body) return true; // 已回 413
+    if (body === null) {
+      sendJson(res, 400, { ok: false, error: "body 必须是 JSON 对象" });
+      return true;
+    }
+    const { foregroundMs, backgroundMs } = body as {
+      foregroundMs?: unknown;
+      backgroundMs?: unknown;
+    };
+    if (
+      (foregroundMs !== undefined && typeof foregroundMs !== "number") ||
+      (backgroundMs !== undefined && typeof backgroundMs !== "number")
+    ) {
+      sendJson(res, 400, { ok: false, error: "foregroundMs/backgroundMs 必须是数字（毫秒）" });
+      return true;
+    }
+    const applied = clampIntervalSettings(foregroundMs, backgroundMs);
+    setIntervals(applied.foregroundMs, applied.backgroundMs);
+    try {
+      await atomicWriteFile(settingsPath, JSON.stringify(applied, null, 2));
+    } catch (e) {
+      sendJson(res, 500, { ok: false, error: `档位已生效但持久化失败：${(e as Error).message}` });
+      return true;
+    }
+    sendJson(res, 200, { ok: true, settings: applied });
     return true;
   };
 }

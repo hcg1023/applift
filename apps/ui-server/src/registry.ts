@@ -24,9 +24,15 @@ export function defaultStorePath(): string {
   return join(uiDataHome(), "projects.json");
 }
 
-/** 原子写：同目录 .tmp 落盘后 rename（同文件系统内原子，读者不会看到半截文件） */
+/** 服务端轮询档位持久化（settings.json，与注册表同目录；启动读取、PUT /api/settings 写入） */
+export function defaultSettingsPath(): string {
+  return join(uiDataHome(), "settings.json");
+}
+
+/** 原子写：同目录 .tmp 落盘后 rename（同文件系统内原子，读者不会看到半截文件）；
+ * tmp 名带 randomUUID 后缀：并发写同目标时互不覆盖（固定名会 ENOENT——A 写的 tmp 被 B rename 走） */
 export async function atomicWriteFile(path: string, data: string): Promise<void> {
-  const tmp = `${path}.tmp`;
+  const tmp = `${path}.${randomUUID()}.tmp`;
   await writeFile(tmp, data, { encoding: "utf8", mode: 0o600 });
   await rename(tmp, path);
 }
@@ -50,10 +56,10 @@ export class ProjectRegistry {
     await atomicWriteFile(this.storePath, JSON.stringify(this.entries, null, 2));
   }
 
-  /** 同步原子写（remove 布尔签名要求返回时已落盘） */
+  /** 同步原子写（remove 布尔签名要求返回时已落盘）；tmp 随机后缀同 atomicWriteFile（防并发互踩） */
   private persistSync(): void {
     mkdirSync(dirname(this.storePath), { recursive: true });
-    const tmp = `${this.storePath}.tmp`;
+    const tmp = `${this.storePath}.${randomUUID()}.tmp`;
     writeFileSync(tmp, JSON.stringify(this.entries, null, 2), {
       encoding: "utf8",
       mode: 0o600,
