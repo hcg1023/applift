@@ -27,7 +27,7 @@ const VALIDATE_TIMEOUT_MS = 60_000; // validate 为只读探测（findUp/config 
 
 export async function validateProject(path: string): Promise<ValidateReport> {
   // 本仓库 CLI 入口直连（不经 npx）：ui-server 与 CLI 同仓发布，避免 npx 解析不确定性
-  const runner = new AppliftRunner({ bin: `${process.execPath} ${cliBinPath()}` });
+  const runner = new AppliftRunner({ bin: [process.execPath, cliBinPath()] }); // 数组形态：路径含空格不被切分
   const { code, stdout, stderr } = await runner.run(["validate", path, "--json"], {
     timeoutMs: VALIDATE_TIMEOUT_MS,
   });

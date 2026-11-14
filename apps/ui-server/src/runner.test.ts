@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { existsSync } from "node:fs";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -98,6 +98,18 @@ describe("AppliftRunner.run", () => {
     const parsed = JSON.parse(r.stdout) as { argv: string[]; cwd: string };
     expect(parsed.argv).toEqual(["--version"]);
     expect(parsed.cwd).toBe(await realpath(dir)); // macOS 下 /var 解析为 /private/var，子进程 cwd 为真身
+  });
+
+  it("bin 数组形态：含空格路径原样传递不被切分", async () => {
+    const base = await newTmpDir("spaced");
+    const dir = join(base, "applift ui test dir");
+    await mkdir(dir);
+    const script = join(dir, "argv-cwd.mjs");
+    await writeFile(script, ARGV_CWD, "utf8");
+    const r = await new AppliftRunner({ bin: [process.execPath, script] }).run(["--version"]);
+    expect(r.code).toBe(0);
+    const parsed = JSON.parse(r.stdout) as { argv: string[] };
+    expect(parsed.argv).toEqual(["--version"]);
   });
 
   it("非零退出码与 stderr 原样回传", async () => {

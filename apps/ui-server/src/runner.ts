@@ -23,7 +23,7 @@ const EXIT_SPAWN_ERROR = 127;
 /** 其余兜底：被信号杀死等 exitCode 为 null 时保证非零 */
 const EXIT_SIGNAL_FALLBACK = 1;
 
-/** 杀整棵子树：spawn detached 已把子树放进以 pid 为 pgid 的新进程组，负 pid 即组内全体 */
+/** 杀整棵子树：spawn detached 已把子树放进以 pid 为 pgid 的新进程组，负 pid 即组内全体（组杀仅 POSIX；win32 降级单进程杀） */
 function killProcessGroup(child: ChildProcess, signal: NodeJS.Signals = "SIGTERM"): void {
   if (child.pid !== undefined) {
     try {
@@ -46,12 +46,14 @@ export class AppliftRunner {
   private readonly prefixArgs: string[];
 
   /**
-   * @param opts.bin 命令串，按空白切分（"npx applift" → 命令 npx + 固定参数 applift）。
+   * @param opts.bin 命令形态两种：字符串按空白切分（"npx applift" → 命令 npx + 固定参数 applift，
+   *   含空白的路径勿用此形态）；数组原样直用（[process.execPath, "/path/with space/bin.mjs"]）。
    *   缺省 "npx applift"：在 cwd 工程上下文里解析该工程本地安装的 applift。
-   *   测试注入 node 桩脚本：`${process.execPath} /path/to/stub.mjs`（路径需无空白）。
+   *   测试注入 node 桩脚本：数组形态最稳。
    */
-  constructor(opts: { cwd?: string; bin?: string } = {}) {
-    const parts = (opts.bin ?? "npx applift").trim().split(/\s+/);
+  constructor(opts: { cwd?: string; bin?: string | string[] } = {}) {
+    const bin = opts.bin ?? "npx applift";
+    const parts = typeof bin === "string" ? bin.trim().split(/\s+/) : bin;
     this.command = parts[0] ?? "";
     this.prefixArgs = parts.slice(1);
     this.cwd = opts.cwd;
