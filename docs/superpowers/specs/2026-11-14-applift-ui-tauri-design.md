@@ -18,7 +18,7 @@ applift-ui 的桌面宿主（macOS dmg / Windows exe）：**薄壳（目标 ≤1
    node apps/ui-server（data 层不动）
 ```
 
-关键取舍：**壳的 webview 直接 load localhost**，不自嵌前端资源——webui 与壳跑同一份前端、同一加载路径，前端代码零分叉（TAURI 环境探测只影响 HostAdapter 实现）。
+关键取舍（定稿）：**壳不 load localhost，改为内嵌前端资源（`frontendDist` 指向 ui 构建产物）**。原定「直接 load localhost、前端零分叉」在实机验证中放弃——localhost 形态要求 ui-server 先就绪才能渲染首屏，启动失败即白屏无引导；内嵌后壳首屏（node 缺失/启动失败引导页）本地立现，就绪后带 `?serverPort=<n>` 导航回 index，前端经该参数拼 REST/WS 绝对地址（`shellServerPort`）。跨源访问由 ui-server 的壳 origin 白名单放行。前端代码仍零分叉（同一份产物同时服务 webui 与壳；TAURI 环境探测只影响 HostAdapter 实现）。
 
 ## 2. applift 获取：检索链（用户裁决）
 
@@ -51,12 +51,14 @@ applift-ui 的桌面宿主（macOS dmg / Windows exe）：**薄壳（目标 ≤1
 - **popup 与主窗口共用** ui-server 连接与状态（两个 webview 各自连 WS，服务端补发语义已支持）。
 - **常驻语义**：壳常驻=托盘常驻；ui-server 随壳起停（壳退出前 `POST /api/shutdown`）。后台巡航（1h 档）由 ui-server 既有轮询承担，托盘角标由 feed 事件驱动。
 
+> 实现偏离（M-1，已接受）：ui-server 未接入壳的窗口可见性——`createServer` 启动即恒开前台档轮询（`setVisible(true)`），壳隐藏到托盘也不降档。接受理由：后台巡航降档收益小（轮询本身轻量）且引入壳→服务的可见性上报通道复杂度；二期补可见性上报后再接档位切换。
+
 ## 5. 打包与分发
 
 - `apps/shell`（Tauri 2）：`tauri.conf.json` externalBin 声明 `node`？**否**——不捆绑，运行时找系统 node（`node` in PATH；找不到=引导页）。壳自身打包仅 Rust + webview 壳资源，目标 ≤15MB。
 - 产物：dmg（universal）+ nsis exe；CI 复用现有 GitHub Actions 加 matrix job。
 - 更新：壳自身不做自动更新（tauri updater 留二期）；applift 的更新走 §2。
-- 前端随壳分发但**不由壳加载**（load localhost），构建产物只在 ui-server 静态目录——壳 CI 只需构建 ui-server 侧。
+- 前端随壳内嵌分发（`frontendDist` = ui 构建产物；见 §1 定稿取舍），运行时经 `?serverPort` 注入连本机 ui-server——壳 CI 需先构建 ui 产物再打包；webui 侧构建产物仍在 ui-server 静态目录不变。
 
 ## 6. 结构与测试
 

@@ -38,8 +38,8 @@ async function probeVersionDefault(bin: string[]): Promise<string | null> {
   return v === "" ? null : v;
 }
 
-async function fetchLatestDefault(npmRunner?: AppliftRunner): Promise<string | null> {
-  const runner = npmRunner ?? new AppliftRunner({ bin: "npm" });
+async function fetchLatestDefault(npmBin: string | string[] = "npm"): Promise<string | null> {
+  const runner = new AppliftRunner({ bin: npmBin });
   const { code, stdout } = await runner.run(["view", "@applift/cli", "version"], {
     timeoutMs: NPM_VIEW_TIMEOUT_MS,
   });
@@ -53,6 +53,8 @@ export interface AvailabilityProberOptions {
   probeVersion?: (bin: string[]) => Promise<string | null>;
   /** 测试注入：npm view 桩（默认真跑 npm，10s 超时置 null） */
   fetchLatest?: () => Promise<string | null>;
+  /** npm 命令形态（e2e 注入桩脚本；默认 PATH 上的 npm） */
+  npmBin?: string | string[];
   /** 版本缓存时长（默认 60s；测试可缩短） */
   versionCacheMs?: number;
   /** 测试注入：PATH 覆盖（不污染全局 process.env）；缺省用真实 PATH */
@@ -63,7 +65,7 @@ export function createAvailabilityProber(opts: AvailabilityProberOptions = {}): 
   invalidate(): void;
 } {
   const probeVersion = opts.probeVersion ?? probeVersionDefault;
-  const fetchLatest = opts.fetchLatest ?? (() => fetchLatestDefault());
+  const fetchLatest = opts.fetchLatest ?? (() => fetchLatestDefault(opts.npmBin));
   const cacheMs = opts.versionCacheMs ?? VERSION_CACHE_MS;
   const cache = new Map<string, { at: number; version: string | null }>();
 

@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { ProjectRegistry } from "./registry.js";
-import { createProjectRoutes, sendJson, type ApiHandler } from "./routes.js";
+import { createProjectRoutes, sendJson, type ApiHandler, type ValidateReport } from "./routes.js";
 import pkg from "../package.json" with { type: "json" };
 
 export interface UiServerHandle {
@@ -22,6 +22,8 @@ export interface UiServerOptions {
   staticDir: string;
   /** 项目注册表（含持久化路径）；提供后挂 /api/projects REST 路由 */
   registry?: ProjectRegistry;
+  /** 添加项目校验注入（e2e/测试）；缺省 validateProject（CLI validate --json + 配置探测降级） */
+  validate?: (path: string) => Promise<ValidateReport>;
   /** 额外 API 路由（多个，按序尝试）；先于静态托管执行（/api/projects 之外的扩展点） */
   apiHandler?: ApiHandler;
   /** 追加路由（apiHandler 之后的扩展点；T8 任务路由） */
@@ -141,7 +143,8 @@ async function handle(
 export async function startUiServer(opts: UiServerOptions): Promise<UiServerHandle> {
   const staticRoot = resolve(opts.staticDir);
   const apiHandlers: ApiHandler[] = [];
-  if (opts.registry) apiHandlers.push(createProjectRoutes({ registry: opts.registry }));
+  if (opts.registry)
+    apiHandlers.push(createProjectRoutes({ registry: opts.registry, validate: opts.validate }));
   if (opts.apiHandler) apiHandlers.push(opts.apiHandler);
   apiHandlers.push(...(opts.extraApiHandlers ?? []));
   const httpServer = createServer((req, res) => {

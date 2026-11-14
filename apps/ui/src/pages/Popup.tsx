@@ -42,10 +42,16 @@ export default function PopupPage() {
         <div className="pp-title">
           applift
           <span className={`sub${totalErr > 0 ? " err" : ""}`}>
-            {totalErr > 0 ? `${totalErr} 个渠道被拒` : projects.length === 0 ? "还没有项目" : "状态正常"}
+            {totalErr > 0
+              ? `${totalErr} 个渠道被拒`
+              : projects.length === 0
+                ? "还没有项目"
+                : "状态正常"}
           </span>
         </div>
-        <span className={`pp-conn${connected ? "" : " off"}`}>{connected ? "已连接" : "重连中…"}</span>
+        <span className={`pp-conn${connected ? "" : " off"}`}>
+          {connected ? "已连接" : "重连中…"}
+        </span>
       </div>
       {loading ? (
         <div className="state-box pp-loading">

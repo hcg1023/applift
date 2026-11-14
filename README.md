@@ -173,6 +173,8 @@ applift ui --stop          # 停止服务（无运行实例时提示，不算失
 ### 桌面壳（Tauri，applift.app）
 
 ```bash
+# 前置：先在仓库根构建（壳打包内嵌 ui 前端产物与 ui-server bundle）
+pnpm install && pnpm build
 # 仓库内构建（macOS 出 dmg / Windows 出 NSIS 安装包；需 Rust 工具链）
 cd apps/shell && npm ci && npm run build        # 产物：src-tauri/target*/release/bundle/
 # 开发形态（连本仓 ui-server dist，资源不打包）

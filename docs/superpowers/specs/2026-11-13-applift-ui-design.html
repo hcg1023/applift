@@ -1,10 +1,10 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN" data-theme="light">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>applift-ui 全场景设计规格 · v1</title>
-<!--
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>applift-ui 全场景设计规格 · v1</title>
+    <!--
   applift-ui 设计规格（设计稿交付物）
   ================================
   覆盖：一期 MVP（项目列表 / 状态驾驶舱 / beta 发版向导 / 应用设置 / 全局元素）
@@ -16,505 +16,1268 @@
   规格/尺寸标注均放在 HTML 注释中，不污染画面。
   窗口区间：webui 1280–2560px；popup 固定 360×480（macOS 状态栏规范 ≤ 384 宽）。
 -->
-<style>
-:root{
-  /* ===== applift-ui 语义 token（浅色为主，Apple 风格）===== */
-  --bg-canvas:#F5F5F7;        /* 窗口底 */
-  --bg-primary:#FFFFFF;       /* 卡片/主面板 */
-  --bg-secondary:#F9F9FB;     /* 分组内嵌底 */
-  --bg-sidebar:#ECECF0;
-  --label-primary:rgba(0,0,0,.88);
-  --label-secondary:rgba(0,0,0,.55);
-  --label-tertiary:rgba(0,0,0,.35);
-  --separator:rgba(0,0,0,.09);
-  --fill-control:rgba(120,120,128,.16);   /* 控件底（Apple systemGray fill）*/
-  --accent:#0A62FF;           /* 品牌蓝（操作/链接）*/
-  --status-success:#28A745;
-  --status-pending:#B8860B;   /* 审核中（琥珀，深字）*/
-  --status-rejected:#D0342C;
-  --status-stale:#8E8E93;     /* 旧数据 */
-  --status-info:#0A62FF;
-  --radius-card:12px; --radius-group:10px; --radius-control:8px;
-  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px;
-  --space-5:24px; --space-6:32px; --space-7:48px;
-  --shadow-card:0 1px 2px rgba(0,0,0,.04),0 4px 12px rgba(0,0,0,.05);
-  --font: -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",sans-serif;
-}
-[data-theme="dark"]{
-  --bg-canvas:#1C1C1E; --bg-primary:#2A2A2D; --bg-secondary:#232326;
-  --bg-sidebar:#232326;
-  --label-primary:rgba(255,255,255,.92); --label-secondary:rgba(255,255,255,.60);
-  --label-tertiary:rgba(255,255,255,.35); --separator:rgba(255,255,255,.12);
-  --fill-control:rgba(120,120,128,.28);
-  --accent:#4D95FF; --status-success:#30D158; --status-pending:#E0A020;
-  --status-rejected:#FF6B5E; --status-stale:#98989F; --status-info:#4D95FF;
-  --shadow-card:0 1px 2px rgba(0,0,0,.3),0 4px 12px rgba(0,0,0,.25);
-}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg-canvas);color:var(--label-primary);
-  font-family:var(--font);font-size:14px;line-height:1.6;}
-.wrap{max-width:1180px;margin:0 auto;padding:var(--space-6) var(--space-5);}
-h1{font-size:28px;font-weight:700;letter-spacing:-.02em;margin:var(--space-2) 0}
-h2{font-size:20px;font-weight:650;letter-spacing:-.01em;margin:var(--space-7) 0 var(--space-3);
-  padding-top:var(--space-4);border-top:1px solid var(--separator)}
-h3{font-size:15px;font-weight:600;margin:var(--space-5) 0 var(--space-2)}
-p,li{color:var(--label-primary)}
-code{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:12.5px;
-  background:var(--fill-control);padding:1px 5px;border-radius:5px;}
-.card{background:var(--bg-primary);border-radius:var(--radius-card);
-  box-shadow:var(--shadow-card);padding:var(--space-5);margin:var(--space-4) 0;}
-table{border-collapse:collapse;width:100%;margin:var(--space-3) 0;font-size:13px}
-th{color:var(--label-secondary);font-weight:600;text-align:left;
-  border-bottom:1px solid var(--separator);padding:6px 10px;white-space:nowrap}
-td{border-bottom:1px solid var(--separator);padding:6px 10px;vertical-align:top}
-.tag{display:inline-block;font-size:11px;font-weight:600;padding:1px 8px;border-radius:99px;
-  vertical-align:1px;white-space:nowrap}
-.tag-mvp{background:rgba(10,98,255,.12);color:var(--status-info)}
-.tag-p2{background:rgba(184,134,11,.14);color:var(--status-pending)}
-.tag-future{background:rgba(142,142,147,.18);color:var(--label-secondary)}
-.state b{color:var(--label-primary)}
-.state{margin:var(--space-2) 0;padding-left:0;list-style:none}
-.state li{padding:6px 0 6px 18px;position:relative;color:var(--label-secondary)}
-.state li::before{content:"";position:absolute;left:2px;top:13px;width:6px;height:6px;
-  border-radius:50%;background:var(--label-tertiary)}
-.kv{color:var(--label-secondary)}
-.swatch{display:inline-block;width:12px;height:12px;border-radius:3px;
-  vertical-align:-1px;margin-right:6px;border:1px solid var(--separator)}
-figure{margin:var(--space-4) 0;padding:var(--space-4);
-  background:var(--bg-primary);border-radius:var(--radius-card);box-shadow:var(--shadow-card);
-  overflow-x:auto}
-figcaption{font-size:12.5px;color:var(--label-secondary);margin-top:var(--space-3)}
-svg text{font-family:var(--font)}
-.note{font-size:12.5px;color:var(--label-secondary);background:var(--bg-secondary);
-  border-left:3px solid var(--accent);padding:8px 14px;border-radius:0 8px 8px 0;margin:var(--space-3) 0}
-</style>
-</head>
-<body>
-<div class="wrap" id="top">
+    <style>
+      :root {
+        /* ===== applift-ui 语义 token（浅色为主，Apple 风格）===== */
+        --bg-canvas: #f5f5f7; /* 窗口底 */
+        --bg-primary: #ffffff; /* 卡片/主面板 */
+        --bg-secondary: #f9f9fb; /* 分组内嵌底 */
+        --bg-sidebar: #ececf0;
+        --label-primary: rgba(0, 0, 0, 0.88);
+        --label-secondary: rgba(0, 0, 0, 0.55);
+        --label-tertiary: rgba(0, 0, 0, 0.35);
+        --separator: rgba(0, 0, 0, 0.09);
+        --fill-control: rgba(120, 120, 128, 0.16); /* 控件底（Apple systemGray fill）*/
+        --accent: #0a62ff; /* 品牌蓝（操作/链接）*/
+        --status-success: #28a745;
+        --status-pending: #b8860b; /* 审核中（琥珀，深字）*/
+        --status-rejected: #d0342c;
+        --status-stale: #8e8e93; /* 旧数据 */
+        --status-info: #0a62ff;
+        --radius-card: 12px;
+        --radius-group: 10px;
+        --radius-control: 8px;
+        --space-1: 4px;
+        --space-2: 8px;
+        --space-3: 12px;
+        --space-4: 16px;
+        --space-5: 24px;
+        --space-6: 32px;
+        --space-7: 48px;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.05);
+        --font:
+          -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue",
+          sans-serif;
+      }
+      [data-theme="dark"] {
+        --bg-canvas: #1c1c1e;
+        --bg-primary: #2a2a2d;
+        --bg-secondary: #232326;
+        --bg-sidebar: #232326;
+        --label-primary: rgba(255, 255, 255, 0.92);
+        --label-secondary: rgba(255, 255, 255, 0.6);
+        --label-tertiary: rgba(255, 255, 255, 0.35);
+        --separator: rgba(255, 255, 255, 0.12);
+        --fill-control: rgba(120, 120, 128, 0.28);
+        --accent: #4d95ff;
+        --status-success: #30d158;
+        --status-pending: #e0a020;
+        --status-rejected: #ff6b5e;
+        --status-stale: #98989f;
+        --status-info: #4d95ff;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 12px rgba(0, 0, 0, 0.25);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg-canvas);
+        color: var(--label-primary);
+        font-family: var(--font);
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .wrap {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: var(--space-6) var(--space-5);
+      }
+      h1 {
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        margin: var(--space-2) 0;
+      }
+      h2 {
+        font-size: 20px;
+        font-weight: 650;
+        letter-spacing: -0.01em;
+        margin: var(--space-7) 0 var(--space-3);
+        padding-top: var(--space-4);
+        border-top: 1px solid var(--separator);
+      }
+      h3 {
+        font-size: 15px;
+        font-weight: 600;
+        margin: var(--space-5) 0 var(--space-2);
+      }
+      p,
+      li {
+        color: var(--label-primary);
+      }
+      code {
+        font-family: "SF Mono", ui-monospace, Menlo, monospace;
+        font-size: 12.5px;
+        background: var(--fill-control);
+        padding: 1px 5px;
+        border-radius: 5px;
+      }
+      .card {
+        background: var(--bg-primary);
+        border-radius: var(--radius-card);
+        box-shadow: var(--shadow-card);
+        padding: var(--space-5);
+        margin: var(--space-4) 0;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: var(--space-3) 0;
+        font-size: 13px;
+      }
+      th {
+        color: var(--label-secondary);
+        font-weight: 600;
+        text-align: left;
+        border-bottom: 1px solid var(--separator);
+        padding: 6px 10px;
+        white-space: nowrap;
+      }
+      td {
+        border-bottom: 1px solid var(--separator);
+        padding: 6px 10px;
+        vertical-align: top;
+      }
+      .tag {
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 1px 8px;
+        border-radius: 99px;
+        vertical-align: 1px;
+        white-space: nowrap;
+      }
+      .tag-mvp {
+        background: rgba(10, 98, 255, 0.12);
+        color: var(--status-info);
+      }
+      .tag-p2 {
+        background: rgba(184, 134, 11, 0.14);
+        color: var(--status-pending);
+      }
+      .tag-future {
+        background: rgba(142, 142, 147, 0.18);
+        color: var(--label-secondary);
+      }
+      .state b {
+        color: var(--label-primary);
+      }
+      .state {
+        margin: var(--space-2) 0;
+        padding-left: 0;
+        list-style: none;
+      }
+      .state li {
+        padding: 6px 0 6px 18px;
+        position: relative;
+        color: var(--label-secondary);
+      }
+      .state li::before {
+        content: "";
+        position: absolute;
+        left: 2px;
+        top: 13px;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--label-tertiary);
+      }
+      .kv {
+        color: var(--label-secondary);
+      }
+      .swatch {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        vertical-align: -1px;
+        margin-right: 6px;
+        border: 1px solid var(--separator);
+      }
+      figure {
+        margin: var(--space-4) 0;
+        padding: var(--space-4);
+        background: var(--bg-primary);
+        border-radius: var(--radius-card);
+        box-shadow: var(--shadow-card);
+        overflow-x: auto;
+      }
+      figcaption {
+        font-size: 12.5px;
+        color: var(--label-secondary);
+        margin-top: var(--space-3);
+      }
+      svg text {
+        font-family: var(--font);
+      }
+      .note {
+        font-size: 12.5px;
+        color: var(--label-secondary);
+        background: var(--bg-secondary);
+        border-left: 3px solid var(--accent);
+        padding: 8px 14px;
+        border-radius: 0 8px 8px 0;
+        margin: var(--space-3) 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap" id="top">
+      <h1>applift-ui 全场景设计规格</h1>
+      <p class="kv">
+        版本 v1 · 2026-11-13 · 风格基准：Apple HIG（克制、留白、SF 排版气质、少边框多分组）·
+        浅色为主 + 深色模式 · 形态：一期 webui（<code>applift ui</code> localhost），二期 Tauri 壳
+      </p>
 
-<h1>applift-ui 全场景设计规格</h1>
-<p class="kv">版本 v1 · 2026-11-13 · 风格基准：Apple HIG（克制、留白、SF 排版气质、少边框多分组）· 浅色为主 + 深色模式 · 形态：一期 webui（<code>applift ui</code> localhost），二期 Tauri 壳</p>
+      <p>
+        标注约定：<span class="tag tag-mvp">MVP 必须</span> 一期实现 ·
+        <span class="tag tag-p2">二期</span> ·
+        <span class="tag tag-future">占位</span>（只做布局预留，不细化）
+      </p>
 
-<p>标注约定：<span class="tag tag-mvp">MVP 必须</span> 一期实现 · <span class="tag tag-p2">二期</span> · <span class="tag tag-future">占位</span>（只做布局预留，不细化）</p>
+      <h2>0. 设计系统基线（token）</h2>
+      <div class="card">
+        <p>
+          所有颜色经语义 token 引用（见本文件 <code>&lt;style&gt;</code> 的 <code>:root</code> /
+          <code>[data-theme="dark"]</code>），组件层禁止裸色。
+        </p>
+        <table>
+          <tr>
+            <th>类别</th>
+            <th>token</th>
+            <th>浅色值</th>
+            <th>说明</th>
+          </tr>
+          <tr>
+            <td>画布/面板</td>
+            <td>bg-canvas / bg-primary / bg-secondary / bg-sidebar</td>
+            <td>#F5F5F7 / #FFFFFF / #F9F9FB / #ECECF0</td>
+            <td>三层灰阶，靠留白与底色差分组，不画边框线</td>
+          </tr>
+          <tr>
+            <td>文字</td>
+            <td>label-primary / secondary / tertiary</td>
+            <td>黑 88% / 55% / 35%</td>
+            <td>三级字阶，禁再细</td>
+          </tr>
+          <tr>
+            <td>分隔</td>
+            <td>separator</td>
+            <td>黑 9%</td>
+            <td>仅分组间 hairline</td>
+          </tr>
+          <tr>
+            <td>品牌</td>
+            <td>accent</td>
+            <td>#0A62FF（暗色 #4D95FF）</td>
+            <td>主操作、链接、进行中</td>
+          </tr>
+          <tr>
+            <td>状态</td>
+            <td>success / pending / rejected / stale / info</td>
+            <td>绿 / 琥珀 / 红 / 灰 / 蓝</td>
+            <td>语义唯一：跃迁成功、审核中、被拒/错误、旧数据、信息</td>
+          </tr>
+          <tr>
+            <td>排版</td>
+            <td colspan="3">
+              系统栈（-apple-system → PingFang SC）；正文 13–14px，标题 17/20/28px 三级；等宽 12.5px
+              用于版本号、路径、commit
+            </td>
+          </tr>
+          <tr>
+            <td>圆角/阴影</td>
+            <td colspan="3">
+              卡片 12 / 分组 10 / 控件 8；阴影仅一层浅投影（card token），禁多层堆叠
+            </td>
+          </tr>
+          <tr>
+            <td>动效</td>
+            <td colspan="3">
+              仅功能性过渡：状态点变色 150ms、面板展开 200ms ease-out、进度条 width
+              过渡；禁装饰动效与图表动画
+            </td>
+          </tr>
+        </table>
+        <p class="kv">
+          深色模式：整表 token 翻转，组件零改动；跟随系统 + 手动覆盖（设置内三档：跟随/浅/深）。
+        </p>
+      </div>
 
-<h2>0. 设计系统基线（token）</h2>
-<div class="card">
-<p>所有颜色经语义 token 引用（见本文件 <code>&lt;style&gt;</code> 的 <code>:root</code> / <code>[data-theme="dark"]</code>），组件层禁止裸色。</p>
-<table>
-<tr><th>类别</th><th>token</th><th>浅色值</th><th>说明</th></tr>
-<tr><td>画布/面板</td><td>bg-canvas / bg-primary / bg-secondary / bg-sidebar</td><td>#F5F5F7 / #FFFFFF / #F9F9FB / #ECECF0</td><td>三层灰阶，靠留白与底色差分组，不画边框线</td></tr>
-<tr><td>文字</td><td>label-primary / secondary / tertiary</td><td>黑 88% / 55% / 35%</td><td>三级字阶，禁再细</td></tr>
-<tr><td>分隔</td><td>separator</td><td>黑 9%</td><td>仅分组间 hairline</td></tr>
-<tr><td>品牌</td><td>accent</td><td>#0A62FF（暗色 #4D95FF）</td><td>主操作、链接、进行中</td></tr>
-<tr><td>状态</td><td>success / pending / rejected / stale / info</td><td>绿 / 琥珀 / 红 / 灰 / 蓝</td><td>语义唯一：跃迁成功、审核中、被拒/错误、旧数据、信息</td></tr>
-<tr><td>排版</td><td colspan="3">系统栈（-apple-system → PingFang SC）；正文 13–14px，标题 17/20/28px 三级；等宽 12.5px 用于版本号、路径、commit</td></tr>
-<tr><td>圆角/阴影</td><td colspan="3">卡片 12 / 分组 10 / 控件 8；阴影仅一层浅投影（card token），禁多层堆叠</td></tr>
-<tr><td>动效</td><td colspan="3">仅功能性过渡：状态点变色 150ms、面板展开 200ms ease-out、进度条 width 过渡；禁装饰动效与图表动画</td></tr>
-</table>
-<p class="kv">深色模式：整表 token 翻转，组件零改动；跟随系统 + 手动覆盖（设置内三档：跟随/浅/深）。</p>
-</div>
+      <h2>1. 全局框架 <span class="tag tag-mvp">MVP 必须</span></h2>
+      <div class="card">
+        <h3>布局结构</h3>
+        <p>
+          左侧 220px 固定侧栏 + 右侧内容区（min 720px，1280–2560 自适应；侧栏在 &lt;1080px
+          折叠为图标栏 56px）。
+        </p>
+        <ul>
+          <li>
+            侧栏（bg-sidebar，无边框，右侧 hairline）：顶部 applift logo
+            字标；导航项：状态驾驶舱（首屏/默认）、项目、发版（子项：Beta 向导 / Release 向导<span
+              class="tag tag-p2"
+              >二期</span
+            >）、凭据<span class="tag tag-p2">二期</span>、构建<span class="tag tag-future"
+              >占位</span
+            >（灰置，标「规划中」）、底部：设置 ⚙、深浅色切换。
+          </li>
+          <li>侧栏徽标：驾驶舱项右侧数字徽标 = 未读状态变更数（与通知中心联动，点开即清）。</li>
+          <li>
+            内容区顶部 52px 工具条：页面标题 + 右侧「未读变更」铃铛按钮（含红点计数）+
+            全局手动刷新。
+          </li>
+        </ul>
+        <h3>信息层级</h3>
+        <p>
+          一级导航 = 功能域；页面内靠「分组卡片 +
+          组标题」分层，不用嵌套边框。错误横幅为唯一全局浮层，吸附在工具条下方。
+        </p>
+        <h3>组件清单（全局）</h3>
+        <p>
+          侧栏导航项（icon+label+badge）、工具条、铃铛+红点、刷新按钮（旋转 150ms×2
+          表示进行中）、错误横幅、通知下拉面板、Toast（右下角，自动消失
+          4s，错误态常驻可关闭）、四态骨架组件（Skeleton 行）、状态徽章
+          StatusBadge（色点+文字，全系统唯一状态表达）、新鲜度戳 FreshnessLabel（相对时间 + 超阈值变
+          stale 灰并加「·旧」）。
+        </p>
+        <h3>四态设计（全局元素）</h3>
+        <ul class="state">
+          <li><b>正常</b>：侧栏徽标 = 0 时隐藏；铃铛无红点。</li>
+          <li>
+            <b>加载</b>：路由切换时内容区整体 Skeleton（驾驶舱用行级骨架，见
+            §3）；全局刷新按钮旋转。
+          </li>
+          <li>
+            <b>错误</b>：错误横幅（rejected 底 8%
+            透明度、左侧红条、标题+一行原因+「去处理」按钮）。凭据缺失类错误横幅文案带渠道名，按钮跳「凭据管理」（一期无此页则跳设置内凭据说明
+            + 复制
+            <code>~/.applift/credentials.toml</code>
+            路径按钮）。横幅可手动收起，凭据类收起后铃铛下保留一条置顶。
+          </li>
+          <li><b>空</b>：无项目时侧栏保留全部导航；各页空态见各节。</li>
+        </ul>
+        <h3>交互说明</h3>
+        <p>
+          键盘：⌘R 全局刷新、⌘K
+          快速跳项目（一期可降级为不实现，结构预留）。通知面板从铃铛向下弹出（200ms），点击条目跳驾驶舱并高亮对应格子
+          1.5s。后台轮询由 UI 层调度：前台 5min / 后台可调（见 §5），每次轮询后仅状态点/徽章做 150ms
+          色彩过渡，无整页刷新。
+        </p>
+      </div>
 
-<h2>1. 全局框架 <span class="tag tag-mvp">MVP 必须</span></h2>
-<div class="card">
-<h3>布局结构</h3>
-<p>左侧 220px 固定侧栏 + 右侧内容区（min 720px，1280–2560 自适应；侧栏在 &lt;1080px 折叠为图标栏 56px）。</p>
-<ul>
-<li>侧栏（bg-sidebar，无边框，右侧 hairline）：顶部 applift logo 字标；导航项：状态驾驶舱（首屏/默认）、项目、发版（子项：Beta 向导 / Release 向导<span class="tag tag-p2">二期</span>）、凭据<span class="tag tag-p2">二期</span>、构建<span class="tag tag-future">占位</span>（灰置，标「规划中」）、底部：设置 ⚙、深浅色切换。</li>
-<li>侧栏徽标：驾驶舱项右侧数字徽标 = 未读状态变更数（与通知中心联动，点开即清）。</li>
-<li>内容区顶部 52px 工具条：页面标题 + 右侧「未读变更」铃铛按钮（含红点计数）+ 全局手动刷新。</li>
-</ul>
-<h3>信息层级</h3>
-<p>一级导航 = 功能域；页面内靠「分组卡片 + 组标题」分层，不用嵌套边框。错误横幅为唯一全局浮层，吸附在工具条下方。</p>
-<h3>组件清单（全局）</h3>
-<p>侧栏导航项（icon+label+badge）、工具条、铃铛+红点、刷新按钮（旋转 150ms×2 表示进行中）、错误横幅、通知下拉面板、Toast（右下角，自动消失 4s，错误态常驻可关闭）、四态骨架组件（Skeleton 行）、状态徽章 StatusBadge（色点+文字，全系统唯一状态表达）、新鲜度戳 FreshnessLabel（相对时间 + 超阈值变 stale 灰并加「·旧」）。</p>
-<h3>四态设计（全局元素）</h3>
-<ul class="state">
-<li><b>正常</b>：侧栏徽标 = 0 时隐藏；铃铛无红点。</li>
-<li><b>加载</b>：路由切换时内容区整体 Skeleton（驾驶舱用行级骨架，见 §3）；全局刷新按钮旋转。</li>
-<li><b>错误</b>：错误横幅（rejected 底 8% 透明度、左侧红条、标题+一行原因+「去处理」按钮）。凭据缺失类错误横幅文案带渠道名，按钮跳「凭据管理」（一期无此页则跳设置内凭据说明 + 复制 <code>~/.applift/credentials.toml</code> 路径按钮）。横幅可手动收起，凭据类收起后铃铛下保留一条置顶。</li>
-<li><b>空</b>：无项目时侧栏保留全部导航；各页空态见各节。</li>
-</ul>
-<h3>交互说明</h3>
-<p>键盘：⌘R 全局刷新、⌘K 快速跳项目（一期可降级为不实现，结构预留）。通知面板从铃铛向下弹出（200ms），点击条目跳驾驶舱并高亮对应格子 1.5s。后台轮询由 UI 层调度：前台 5min / 后台可调（见 §5），每次轮询后仅状态点/徽章做 150ms 色彩过渡，无整页刷新。</p>
-</div>
+      <h2>2. 项目列表 <span class="tag tag-mvp">MVP 必须</span></h2>
+      <div class="card">
+        <h3>布局结构</h3>
+        <p>
+          页面标题「项目」+ 右上「添加项目」主按钮；下方项目卡片列表（每卡全宽，高约
+          88px）。卡片布局：左 40px 平台图标（Android/iOS/Harmony 系统感单色图标）｜中：项目名（15px
+          semibold）+ 路径（mono 12.5px secondary，超长中间省略）+ 平台标签｜右：该项目渠道覆盖数「8
+          渠道」+ 最新版本号 + 状态摘要（绿点“全部正常”/红点“1 渠道被拒”/灰点“未同步”）+
+          「···」菜单（打开目录 / 在驾驶舱中查看 / 移除）。
+        </p>
+        <h3>信息层级</h3>
+        <p>
+          名称 &gt; 状态摘要 &gt; 版本 &gt;
+          路径。列表按名称排序，置顶支持拖拽（P2，一期按名称即可）。
+        </p>
+        <h3>组件清单</h3>
+        <p>
+          项目卡、添加按钮、添加抽屉（Sheet 从右滑入 420px：路径输入框 + 「校验目录」按钮 +
+          校验结果区 + 平台自动识别结果（识别失败可手选）+
+          「扫描本机目录建议」链接——一期只展示建议列表条目（最近修改含 build
+          输出的工程目录），点击即回填路径）、空态组件、不可用态卡片、确认移除对话框。
+        </p>
+        <h3>四态设计</h3>
+        <ul class="state">
+          <li>
+            <b>正常</b>：卡片如上；hover 150ms 底色加深 3%，点击整卡进入驾驶舱并定位该项目行。
+          </li>
+          <li>
+            <b>加载</b>：初次进入 3 行骨架卡；「校验目录」点击后按钮内联 spinner +
+            结果区「校验中…」。
+          </li>
+          <li>
+            <b>错误</b>：①路径校验失败：输入框下方红字原因（目录不存在 / 未识别到平台特征（无
+            build.gradle·xcodeproj·hvigor）／已是其他项目的子目录）；②项目不可用态：目录被移走后，卡片降级——状态摘要处显示灰底标签「目录不可用」+
+            「重新校验」链接，卡片操作仅保留编辑路径与移除，不进入驾驶舱。
+          </li>
+          <li>
+            <b>空</b>：列表区居中插图区（仅一个 app 图形 + 文案「还没有项目」+ 说明「添加本地使用
+            applift 的工程，统一查看各渠道审核状态」+ 主按钮「添加项目」+ 次按钮「扫描本机目录」）。
+          </li>
+        </ul>
+        <h3>交互说明</h3>
+        <p>
+          校验为失焦+手动双触发；识别平台后回显三选徽章；移除需确认（对话框说明仅移除监控，不动工程文件）。所有写操作成功用
+          Toast 反馈。
+        </p>
+      </div>
 
-<h2>2. 项目列表 <span class="tag tag-mvp">MVP 必须</span></h2>
-<div class="card">
-<h3>布局结构</h3>
-<p>页面标题「项目」+ 右上「添加项目」主按钮；下方项目卡片列表（每卡全宽，高约 88px）。卡片布局：左 40px 平台图标（Android/iOS/Harmony 系统感单色图标）｜中：项目名（15px semibold）+ 路径（mono 12.5px secondary，超长中间省略）+ 平台标签｜右：该项目渠道覆盖数「8 渠道」+ 最新版本号 + 状态摘要（绿点“全部正常”/红点“1 渠道被拒”/灰点“未同步”）+ 「···」菜单（打开目录 / 在驾驶舱中查看 / 移除）。</p>
-<h3>信息层级</h3>
-<p>名称 &gt; 状态摘要 &gt; 版本 &gt; 路径。列表按名称排序，置顶支持拖拽（P2，一期按名称即可）。</p>
-<h3>组件清单</h3>
-<p>项目卡、添加按钮、添加抽屉（Sheet 从右滑入 420px：路径输入框 + 「校验目录」按钮 + 校验结果区 + 平台自动识别结果（识别失败可手选）+ 「扫描本机目录建议」链接——一期只展示建议列表条目（最近修改含 build 输出的工程目录），点击即回填路径）、空态组件、不可用态卡片、确认移除对话框。</p>
-<h3>四态设计</h3>
-<ul class="state">
-<li><b>正常</b>：卡片如上；hover 150ms 底色加深 3%，点击整卡进入驾驶舱并定位该项目行。</li>
-<li><b>加载</b>：初次进入 3 行骨架卡；「校验目录」点击后按钮内联 spinner + 结果区「校验中…」。</li>
-<li><b>错误</b>：①路径校验失败：输入框下方红字原因（目录不存在 / 未识别到平台特征（无 build.gradle·xcodeproj·hvigor）／已是其他项目的子目录）；②项目不可用态：目录被移走后，卡片降级——状态摘要处显示灰底标签「目录不可用」+ 「重新校验」链接，卡片操作仅保留编辑路径与移除，不进入驾驶舱。</li>
-<li><b>空</b>：列表区居中插图区（仅一个 app 图形 + 文案「还没有项目」+ 说明「添加本地使用 applift 的工程，统一查看各渠道审核状态」+ 主按钮「添加项目」+ 次按钮「扫描本机目录」）。</li>
-</ul>
-<h3>交互说明</h3>
-<p>校验为失焦+手动双触发；识别平台后回显三选徽章；移除需确认（对话框说明仅移除监控，不动工程文件）。所有写操作成功用 Toast 反馈。</p>
-</div>
+      <h2>3. 状态驾驶舱 <span class="tag tag-mvp">MVP 必须</span>（首屏 · 核心）</h2>
+      <div class="card">
+        <h3>布局结构</h3>
+        <p>三段自上而下：</p>
+        <ol>
+          <li>
+            <b>摘要条</b>（高 64px，无卡片的横向分组）：N 项目 · M 渠道监控 ｜ 本周变更 X 次 ｜ 异常
+            Y（被拒/错误合计，红字，点击过滤）｜「手动刷新」按钮 + 全局
+            FreshnessLabel（「全部数据更新于 3 分钟前」）。
+          </li>
+          <li>
+            <b>过滤器行</b>：项目筛选（多选
+            chips）、平台筛选（全部/Android/iOS/Harmony）、状态筛选（全部/审核中/被拒/已上线/旧数据）、右侧紧凑/舒适密度切换。
+          </li>
+          <li>
+            <b>项目 × 渠道矩阵</b>：按项目分组的表格。每组 =
+            组头（项目名+路径+平台图标+该项目新鲜度）+ 一行渠道格子。列 = 10
+            渠道固定列序（ASC/AGC/华为/小米/OPPO/vivo/荣耀/谷歌/蒲公英/应用宝），列头
+            sticky；该项目不适用的渠道显示淡「–」格。每格内容：StatusBadge（状态色点+状态词）+
+            版本号（mono 12px）+ 相对时间（超阈值灰字加「·旧」）。被拒格：点变红底
+            8%，右上角红色小三角叹号。
+          </li>
+        </ol>
+        <p>
+          格子即交互单元：单击 = 立即刷新该渠道（聚焦即刷新也作用于行/格 hover 停留 800ms
+          的惰性刷新，仅前台）；点击被拒格右侧展开行内详情条（最近被拒原因摘要 + 「查看变更历史」+
+          「复制原因」）；每格 hover 出现「↻」迷你刷新。
+        </p>
+        <h3>信息层级</h3>
+        <p>
+          状态色点是第一视觉层（整页唯一彩色饱和元素），版本第二，时间第三。矩阵行高 56px，格子间靠
+          8px 留白分隔，不画格线。
+        </p>
+        <h3>组件清单</h3>
+        <p>
+          摘要条、过滤器 chips、矩阵表（sticky 列头 +
+          组头）、StatusBadge（状态枚举：待提交/已提交/审核中/被拒/READY_FOR_SALE/已上线/错误/未知——色映射：pending
+          琥珀、rejected/错误 红、READY_FOR_SALE/已上线 绿、待提交 灰、未知
+          灰问号）、FreshnessLabel、格子内联刷新、被拒详情展开条、跃迁高亮（状态刚变化 60s
+          内格子左侧 2px accent 竖条渐隐）。
+        </p>
+        <h3>四态设计</h3>
+        <ul class="state">
+          <li>
+            <b>正常</b>：如上；数据新鲜度 = 距 fetchedAt 相对时间；阈值（默认 15min）后转 stale
+            灰并计入摘要「旧数据」。
+          </li>
+          <li>
+            <b>加载</b>：矩阵区 5 行骨架（灰块 88% 透明度脉动，周期
+            1.2s）；已有数据的手动刷新期间格子内容保持旧值 + 格子右上 8px spinner，不闪骨架。
+          </li>
+          <li>
+            <b>错误</b>：单渠道错误 → 格子显示红底「错误」徽章 + hover tooltip 一行原因（凭据过期 /
+            网络失败 / 解析失败分类文案）；整页加载失败 →
+            矩阵区错误占位（图标+「加载失败」+原因+「重试」）；部分渠道凭据缺失 →
+            全局错误横幅（§1）+ 对应格子灰「未配置」。
+          </li>
+          <li>
+            <b>空</b>：无项目 →
+            居中空态「先添加项目，才能看到渠道状态」+「去添加项目」；有项目但全部未同步 →
+            矩阵显示组头 + 每格「未同步」灰字 + 摘要区「立即同步」按钮。
+          </li>
+        </ul>
+        <h3>交互说明</h3>
+        <p>
+          前台 5 分钟轮询（不可在此页关闭）；手动刷新按钮刷新当前过滤范围；被拒出现时：格子红色态 +
+          通知中心新条目 + 系统通知（一期 webui 用浏览器
+          Notification，需授权引导一次性弹层）；READY_FOR_SALE 跃迁同理绿色通知。列在 &lt;1280px
+          出现横向滚动（列头 sticky），密度「紧凑」模式行高 44px 隐藏版本号只留状态点。
+        </p>
+      </div>
 
-<h2>3. 状态驾驶舱 <span class="tag tag-mvp">MVP 必须</span>（首屏 · 核心）</h2>
-<div class="card">
-<h3>布局结构</h3>
-<p>三段自上而下：</p>
-<ol>
-<li><b>摘要条</b>（高 64px，无卡片的横向分组）：N 项目 · M 渠道监控 ｜ 本周变更 X 次 ｜ 异常 Y（被拒/错误合计，红字，点击过滤）｜「手动刷新」按钮 + 全局 FreshnessLabel（「全部数据更新于 3 分钟前」）。</li>
-<li><b>过滤器行</b>：项目筛选（多选 chips）、平台筛选（全部/Android/iOS/Harmony）、状态筛选（全部/审核中/被拒/已上线/旧数据）、右侧紧凑/舒适密度切换。</li>
-<li><b>项目 × 渠道矩阵</b>：按项目分组的表格。每组 = 组头（项目名+路径+平台图标+该项目新鲜度）+ 一行渠道格子。列 = 10 渠道固定列序（ASC/AGC/华为/小米/OPPO/vivo/荣耀/谷歌/蒲公英/应用宝），列头 sticky；该项目不适用的渠道显示淡「–」格。每格内容：StatusBadge（状态色点+状态词）+ 版本号（mono 12px）+ 相对时间（超阈值灰字加「·旧」）。被拒格：点变红底 8%，右上角红色小三角叹号。</li>
-</ol>
-<p>格子即交互单元：单击 = 立即刷新该渠道（聚焦即刷新也作用于行/格 hover 停留 800ms 的惰性刷新，仅前台）；点击被拒格右侧展开行内详情条（最近被拒原因摘要 + 「查看变更历史」+ 「复制原因」）；每格 hover 出现「↻」迷你刷新。</p>
-<h3>信息层级</h3>
-<p>状态色点是第一视觉层（整页唯一彩色饱和元素），版本第二，时间第三。矩阵行高 56px，格子间靠 8px 留白分隔，不画格线。</p>
-<h3>组件清单</h3>
-<p>摘要条、过滤器 chips、矩阵表（sticky 列头 + 组头）、StatusBadge（状态枚举：待提交/已提交/审核中/被拒/READY_FOR_SALE/已上线/错误/未知——色映射：pending 琥珀、rejected/错误 红、READY_FOR_SALE/已上线 绿、待提交 灰、未知 灰问号）、FreshnessLabel、格子内联刷新、被拒详情展开条、跃迁高亮（状态刚变化 60s 内格子左侧 2px accent 竖条渐隐）。</p>
-<h3>四态设计</h3>
-<ul class="state">
-<li><b>正常</b>：如上；数据新鲜度 = 距 fetchedAt 相对时间；阈值（默认 15min）后转 stale 灰并计入摘要「旧数据」。</li>
-<li><b>加载</b>：矩阵区 5 行骨架（灰块 88% 透明度脉动，周期 1.2s）；已有数据的手动刷新期间格子内容保持旧值 + 格子右上 8px spinner，不闪骨架。</li>
-<li><b>错误</b>：单渠道错误 → 格子显示红底「错误」徽章 + hover tooltip 一行原因（凭据过期 / 网络失败 / 解析失败分类文案）；整页加载失败 → 矩阵区错误占位（图标+「加载失败」+原因+「重试」）；部分渠道凭据缺失 → 全局错误横幅（§1）+ 对应格子灰「未配置」。</li>
-<li><b>空</b>：无项目 → 居中空态「先添加项目，才能看到渠道状态」+「去添加项目」；有项目但全部未同步 → 矩阵显示组头 + 每格「未同步」灰字 + 摘要区「立即同步」按钮。</li>
-</ul>
-<h3>交互说明</h3>
-<p>前台 5 分钟轮询（不可在此页关闭）；手动刷新按钮刷新当前过滤范围；被拒出现时：格子红色态 + 通知中心新条目 + 系统通知（一期 webui 用浏览器 Notification，需授权引导一次性弹层）；READY_FOR_SALE 跃迁同理绿色通知。列在 &lt;1280px 出现横向滚动（列头 sticky），密度「紧凑」模式行高 44px 隐藏版本号只留状态点。</p>
-</div>
+      <h2>4. 发版向导 · Beta 链路 <span class="tag tag-mvp">MVP 必须</span></h2>
+      <div class="card">
+        <h3>布局结构</h3>
+        <p>
+          居中 720px 单列分步向导，顶部步骤指示（1 预检 → 2 确认 → 3 执行 → 4 结果），当前步
+          accent，已完成绿点。左上「项目/目标」上下文条固定显示（项目名 · 平台 · 当前版本 →
+          目标版本）。
+        </p>
+        <h3>信息层级与各步内容</h3>
+        <ul>
+          <li>
+            <b>第 1 步 dry-run 预检</b>：选择项目与 profile 后自动执行
+            dry-run，展示判定预览——分组列表：将执行的动作（stages
+            顺序：构建检查→产物→上传→提审，每条 = stage 名 + 将作用的渠道 chips）；⚠
+            影响项（将覆盖的 build 号、将打/补的 tag、不满足的前置条件）；✓
+            通过项（灰字折叠，默认收起）。底部主按钮「进入确认」在预检有阻断项时禁用并说明原因。
+          </li>
+          <li>
+            <b>第 2 步 确认</b>：投递方式区——每渠道一行：渠道名 + 默认推荐投递方式（来自
+            profile，如「API 直传」/「网页手动」）+
+            下拉可改选；「全部使用推荐」链接一键还原。下方确认清单（复述第 1 步摘要 3 行内）+
+            需勾选的确认框（仅当存在覆盖性动作时出现）。主按钮「开始发版」（强调色）+
+            次按钮「返回」。
+          </li>
+          <li>
+            <b>第 3 步 执行</b>：按 stage 分组的进度区，每 stage 一行：stage 名 + 状态点 +
+            聚合进度条；展开 stage 见每渠道子进度条（细 4px）+ 当前动作文案（如「上传 qy-driver.ipa
+            → ASC」）。下方日志面板（等宽字体，默认折叠为 3 行高，可展开至 40vh，支持按渠道过滤 tab
+            + 自动滚底开关 + 「复制日志」）。
+          </li>
+          <li>
+            <b>第 4 步 结果</b>：结果摘要卡（成功绿/部分成功琥珀/失败红）+
+            各渠道结果列表（状态+版本+渠道单号链接）+ 操作：失败渠道「重试失败项」/
+            全部「完成」返回驾驶舱。
+          </li>
+        </ul>
+        <h3>组件清单</h3>
+        <p>
+          步骤指示器、上下文条、预检分组列表、折叠组、渠道行（含下拉）、进度条（stage
+          粗/渠道细两级）、日志面板、结果卡、重试按钮。
+        </p>
+        <h3>四态设计</h3>
+        <ul class="state">
+          <li><b>正常</b>：逐步推进；stage 完成即刻绿点 + 下一 stage 展开动画 200ms。</li>
+          <li>
+            <b>加载</b>：第 1 步 dry-run 期间显示预检骨架（分组标题 + 3 行灰块）+ 顶部「dry-run
+            执行中…」；第 3 步各进度条 indeterminate 模式（低幅往复）直至该步骤有确定进度。
+          </li>
+          <li>
+            <b>错误</b>：第 1 步 dry-run 失败 → 预检区红色错误条 + 原因 + 「重试 dry-run」；第 3
+            步某渠道失败 → 该渠道子条变红 + 日志自动滚动到错误行并高亮，stage
+            聚合条显示「3/5」，不中断其他渠道（可继续）；确认超时态（上传凭据临时失效等等待用户介入）→
+            出现行内「等待处理」横条 + 「跳过该渠道」/「重试」双选，向导整体暂停计时显示。
+          </li>
+          <li>
+            <b>空</b>：无项目进入向导 → 空态引导去添加项目；第 2
+            步若某渠道凭据缺失，该渠道行显示灰「未配置凭据」+ 「去设置」链接，默认不勾选参与发版。
+          </li>
+        </ul>
+        <h3>交互说明</h3>
+        <p>
+          第 3 步进行中关闭页面需确认（对话框：后台继续/取消发版——后台继续依赖 CLI 进程，一期若 UI
+          与进程同生命周期则仅「取消发版」并说明）；「取消」按钮在执行中常驻右上（次要红色），点击二次确认。结果页部分成功时同时给「重试失败项」（仅重跑失败渠道，跳过已完成
+          stage-after 判定）。
+        </p>
+      </div>
 
-<h2>4. 发版向导 · Beta 链路 <span class="tag tag-mvp">MVP 必须</span></h2>
-<div class="card">
-<h3>布局结构</h3>
-<p>居中 720px 单列分步向导，顶部步骤指示（1 预检 → 2 确认 → 3 执行 → 4 结果），当前步 accent，已完成绿点。左上「项目/目标」上下文条固定显示（项目名 · 平台 · 当前版本 → 目标版本）。</p>
-<h3>信息层级与各步内容</h3>
-<ul>
-<li><b>第 1 步 dry-run 预检</b>：选择项目与 profile 后自动执行 dry-run，展示判定预览——分组列表：将执行的动作（stages 顺序：构建检查→产物→上传→提审，每条 = stage 名 + 将作用的渠道 chips）；⚠ 影响项（将覆盖的 build 号、将打/补的 tag、不满足的前置条件）；✓ 通过项（灰字折叠，默认收起）。底部主按钮「进入确认」在预检有阻断项时禁用并说明原因。</li>
-<li><b>第 2 步 确认</b>：投递方式区——每渠道一行：渠道名 + 默认推荐投递方式（来自 profile，如「API 直传」/「网页手动」）+ 下拉可改选；「全部使用推荐」链接一键还原。下方确认清单（复述第 1 步摘要 3 行内）+ 需勾选的确认框（仅当存在覆盖性动作时出现）。主按钮「开始发版」（强调色）+ 次按钮「返回」。</li>
-<li><b>第 3 步 执行</b>：按 stage 分组的进度区，每 stage 一行：stage 名 + 状态点 + 聚合进度条；展开 stage 见每渠道子进度条（细 4px）+ 当前动作文案（如「上传 qy-driver.ipa → ASC」）。下方日志面板（等宽字体，默认折叠为 3 行高，可展开至 40vh，支持按渠道过滤 tab + 自动滚底开关 + 「复制日志」）。</li>
-<li><b>第 4 步 结果</b>：结果摘要卡（成功绿/部分成功琥珀/失败红）+ 各渠道结果列表（状态+版本+渠道单号链接）+ 操作：失败渠道「重试失败项」/ 全部「完成」返回驾驶舱。</li>
-</ul>
-<h3>组件清单</h3>
-<p>步骤指示器、上下文条、预检分组列表、折叠组、渠道行（含下拉）、进度条（stage 粗/渠道细两级）、日志面板、结果卡、重试按钮。</p>
-<h3>四态设计</h3>
-<ul class="state">
-<li><b>正常</b>：逐步推进；stage 完成即刻绿点 + 下一 stage 展开动画 200ms。</li>
-<li><b>加载</b>：第 1 步 dry-run 期间显示预检骨架（分组标题 + 3 行灰块）+ 顶部「dry-run 执行中…」；第 3 步各进度条 indeterminate 模式（低幅往复）直至该步骤有确定进度。</li>
-<li><b>错误</b>：第 1 步 dry-run 失败 → 预检区红色错误条 + 原因 + 「重试 dry-run」；第 3 步某渠道失败 → 该渠道子条变红 + 日志自动滚动到错误行并高亮，stage 聚合条显示「3/5」，不中断其他渠道（可继续）；确认超时态（上传凭据临时失效等等待用户介入）→ 出现行内「等待处理」横条 + 「跳过该渠道」/「重试」双选，向导整体暂停计时显示。</li>
-<li><b>空</b>：无项目进入向导 → 空态引导去添加项目；第 2 步若某渠道凭据缺失，该渠道行显示灰「未配置凭据」+ 「去设置」链接，默认不勾选参与发版。</li>
-</ul>
-<h3>交互说明</h3>
-<p>第 3 步进行中关闭页面需确认（对话框：后台继续/取消发版——后台继续依赖 CLI 进程，一期若 UI 与进程同生命周期则仅「取消发版」并说明）；「取消」按钮在执行中常驻右上（次要红色），点击二次确认。结果页部分成功时同时给「重试失败项」（仅重跑失败渠道，跳过已完成 stage-after 判定）。</p>
-</div>
+      <h2>5. 应用设置 <span class="tag tag-mvp">MVP 必须</span></h2>
+      <div class="card">
+        <h3>布局结构</h3>
+        <p>
+          左锚点子导航（通用 / 通知 / 凭据说明<span class="tag tag-p2">二期</span> / 外观 / 高级）+
+          右侧分组卡片表单。
+        </p>
+        <h3>内容与层级</h3>
+        <ul>
+          <li>
+            <b>通用</b>：数据同步组——前台轮询间隔（步进选择 1/2/5/10/30
+            分钟，下限提示「为保证渠道配额，最短 1 分钟」）、后台轮询开关 + 间隔（最短 30
+            分钟）、单渠道手动刷新节流说明文字；启动组——启动时打开页面（驾驶舱/项目）。
+          </li>
+          <li>
+            <b>通知</b>：通知偏好——按事件类型开关（被拒 / READY_FOR_SALE / 发版完成 /
+            错误），每类可选站内+系统双通道（系统通道带「授权浏览器通知」按钮态）；免打扰时段（时间范围选择）。
+          </li>
+          <li>
+            <b>外观</b>：主题三档（跟随系统/浅色/深色）实时切换
+            <code>data-theme</code>；密度默认值。
+          </li>
+          <li><b>高级</b>：数据保留天数、日志级别、重置确认对话框。</li>
+        </ul>
+        <h3>四态</h3>
+        <ul class="state">
+          <li><b>正常</b>：表单即时保存（改后 500ms 防抖），行尾短暂「已保存 ✓」。</li>
+          <li><b>加载</b>：进入时表单骨架；保存中按钮 spinner。</li>
+          <li><b>错误</b>：保存失败行内红字 + 「重试」，不整页报错；主题切换失败回滚并 Toast。</li>
+          <li><b>空</b>：不适用（设置恒有默认值；通知系统通道未授权时显示引导态而非空）。</li>
+        </ul>
+      </div>
 
-<h2>5. 应用设置 <span class="tag tag-mvp">MVP 必须</span></h2>
-<div class="card">
-<h3>布局结构</h3>
-<p>左锚点子导航（通用 / 通知 / 凭据说明<span class="tag tag-p2">二期</span> / 外观 / 高级）+ 右侧分组卡片表单。</p>
-<h3>内容与层级</h3>
-<ul>
-<li><b>通用</b>：数据同步组——前台轮询间隔（步进选择 1/2/5/10/30 分钟，下限提示「为保证渠道配额，最短 1 分钟」）、后台轮询开关 + 间隔（最短 30 分钟）、单渠道手动刷新节流说明文字；启动组——启动时打开页面（驾驶舱/项目）。</li>
-<li><b>通知</b>：通知偏好——按事件类型开关（被拒 / READY_FOR_SALE / 发版完成 / 错误），每类可选站内+系统双通道（系统通道带「授权浏览器通知」按钮态）；免打扰时段（时间范围选择）。</li>
-<li><b>外观</b>：主题三档（跟随系统/浅色/深色）实时切换 <code>data-theme</code>；密度默认值。</li>
-<li><b>高级</b>：数据保留天数、日志级别、重置确认对话框。</li>
-</ul>
-<h3>四态</h3>
-<ul class="state">
-<li><b>正常</b>：表单即时保存（改后 500ms 防抖），行尾短暂「已保存 ✓」。</li>
-<li><b>加载</b>：进入时表单骨架；保存中按钮 spinner。</li>
-<li><b>错误</b>：保存失败行内红字 + 「重试」，不整页报错；主题切换失败回滚并 Toast。</li>
-<li><b>空</b>：不适用（设置恒有默认值；通知系统通道未授权时显示引导态而非空）。</li>
-</ul>
-</div>
+      <h2>6. 发版向导 · Release 完整链路 <span class="tag tag-p2">二期</span></h2>
+      <div class="card">
+        <p>复用 §4 向导骨架（同步骤指示/上下文条/进度/日志组件），差异点：</p>
+        <ul>
+          <li>
+            第 1 步预检增加：多渠道提审矩阵预览（渠道 × 将提交的版本/备注/分阶段发布比例）；tag
+            补打判定项（「tag v3.2.1 已存在，将跳过 / 不存在，将创建」）。
+          </li>
+          <li>
+            第 2
+            步确认增加：分阶段发布比例每渠道可调；生产发布确认框为强制（红色警示文案复述覆盖范围）。
+          </li>
+          <li>
+            第 4 步结果增加：tag 补打结果组（每渠道打 tag 成功/跳过/失败 + commit hash mono 展示）。
+          </li>
+          <li>
+            四态沿用 §4；新增超时态细分：提审接口排队超时 →
+            行内「渠道侧排队中，已转为后台跟踪，可在驾驶舱看结果」提示。
+          </li>
+        </ul>
+      </div>
 
-<h2>6. 发版向导 · Release 完整链路 <span class="tag tag-p2">二期</span></h2>
-<div class="card">
-<p>复用 §4 向导骨架（同步骤指示/上下文条/进度/日志组件），差异点：</p>
-<ul>
-<li>第 1 步预检增加：多渠道提审矩阵预览（渠道 × 将提交的版本/备注/分阶段发布比例）；tag 补打判定项（「tag v3.2.1 已存在，将跳过 / 不存在，将创建」）。</li>
-<li>第 2 步确认增加：分阶段发布比例每渠道可调；生产发布确认框为强制（红色警示文案复述覆盖范围）。</li>
-<li>第 4 步结果增加：tag 补打结果组（每渠道打 tag 成功/跳过/失败 + commit hash mono 展示）。</li>
-<li>四态沿用 §4；新增超时态细分：提审接口排队超时 → 行内「渠道侧排队中，已转为后台跟踪，可在驾驶舱看结果」提示。</li>
-</ul>
-</div>
+      <h2>7. 凭据管理 <span class="tag tag-p2">二期</span></h2>
+      <div class="card">
+        <h3>布局结构</h3>
+        <p>
+          单列分组列表，按渠道分组（ASC / AGC / 华为 / … 蒲公英 /
+          应用宝），每组显示该渠道全部凭据字段行。顶部路径条：<code
+            >~/.applift/credentials.toml</code
+          >
+          + 「在外部编辑器打开」+ 「重新加载」。
+        </p>
+        <h3>信息层级</h3>
+        <p>
+          渠道组头（图标+名称+配置状态徽章：已配置/缺失/格式错误）&gt; 字段行（字段名 + 脱敏值如
+          <code>sk_••••••3f9a</code> + 编辑/显示按钮）。
+        </p>
+        <h3>四态</h3>
+        <ul class="state">
+          <li>
+            <b>正常</b>：脱敏显示；hover 字段行出现「👁 显示明文」（点击要求本机确认，5s
+            后自动恢复脱敏）与「✎ 编辑」（行内变输入框，保存写回 toml）。
+          </li>
+          <li><b>加载</b>：进入时每组骨架；重新加载时顶部进度条。</li>
+          <li>
+            <b>错误</b>：toml 解析失败 → 页面顶部错误横幅带行号/原因 +
+            「在外部编辑器打开修复」；缺失项 → 对应渠道组状态徽章「缺失」+
+            字段行灰底虚线框「未配置」+ 「查看配置示例」折叠；写入失败（权限）→ 行内红字 +
+            复制手动配置指引。
+          </li>
+          <li>
+            <b>空</b>：文件不存在 → 居中空态「尚未配置任何凭据」+ 说明 +
+            「创建配置文件」按钮（写入模板）。
+          </li>
+        </ul>
+        <h3>交互</h3>
+        <p>与驾驶舱联动：某渠道凭据缺失时，驾驶舱错误横幅「去处理」直达该渠道组锚点并高亮。</p>
+      </div>
 
-<h2>7. 凭据管理 <span class="tag tag-p2">二期</span></h2>
-<div class="card">
-<h3>布局结构</h3>
-<p>单列分组列表，按渠道分组（ASC / AGC / 华为 / … 蒲公英 / 应用宝），每组显示该渠道全部凭据字段行。顶部路径条：<code>~/.applift/credentials.toml</code> + 「在外部编辑器打开」+ 「重新加载」。</p>
-<h3>信息层级</h3>
-<p>渠道组头（图标+名称+配置状态徽章：已配置/缺失/格式错误）&gt; 字段行（字段名 + 脱敏值如 <code>sk_••••••3f9a</code> + 编辑/显示按钮）。</p>
-<h3>四态</h3>
-<ul class="state">
-<li><b>正常</b>：脱敏显示；hover 字段行出现「👁 显示明文」（点击要求本机确认，5s 后自动恢复脱敏）与「✎ 编辑」（行内变输入框，保存写回 toml）。</li>
-<li><b>加载</b>：进入时每组骨架；重新加载时顶部进度条。</li>
-<li><b>错误</b>：toml 解析失败 → 页面顶部错误横幅带行号/原因 + 「在外部编辑器打开修复」；缺失项 → 对应渠道组状态徽章「缺失」+ 字段行灰底虚线框「未配置」+ 「查看配置示例」折叠；写入失败（权限）→ 行内红字 + 复制手动配置指引。</li>
-<li><b>空</b>：文件不存在 → 居中空态「尚未配置任何凭据」+ 说明 + 「创建配置文件」按钮（写入模板）。</li>
-</ul>
-<h3>交互</h3>
-<p>与驾驶舱联动：某渠道凭据缺失时，驾驶舱错误横幅「去处理」直达该渠道组锚点并高亮。</p>
-</div>
+      <h2>8. Tauri 壳 · macOS 状态栏 Popup <span class="tag tag-p2">二期</span></h2>
+      <div class="card">
+        <h3>布局结构</h3>
+        <p>
+          固定 360×480。自上而下：① 顶部 40px：标题「applift」+ 全局新鲜度（相对时间）+ 设置齿轮；②
+          状态摘要条（一行三段：正常 N · 审核中 M · 异常 K，异常红字）；③ 项目概览列表（主体，每行
+          56px：平台图标 + 项目名 + 状态点簇（最多显示 5 个渠道点，余 +N）+
+          项目新鲜度；点击行展开该项目的渠道迷你行（渠道缩写 + 状态点 + 版本），再点击收起）；④
+          底部固定操作区（高 56px，hairline
+          上边）：「发版」快捷入口（弹出发版目标选择：项目→beta/release）+ 「打开完整界面」（唤起
+          webui 主窗口）。
+        </p>
+        <h3>信息层级</h3>
+        <p>
+          状态点簇是第一视觉；文本最小 12px；深浅跟随系统（menu bar popup 默认无独立主题开关）。
+        </p>
+        <h3>组件清单</h3>
+        <p>
+          摘要行、项目行（可展开）、渠道点簇、底部操作条、跃迁角标（自上次打开 popup
+          后有变化的项目行右上 accent 圆点，打开 popup 3s 后清除）。
+        </p>
+        <h3>四态</h3>
+        <ul class="state">
+          <li><b>正常</b>：如上；点击状态点簇任意点 = 直接展开该渠道详情行。</li>
+          <li>
+            <b>加载</b>：打开 popup 首帧显示上次缓存数据 +
+            顶部细进度条，数据到达后无感替换（禁止闪骨架）。
+          </li>
+          <li>
+            <b>错误</b>：某渠道错误 → 红点；整页数据不可用 → 摘要条位置显示「数据不可用 ·
+            重试」；凭据缺失 → 底部操作条上方 32px 提示条「N
+            个渠道未配置凭据」点击跳凭据页（打开主窗口）。
+          </li>
+          <li>
+            <b>空</b>：无项目 → 居中「添加项目后在此查看状态」+「打开完整界面」；后台服务未启动 →
+            「CLI 未运行」说明 + 启动指引。
+          </li>
+        </ul>
+        <h3>native 通知样式</h3>
+        <p>
+          macOS 系统通知：标题「qy-driver · ASC」+ 正文「状态变更为：被拒」+
+          操作按钮「查看」「忽略」；点击「查看」打开 popup
+          并定位该项目展开行。通知事件类型与免打扰遵循 §5 通知偏好。
+        </p>
+      </div>
 
-<h2>8. Tauri 壳 · macOS 状态栏 Popup <span class="tag tag-p2">二期</span></h2>
-<div class="card">
-<h3>布局结构</h3>
-<p>固定 360×480。自上而下：① 顶部 40px：标题「applift」+ 全局新鲜度（相对时间）+ 设置齿轮；② 状态摘要条（一行三段：正常 N · 审核中 M · 异常 K，异常红字）；③ 项目概览列表（主体，每行 56px：平台图标 + 项目名 + 状态点簇（最多显示 5 个渠道点，余 +N）+ 项目新鲜度；点击行展开该项目的渠道迷你行（渠道缩写 + 状态点 + 版本），再点击收起）；④ 底部固定操作区（高 56px，hairline 上边）：「发版」快捷入口（弹出发版目标选择：项目→beta/release）+ 「打开完整界面」（唤起 webui 主窗口）。</p>
-<h3>信息层级</h3>
-<p>状态点簇是第一视觉；文本最小 12px；深浅跟随系统（menu bar popup 默认无独立主题开关）。</p>
-<h3>组件清单</h3>
-<p>摘要行、项目行（可展开）、渠道点簇、底部操作条、跃迁角标（自上次打开 popup 后有变化的项目行右上 accent 圆点，打开 popup 3s 后清除）。</p>
-<h3>四态</h3>
-<ul class="state">
-<li><b>正常</b>：如上；点击状态点簇任意点 = 直接展开该渠道详情行。</li>
-<li><b>加载</b>：打开 popup 首帧显示上次缓存数据 + 顶部细进度条，数据到达后无感替换（禁止闪骨架）。</li>
-<li><b>错误</b>：某渠道错误 → 红点；整页数据不可用 → 摘要条位置显示「数据不可用 · 重试」；凭据缺失 → 底部操作条上方 32px 提示条「N 个渠道未配置凭据」点击跳凭据页（打开主窗口）。</li>
-<li><b>空</b>：无项目 → 居中「添加项目后在此查看状态」+「打开完整界面」；后台服务未启动 → 「CLI 未运行」说明 + 启动指引。</li>
-</ul>
-<h3>native 通知样式</h3>
-<p>macOS 系统通知：标题「qy-driver · ASC」+ 正文「状态变更为：被拒」+ 操作按钮「查看」「忽略」；点击「查看」打开 popup 并定位该项目展开行。通知事件类型与免打扰遵循 §5 通知偏好。</p>
-</div>
+      <h2>9. 构建接管（占位）<span class="tag tag-future">占位</span></h2>
+      <div class="card">
+        <p>
+          不细化，仅布局预留：侧栏「构建」入口灰置；进入后为占位页（说明文案「构建触发与产物管理规划中」）。预留信息架构：构建任务列表（项目×任务×状态）→
+          任务详情（日志/产物 tab）→ 产物管理（版本×产物×分发目标）。设计上沿用驾驶舱的「摘要条 +
+          过滤行 + 列表」骨架与 StatusBadge，保证未来扩展视觉同构。
+        </p>
+      </div>
 
-<h2>9. 构建接管（占位）<span class="tag tag-future">占位</span></h2>
-<div class="card">
-<p>不细化，仅布局预留：侧栏「构建」入口灰置；进入后为占位页（说明文案「构建触发与产物管理规划中」）。预留信息架构：构建任务列表（项目×任务×状态）→ 任务详情（日志/产物 tab）→ 产物管理（版本×产物×分发目标）。设计上沿用驾驶舱的「摘要条 + 过滤行 + 列表」骨架与 StatusBadge，保证未来扩展视觉同构。</p>
-</div>
-
-<!-- ============================================================
+      <!-- ============================================================
      SVG 线框示意（线框级，非视觉稿）：线色 #999，填充白/浅灰，状态点用色
      尺寸：驾驶舱 1280×760 / 向导 720×760 / popup 360×480
      ============================================================ -->
 
-<h2>附 A · 线框：状态驾驶舱（正常态 + 空态）</h2>
-<figure>
-<svg viewBox="0 0 1280 780" width="100%" style="min-width:900px" xmlns="http://www.w3.org/2000/svg">
-  <style>
-    .ln{stroke:#9a9a9a;fill:none} .thin{stroke:#c9c9c9;fill:none}
-    .gr{fill:#f3f3f3} .gr2{fill:#fafafa} .txt{fill:#333;font-size:12px}
-    .t2{fill:#777;font-size:11px} .t3{fill:#999;font-size:10px;font-family:"SF Mono",monospace}
-    .tt{fill:#222;font-size:14px;font-weight:600}
-    .ok{fill:#28A745}.warn{fill:#B8860B}.bad{fill:#D0342C}.stale{fill:#8E8E93}.acc{fill:#0A62FF}
-  </style>
-  <!-- sidebar -->
-  <rect x="0" y="0" width="220" height="780" fill="#ececf0"/>
-  <text x="20" y="36" class="tt">applift</text>
-  <rect x="12" y="60" width="196" height="30" rx="6" fill="#fff"/>
-  <circle cx="28" cy="75" r="3" class="acc"/><text x="40" y="79" class="txt">状态驾驶舱</text>
-  <rect x="176" y="66" width="24" height="17" rx="8" fill="#D0342C"/><text x="188" y="78" fill="#fff" font-size="10" text-anchor="middle">3</text>
-  <circle cx="28" cy="112" r="3" fill="#aaa"/><text x="40" y="116" class="txt">项目</text>
-  <circle cx="28" cy="144" r="3" fill="#aaa"/><text x="40" y="148" class="txt">发版 · Beta</text>
-  <circle cx="28" cy="176" r="3" fill="#aaa"/><text x="40" y="180" class="t2">发版 · Release（P2）</text>
-  <circle cx="28" cy="208" r="3" fill="#aaa"/><text x="40" y="212" class="t2">凭据（P2）</text>
-  <circle cx="28" cy="240" r="3" fill="#ccc"/><text x="40" y="244" class="t3">构建（占位）</text>
-  <text x="20" y="740" class="t2">⚙ 设置   ◐ 深浅色</text>
-  <!-- toolbar -->
-  <rect x="220" y="0" width="1060" height="52" fill="#fff"/>
-  <text x="244" y="32" class="tt">状态驾驶舱</text>
-  <circle cx="1180" cy="26" r="10" class="thin"/><circle cx="1184" cy="21" r="5" class="bad"/>
-  <text x="1206" y="30" class="t2">未读变更 3</text>
-  <text x="1268" y="30" class="txt">↻ 刷新</text>
-  <line x1="220" y1="52" x2="1280" y2="52" class="thin"/>
-  <!-- summary strip -->
-  <text x="244" y="84" class="txt">2 项目 · 10 渠道</text>
-  <text x="370" y="84" class="t2">本周变更 17 次</text>
-  <text x="470" y="84" fill="#D0342C">异常 2</text>
-  <text x="660" y="84" class="t2">数据更新于 3 分钟前</text>
-  <!-- filters -->
-  <rect x="244" y="100" width="52" height="20" rx="10" class="gr"/><text x="254" y="114" class="t2">全部</text>
-  <rect x="300" y="100" width="52" height="20" rx="10" class="thin"/><text x="310" y="114" class="t2">被拒 2</text>
-  <rect x="356" y="100" width="52" height="20" rx="10" class="thin"/><text x="366" y="114" class="t2">旧数据</text>
-  <rect x="412" y="100" width="88" height="20" rx="10" class="thin"/><text x="422" y="114" class="t2">qy-driver ▾</text>
-  <text x="1240" y="114" class="t2" text-anchor="end">紧凑｜舒适</text>
-  <!-- matrix header -->
-  <rect x="244" y="134" width="1036" height="30" class="gr2"/>
-  <text x="252" y="154" class="t2">项目 / 渠道</text>
-  <g class="t3"><text x="430" y="154">ASC</text><text x="520" y="154">AGC</text><text x="610" y="154">华为</text><text x="700" y="154">小米</text><text x="790" y="154">OPPO</text><text x="880" y="154">vivo</text><text x="970" y="154">荣耀</text><text x="1060" y="154">谷歌</text><text x="1150" y="154">蒲公英</text><text x="1226" y="154">应用宝</text></g>
-  <!-- group 1: qy-driver -->
-  <text x="252" y="196" class="txt" font-weight="600">qy-driver</text>
-  <text x="252" y="212" class="t3">~/work/qy-driver · android</text>
-  <g><!-- channel cells row: each = dot + status word + ver + time -->
-    <!-- helper: cell x -->
-    <g><circle cx="436" cy="192" r="4" class="ok"/><text x="446" y="196" class="t2">已上线</text><text x="436" y="212" class="t3">3.2.1</text><text x="480" y="212" class="t3">2分</text></g>
-    <g><circle cx="526" cy="192" r="4" class="warn"/><text x="536" y="196" class="t2">审核中</text><text x="526" y="212" class="t3">3.3.0</text><text x="570" y="212" class="t3">2分</text></g>
-    <g><circle cx="616" cy="192" r="4" class="bad"/><text x="626" y="196" fill="#D0342C">被拒 ▾</text><text x="616" y="212" class="t3">3.3.0</text><text x="660" y="212" class="t3">2分</text></g>
-    <g><circle cx="706" cy="192" r="4" class="ok"/><text x="716" y="196" class="t2">已上线</text><text x="706" y="212" class="t3">3.2.1</text></g>
-    <g><circle cx="796" cy="192" r="4" class="stale"/><text x="806" y="196" class="t2">已上线·旧</text><text x="796" y="212" class="t3">3.2.1</text><text x="862" y="212" class="t3" fill="#8E8E93">3时</text></g>
-    <g><circle cx="886" cy="192" r="4" class="ok"/><text x="896" y="196" class="t2">已上线</text></g>
-    <g><circle cx="976" cy="192" r="4" class="bad"/><text x="986" y="196" fill="#D0342C">错误</text><text x="976" y="212" class="t3">—</text></g>
-    <g><circle cx="1066" cy="192" r="4" class="ok"/><text x="1076" y="196" class="t2">已上线</text></g>
-    <g><circle cx="1156" cy="192" r="4" class="ok"/><text x="1166" y="196" class="t2">已上线</text></g>
-    <g><text x="1236" y="196" class="t3">–</text></g>
-  </g>
-  <!-- rejected inline detail -->
-  <rect x="244" y="228" width="1036" height="44" rx="8" fill="#FDECEB"/>
-  <text x="260" y="246" fill="#D0342C" font-size="11">华为 · 被拒（14:32）：元数据不合规 — 截图含「测试版」字样</text>
-  <text x="260" y="262" class="t2">查看变更历史 · 复制原因 · 立即刷新</text>
-  <rect x="610" y="182" width="6" height="44" rx="3" class="acc"/>
-  <!-- group 2: ios project -->
-  <text x="252" y="308" class="txt" font-weight="600">qianyun-ios</text>
-  <text x="252" y="324" class="t3">~/work/qianyun-ios · ios</text>
-  <g>
-    <g><circle cx="436" cy="304" r="4" class="ok"/><text x="446" y="308" class="t2">待提交</text></g>
-    <g><circle cx="526" cy="304" r="4" class="stale"/><text x="536" y="308" class="t2">–</text></g>
-    <g><circle cx="616" cy="304" r="4" class="stale"/><text x="626" y="308" class="t2">–</text></g>
-    <g><circle cx="706" cy="304" r="4" class="stale"/><text x="726" y="308" class="t2">–</text></g>
-    <g><circle cx="796" cy="304" r="4" class="stale"/><text x="816" y="308" class="t2">–</text></g>
-    <g><circle cx="886" cy="304" r="4" class="stale"/><text x="906" y="308" class="t2">–</text></g>
-    <g><circle cx="976" cy="304" r="4" class="stale"/><text x="996" y="308" class="t2">–</text></g>
-    <g><circle cx="1066" cy="304" r="4" class="warn"/><text x="1076" y="308" class="t2">审核中</text><text x="1066" y="324" class="t3">1.8.0</text></g>
-    <g><circle cx="1156" cy="304" r="4" class="ok"/><text x="1166" y="308" class="t2">已上线</text><text x="1156" y="324" class="t3">1.7.2</text></g>
-    <g><text x="1236" y="308" class="t3">–</text></g>
-  </g>
-  <!-- rows placeholder -->
-  <g class="thin"><line x1="244" y1="360" x2="1280" y2="360"/><line x1="244" y1="396" x2="1280" y2="396"/></g>
-  <text x="252" y="384" class="t3">…更多项目组…</text>
-  <!-- empty state mock (inset bottom-right annotation) -->
-  <rect x="244" y="430" width="1036" height="330" rx="12" class="thin" stroke-dasharray="6 4"/>
-  <text x="762" y="470" text-anchor="middle" class="tt">空态：先添加项目，才能看到渠道状态</text>
-  <text x="762" y="496" text-anchor="middle" class="t2">添加本地使用 applift 的工程，统一查看 10 渠道审核状态</text>
-  <rect x="672" y="520" width="110" height="30" rx="8" fill="#0A62FF"/><text x="727" y="539" fill="#fff" font-size="12" text-anchor="middle">添加项目</text>
-  <rect x="796" y="520" width="130" height="30" rx="8" class="thin"/><text x="861" y="539" font-size="12" text-anchor="middle" fill="#333">扫描本机目录</text>
-  <text x="762" y="600" text-anchor="middle" class="t3">（加载态：本区域替换为 5 行骨架灰块，脉动 1.2s）</text>
-  <text x="762" y="624" text-anchor="middle" class="t3">（错误态：图标 +「加载失败」+ 原因 + 「重试」按钮）</text>
-  <text x="762" y="648" text-anchor="middle" class="t3">（凭据缺失：全局红横幅吸附工具条下 + 格子灰「未配置」）</text>
-</svg>
-<figcaption>线框 A1 · 驾驶舱正常态：侧栏徽标 3、摘要条、过滤器、项目×渠道矩阵、被拒展开条（accent 竖条=60s 内跃迁高亮）。虚线框内为同区域空/加载/错误态注记。</figcaption>
-</figure>
+      <h2>附 A · 线框：状态驾驶舱（正常态 + 空态）</h2>
+      <figure>
+        <svg
+          viewBox="0 0 1280 780"
+          width="100%"
+          style="min-width: 900px"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <style>
+            .ln {
+              stroke: #9a9a9a;
+              fill: none;
+            }
+            .thin {
+              stroke: #c9c9c9;
+              fill: none;
+            }
+            .gr {
+              fill: #f3f3f3;
+            }
+            .gr2 {
+              fill: #fafafa;
+            }
+            .txt {
+              fill: #333;
+              font-size: 12px;
+            }
+            .t2 {
+              fill: #777;
+              font-size: 11px;
+            }
+            .t3 {
+              fill: #999;
+              font-size: 10px;
+              font-family: "SF Mono", monospace;
+            }
+            .tt {
+              fill: #222;
+              font-size: 14px;
+              font-weight: 600;
+            }
+            .ok {
+              fill: #28a745;
+            }
+            .warn {
+              fill: #b8860b;
+            }
+            .bad {
+              fill: #d0342c;
+            }
+            .stale {
+              fill: #8e8e93;
+            }
+            .acc {
+              fill: #0a62ff;
+            }
+          </style>
+          <!-- sidebar -->
+          <rect x="0" y="0" width="220" height="780" fill="#ececf0" />
+          <text x="20" y="36" class="tt">applift</text>
+          <rect x="12" y="60" width="196" height="30" rx="6" fill="#fff" />
+          <circle cx="28" cy="75" r="3" class="acc" />
+          <text x="40" y="79" class="txt">状态驾驶舱</text>
+          <rect x="176" y="66" width="24" height="17" rx="8" fill="#D0342C" />
+          <text x="188" y="78" fill="#fff" font-size="10" text-anchor="middle">3</text>
+          <circle cx="28" cy="112" r="3" fill="#aaa" />
+          <text x="40" y="116" class="txt">项目</text>
+          <circle cx="28" cy="144" r="3" fill="#aaa" />
+          <text x="40" y="148" class="txt">发版 · Beta</text>
+          <circle cx="28" cy="176" r="3" fill="#aaa" />
+          <text x="40" y="180" class="t2">发版 · Release（P2）</text>
+          <circle cx="28" cy="208" r="3" fill="#aaa" />
+          <text x="40" y="212" class="t2">凭据（P2）</text>
+          <circle cx="28" cy="240" r="3" fill="#ccc" />
+          <text x="40" y="244" class="t3">构建（占位）</text>
+          <text x="20" y="740" class="t2">⚙ 设置 ◐ 深浅色</text>
+          <!-- toolbar -->
+          <rect x="220" y="0" width="1060" height="52" fill="#fff" />
+          <text x="244" y="32" class="tt">状态驾驶舱</text>
+          <circle cx="1180" cy="26" r="10" class="thin" />
+          <circle cx="1184" cy="21" r="5" class="bad" />
+          <text x="1206" y="30" class="t2">未读变更 3</text>
+          <text x="1268" y="30" class="txt">↻ 刷新</text>
+          <line x1="220" y1="52" x2="1280" y2="52" class="thin" />
+          <!-- summary strip -->
+          <text x="244" y="84" class="txt">2 项目 · 10 渠道</text>
+          <text x="370" y="84" class="t2">本周变更 17 次</text>
+          <text x="470" y="84" fill="#D0342C">异常 2</text>
+          <text x="660" y="84" class="t2">数据更新于 3 分钟前</text>
+          <!-- filters -->
+          <rect x="244" y="100" width="52" height="20" rx="10" class="gr" />
+          <text x="254" y="114" class="t2">全部</text>
+          <rect x="300" y="100" width="52" height="20" rx="10" class="thin" />
+          <text x="310" y="114" class="t2">被拒 2</text>
+          <rect x="356" y="100" width="52" height="20" rx="10" class="thin" />
+          <text x="366" y="114" class="t2">旧数据</text>
+          <rect x="412" y="100" width="88" height="20" rx="10" class="thin" />
+          <text x="422" y="114" class="t2">qy-driver ▾</text>
+          <text x="1240" y="114" class="t2" text-anchor="end">紧凑｜舒适</text>
+          <!-- matrix header -->
+          <rect x="244" y="134" width="1036" height="30" class="gr2" />
+          <text x="252" y="154" class="t2">项目 / 渠道</text>
+          <g class="t3">
+            <text x="430" y="154">ASC</text>
+            <text x="520" y="154">AGC</text>
+            <text x="610" y="154">华为</text>
+            <text x="700" y="154">小米</text>
+            <text x="790" y="154">OPPO</text>
+            <text x="880" y="154">vivo</text>
+            <text x="970" y="154">荣耀</text>
+            <text x="1060" y="154">谷歌</text>
+            <text x="1150" y="154">蒲公英</text>
+            <text x="1226" y="154">应用宝</text>
+          </g>
+          <!-- group 1: qy-driver -->
+          <text x="252" y="196" class="txt" font-weight="600">qy-driver</text>
+          <text x="252" y="212" class="t3">~/work/qy-driver · android</text>
+          <g>
+            <!-- channel cells row: each = dot + status word + ver + time -->
+            <!-- helper: cell x -->
+            <g>
+              <circle cx="436" cy="192" r="4" class="ok" />
+              <text x="446" y="196" class="t2">已上线</text>
+              <text x="436" y="212" class="t3">3.2.1</text>
+              <text x="480" y="212" class="t3">2分</text>
+            </g>
+            <g>
+              <circle cx="526" cy="192" r="4" class="warn" />
+              <text x="536" y="196" class="t2">审核中</text>
+              <text x="526" y="212" class="t3">3.3.0</text>
+              <text x="570" y="212" class="t3">2分</text>
+            </g>
+            <g>
+              <circle cx="616" cy="192" r="4" class="bad" />
+              <text x="626" y="196" fill="#D0342C">被拒 ▾</text>
+              <text x="616" y="212" class="t3">3.3.0</text>
+              <text x="660" y="212" class="t3">2分</text>
+            </g>
+            <g>
+              <circle cx="706" cy="192" r="4" class="ok" />
+              <text x="716" y="196" class="t2">已上线</text>
+              <text x="706" y="212" class="t3">3.2.1</text>
+            </g>
+            <g>
+              <circle cx="796" cy="192" r="4" class="stale" />
+              <text x="806" y="196" class="t2">已上线·旧</text>
+              <text x="796" y="212" class="t3">3.2.1</text>
+              <text x="862" y="212" class="t3" fill="#8E8E93">3时</text>
+            </g>
+            <g>
+              <circle cx="886" cy="192" r="4" class="ok" />
+              <text x="896" y="196" class="t2">已上线</text>
+            </g>
+            <g>
+              <circle cx="976" cy="192" r="4" class="bad" />
+              <text x="986" y="196" fill="#D0342C">错误</text>
+              <text x="976" y="212" class="t3">—</text>
+            </g>
+            <g>
+              <circle cx="1066" cy="192" r="4" class="ok" />
+              <text x="1076" y="196" class="t2">已上线</text>
+            </g>
+            <g>
+              <circle cx="1156" cy="192" r="4" class="ok" />
+              <text x="1166" y="196" class="t2">已上线</text>
+            </g>
+            <g><text x="1236" y="196" class="t3">–</text></g>
+          </g>
+          <!-- rejected inline detail -->
+          <rect x="244" y="228" width="1036" height="44" rx="8" fill="#FDECEB" />
+          <text x="260" y="246" fill="#D0342C" font-size="11">
+            华为 · 被拒（14:32）：元数据不合规 — 截图含「测试版」字样
+          </text>
+          <text x="260" y="262" class="t2">查看变更历史 · 复制原因 · 立即刷新</text>
+          <rect x="610" y="182" width="6" height="44" rx="3" class="acc" />
+          <!-- group 2: ios project -->
+          <text x="252" y="308" class="txt" font-weight="600">qianyun-ios</text>
+          <text x="252" y="324" class="t3">~/work/qianyun-ios · ios</text>
+          <g>
+            <g>
+              <circle cx="436" cy="304" r="4" class="ok" />
+              <text x="446" y="308" class="t2">待提交</text>
+            </g>
+            <g>
+              <circle cx="526" cy="304" r="4" class="stale" />
+              <text x="536" y="308" class="t2">–</text>
+            </g>
+            <g>
+              <circle cx="616" cy="304" r="4" class="stale" />
+              <text x="626" y="308" class="t2">–</text>
+            </g>
+            <g>
+              <circle cx="706" cy="304" r="4" class="stale" />
+              <text x="726" y="308" class="t2">–</text>
+            </g>
+            <g>
+              <circle cx="796" cy="304" r="4" class="stale" />
+              <text x="816" y="308" class="t2">–</text>
+            </g>
+            <g>
+              <circle cx="886" cy="304" r="4" class="stale" />
+              <text x="906" y="308" class="t2">–</text>
+            </g>
+            <g>
+              <circle cx="976" cy="304" r="4" class="stale" />
+              <text x="996" y="308" class="t2">–</text>
+            </g>
+            <g>
+              <circle cx="1066" cy="304" r="4" class="warn" />
+              <text x="1076" y="308" class="t2">审核中</text>
+              <text x="1066" y="324" class="t3">1.8.0</text>
+            </g>
+            <g>
+              <circle cx="1156" cy="304" r="4" class="ok" />
+              <text x="1166" y="308" class="t2">已上线</text>
+              <text x="1156" y="324" class="t3">1.7.2</text>
+            </g>
+            <g><text x="1236" y="308" class="t3">–</text></g>
+          </g>
+          <!-- rows placeholder -->
+          <g class="thin">
+            <line x1="244" y1="360" x2="1280" y2="360" />
+            <line x1="244" y1="396" x2="1280" y2="396" />
+          </g>
+          <text x="252" y="384" class="t3">…更多项目组…</text>
+          <!-- empty state mock (inset bottom-right annotation) -->
+          <rect
+            x="244"
+            y="430"
+            width="1036"
+            height="330"
+            rx="12"
+            class="thin"
+            stroke-dasharray="6 4"
+          />
+          <text x="762" y="470" text-anchor="middle" class="tt">
+            空态：先添加项目，才能看到渠道状态
+          </text>
+          <text x="762" y="496" text-anchor="middle" class="t2">
+            添加本地使用 applift 的工程，统一查看 10 渠道审核状态
+          </text>
+          <rect x="672" y="520" width="110" height="30" rx="8" fill="#0A62FF" />
+          <text x="727" y="539" fill="#fff" font-size="12" text-anchor="middle">添加项目</text>
+          <rect x="796" y="520" width="130" height="30" rx="8" class="thin" />
+          <text x="861" y="539" font-size="12" text-anchor="middle" fill="#333">扫描本机目录</text>
+          <text x="762" y="600" text-anchor="middle" class="t3">
+            （加载态：本区域替换为 5 行骨架灰块，脉动 1.2s）
+          </text>
+          <text x="762" y="624" text-anchor="middle" class="t3">
+            （错误态：图标 +「加载失败」+ 原因 + 「重试」按钮）
+          </text>
+          <text x="762" y="648" text-anchor="middle" class="t3">
+            （凭据缺失：全局红横幅吸附工具条下 + 格子灰「未配置」）
+          </text>
+        </svg>
+        <figcaption>
+          线框 A1 · 驾驶舱正常态：侧栏徽标 3、摘要条、过滤器、项目×渠道矩阵、被拒展开条（accent
+          竖条=60s 内跃迁高亮）。虚线框内为同区域空/加载/错误态注记。
+        </figcaption>
+      </figure>
 
-<h2>附 B · 线框：发版向导（确认步 + 执行步）</h2>
-<figure>
-<svg viewBox="0 0 760 780" width="100%" style="min-width:620px" xmlns="http://www.w3.org/2000/svg">
-  <style>.ln{stroke:#9a9a9a;fill:none}.thin{stroke:#c9c9c9;fill:none}.gr{fill:#f3f3f3}.txt{fill:#333;font-size:12px}.t2{fill:#777;font-size:11px}.t3{fill:#999;font-size:10px;font-family:"SF Mono",monospace}.tt{fill:#222;font-size:14px;font-weight:600}.ok{fill:#28A745}.warn{fill:#B8860B}.bad{fill:#D0342C}.acc{fill:#0A62FF}</style>
-  <!-- left: step2 confirm -->
-  <text x="20" y="30" class="tt">第 2 步 · 确认</text>
-  <rect x="20" y="44" width="340" height="36" rx="8" class="gr"/>
-  <text x="32" y="66" class="txt">qy-driver · android · 3.2.1 → 3.3.0</text>
-  <!-- stepper -->
-  <circle cx="40" cy="110" r="6" class="ok"/><text x="54" y="114" class="t2">预检 ✓</text>
-  <circle cx="120" cy="110" r="6" class="acc"/><text x="134" y="114" class="t2">确认</text>
-  <circle cx="190" cy="110" r="6" fill="#ccc"/><text x="204" y="114" class="t3">执行</text>
-  <circle cx="258" cy="110" r="6" fill="#ccc"/><text x="272" y="114" class="t3">结果</text>
-  <text x="32" y="152" class="txt" font-weight="600">投递方式（可改选）</text><text x="220" y="152" class="t2">全部使用推荐</text>
-  <g>
-    <line x1="20" y1="164" x2="360" y2="164" class="thin"/>
-    <text x="32" y="184" class="txt">ASC</text><rect x="200" y="170" width="120" height="20" rx="6" class="ln"/><text x="210" y="184" class="t2">API 直传 ▾</text><text x="330" y="184" class="t3">推荐</text>
-    <text x="32" y="212" class="txt">华为</text><rect x="200" y="198" width="120" height="20" rx="6" class="ln"/><text x="210" y="212" class="t2">API 直传 ▾</text><text x="330" y="212" class="t3">推荐</text>
-    <text x="32" y="240" class="txt">OPPO</text><rect x="200" y="226" width="120" height="20" rx="6" class="ln"/><text x="210" y="240" class="t2">网页手动 ▾</text><text x="330" y="240" class="t3">推荐</text>
-    <text x="32" y="268" class="t2">蒲公英 · </text><text x="92" y="268" fill="#999">未配置凭据 · 去设置</text>
-    <line x1="20" y1="282" x2="360" y2="282" class="thin"/>
-  </g>
-  <text x="32" y="312" class="txt" font-weight="600">确认清单</text>
-  <text x="32" y="332" class="t2">· 将向 4 渠道提审 3.3.0（build 330）</text>
-  <text x="32" y="350" class="t2">· 将覆盖 ASC TestFlight 构建 330</text>
-  <rect x="32" y="366" width="14" height="14" class="ln"/><text x="54" y="378" class="t2">我确认覆盖上述构建</text>
-  <rect x="20" y="404" width="140" height="34" rx="8" fill="#0A62FF"/><text x="90" y="425" fill="#fff" font-size="12" text-anchor="middle">开始发版</text>
-  <rect x="172" y="404" width="80" height="34" rx="8" class="ln"/><text x="212" y="425" font-size="12" text-anchor="middle" fill="#333">返回</text>
-  <text x="20" y="470" class="t3">（第1步预检：stages 列表 + ⚠影响项 + ✓折叠；阻断项→按钮禁用）</text>
-  <text x="20" y="490" class="t3">（第1步加载：分组骨架 + 「dry-run 执行中…」）</text>
-  <!-- right: step3 progress -->
-  <text x="400" y="30" class="tt">第 3 步 · 执行</text>
-  <text x="412" y="66" class="t2" text-anchor="end" transform="translate(40,0)">取消发版</text>
-  <g>
-    <circle cx="412" cy="110" r="5" class="ok"/><text x="424" y="114" class="t2">产物准备 ✓</text>
-    <rect x="412" y="124" width="320" height="4" rx="2" fill="#28A745"/>
-    <circle cx="412" cy="160" r="5" class="acc"/><text x="424" y="164" class="t2">上传（3/4）</text>
-    <rect x="412" y="174" width="320" height="6" rx="3" fill="#eee"/><rect x="412" y="174" width="240" height="6" rx="3" fill="#0A62FF"/>
-    <text x="424" y="200" class="t3">ASC ✓ · 华为 ✓ · 小米 ✓ · OPPO 42%</text>
-    <rect x="424" y="210" width="296" height="3" rx="1.5" fill="#eee"/><rect x="424" y="210" width="124" height="3" rx="1.5" fill="#0A62FF"/>
-    <circle cx="412" cy="246" r="5" class="bad"/><text x="424" y="250" fill="#D0342C">vivo · 失败</text>
-    <rect x="424" y="260" width="296" height="28" rx="6" fill="#FDECEB"/>
-    <text x="434" y="278" font-size="10" fill="#D0342C">401 凭据失效 · [重试] [跳过该渠道]</text>
-    <circle cx="412" cy="316" r="5" fill="#ccc"/><text x="424" y="320" class="t3">提审 · 等待</text>
-    <rect x="412" y="330" width="320" height="6" rx="3" fill="#eee"/>
-  </g>
-  <text x="412" y="366" class="txt" font-weight="600">日志 ▾（可折叠 · 按渠道过滤 · 自动滚底）</text>
-  <rect x="412" y="378" width="320" height="120" rx="8" class="gr"/>
-  <g class="t3">
-    <text x="424" y="398">14:32:01 asc upload ok (3.3.0/330)</text>
-    <text x="424" y="416">14:32:44 huawei upload ok</text>
-    <text x="424" y="434">14:33:10 vivo 401 unauthorized</text>
-    <rect x="420" y="440" width="304" height="16" rx="3" fill="#FDECEB"/>
-    <text x="424" y="452" fill="#D0342C">14:33:10 vivo ERROR retry scheduled</text>
-    <text x="424" y="486">…</text>
-  </g>
-  <text x="400" y="530" class="tt">第 4 步 · 结果</text>
-  <rect x="412" y="544" width="320" height="44" rx="10" fill="#FFF6E5"/>
-  <circle cx="430" cy="566" r="5" class="warn"/><text x="444" y="570" font-size="12" fill="#8a6508">部分成功 · 3/4 渠道</text>
-  <g class="t3">
-    <text x="424" y="612">ASC   提审成功 · 单号 8f21…</text>
-    <text x="424" y="630">华为  提审成功</text>
-    <text x="424" y="648">vivo  ✗ 401 · 未提审</text>
-  </g>
-  <rect x="412" y="668" width="140" height="32" rx="8" fill="#0A62FF"/><text x="482" y="688" fill="#fff" font-size="12" text-anchor="middle">重试失败项</text>
-  <rect x="564" y="668" width="90" height="32" rx="8" class="ln"/><text x="609" y="688" font-size="12" text-anchor="middle" fill="#333">完成</text>
-  <text x="412" y="740" class="t3">（P2 release 向导：同骨架 + 分阶段比例列 + tag 补打结果组）</text>
-</svg>
-<figcaption>线框 B1 · 发版向导：左=第2步确认（推荐投递可改选、强制确认框、凭据缺失行降级）；右上=第3步分 stage/渠道进度 + 失败行内重试/跳过 + 折叠日志；右下=第4步部分成功结果。</figcaption>
-</figure>
+      <h2>附 B · 线框：发版向导（确认步 + 执行步）</h2>
+      <figure>
+        <svg
+          viewBox="0 0 760 780"
+          width="100%"
+          style="min-width: 620px"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <style>
+            .ln {
+              stroke: #9a9a9a;
+              fill: none;
+            }
+            .thin {
+              stroke: #c9c9c9;
+              fill: none;
+            }
+            .gr {
+              fill: #f3f3f3;
+            }
+            .txt {
+              fill: #333;
+              font-size: 12px;
+            }
+            .t2 {
+              fill: #777;
+              font-size: 11px;
+            }
+            .t3 {
+              fill: #999;
+              font-size: 10px;
+              font-family: "SF Mono", monospace;
+            }
+            .tt {
+              fill: #222;
+              font-size: 14px;
+              font-weight: 600;
+            }
+            .ok {
+              fill: #28a745;
+            }
+            .warn {
+              fill: #b8860b;
+            }
+            .bad {
+              fill: #d0342c;
+            }
+            .acc {
+              fill: #0a62ff;
+            }
+          </style>
+          <!-- left: step2 confirm -->
+          <text x="20" y="30" class="tt">第 2 步 · 确认</text>
+          <rect x="20" y="44" width="340" height="36" rx="8" class="gr" />
+          <text x="32" y="66" class="txt">qy-driver · android · 3.2.1 → 3.3.0</text>
+          <!-- stepper -->
+          <circle cx="40" cy="110" r="6" class="ok" />
+          <text x="54" y="114" class="t2">预检 ✓</text>
+          <circle cx="120" cy="110" r="6" class="acc" />
+          <text x="134" y="114" class="t2">确认</text>
+          <circle cx="190" cy="110" r="6" fill="#ccc" />
+          <text x="204" y="114" class="t3">执行</text>
+          <circle cx="258" cy="110" r="6" fill="#ccc" />
+          <text x="272" y="114" class="t3">结果</text>
+          <text x="32" y="152" class="txt" font-weight="600">投递方式（可改选）</text>
+          <text x="220" y="152" class="t2">全部使用推荐</text>
+          <g>
+            <line x1="20" y1="164" x2="360" y2="164" class="thin" />
+            <text x="32" y="184" class="txt">ASC</text>
+            <rect x="200" y="170" width="120" height="20" rx="6" class="ln" />
+            <text x="210" y="184" class="t2">API 直传 ▾</text>
+            <text x="330" y="184" class="t3">推荐</text>
+            <text x="32" y="212" class="txt">华为</text>
+            <rect x="200" y="198" width="120" height="20" rx="6" class="ln" />
+            <text x="210" y="212" class="t2">API 直传 ▾</text>
+            <text x="330" y="212" class="t3">推荐</text>
+            <text x="32" y="240" class="txt">OPPO</text>
+            <rect x="200" y="226" width="120" height="20" rx="6" class="ln" />
+            <text x="210" y="240" class="t2">网页手动 ▾</text>
+            <text x="330" y="240" class="t3">推荐</text>
+            <text x="32" y="268" class="t2">蒲公英 ·</text>
+            <text x="92" y="268" fill="#999">未配置凭据 · 去设置</text>
+            <line x1="20" y1="282" x2="360" y2="282" class="thin" />
+          </g>
+          <text x="32" y="312" class="txt" font-weight="600">确认清单</text>
+          <text x="32" y="332" class="t2">· 将向 4 渠道提审 3.3.0（build 330）</text>
+          <text x="32" y="350" class="t2">· 将覆盖 ASC TestFlight 构建 330</text>
+          <rect x="32" y="366" width="14" height="14" class="ln" />
+          <text x="54" y="378" class="t2">我确认覆盖上述构建</text>
+          <rect x="20" y="404" width="140" height="34" rx="8" fill="#0A62FF" />
+          <text x="90" y="425" fill="#fff" font-size="12" text-anchor="middle">开始发版</text>
+          <rect x="172" y="404" width="80" height="34" rx="8" class="ln" />
+          <text x="212" y="425" font-size="12" text-anchor="middle" fill="#333">返回</text>
+          <text x="20" y="470" class="t3">
+            （第1步预检：stages 列表 + ⚠影响项 + ✓折叠；阻断项→按钮禁用）
+          </text>
+          <text x="20" y="490" class="t3">（第1步加载：分组骨架 + 「dry-run 执行中…」）</text>
+          <!-- right: step3 progress -->
+          <text x="400" y="30" class="tt">第 3 步 · 执行</text>
+          <text x="412" y="66" class="t2" text-anchor="end" transform="translate(40,0)">
+            取消发版
+          </text>
+          <g>
+            <circle cx="412" cy="110" r="5" class="ok" />
+            <text x="424" y="114" class="t2">产物准备 ✓</text>
+            <rect x="412" y="124" width="320" height="4" rx="2" fill="#28A745" />
+            <circle cx="412" cy="160" r="5" class="acc" />
+            <text x="424" y="164" class="t2">上传（3/4）</text>
+            <rect x="412" y="174" width="320" height="6" rx="3" fill="#eee" />
+            <rect x="412" y="174" width="240" height="6" rx="3" fill="#0A62FF" />
+            <text x="424" y="200" class="t3">ASC ✓ · 华为 ✓ · 小米 ✓ · OPPO 42%</text>
+            <rect x="424" y="210" width="296" height="3" rx="1.5" fill="#eee" />
+            <rect x="424" y="210" width="124" height="3" rx="1.5" fill="#0A62FF" />
+            <circle cx="412" cy="246" r="5" class="bad" />
+            <text x="424" y="250" fill="#D0342C">vivo · 失败</text>
+            <rect x="424" y="260" width="296" height="28" rx="6" fill="#FDECEB" />
+            <text x="434" y="278" font-size="10" fill="#D0342C">
+              401 凭据失效 · [重试] [跳过该渠道]
+            </text>
+            <circle cx="412" cy="316" r="5" fill="#ccc" />
+            <text x="424" y="320" class="t3">提审 · 等待</text>
+            <rect x="412" y="330" width="320" height="6" rx="3" fill="#eee" />
+          </g>
+          <text x="412" y="366" class="txt" font-weight="600">
+            日志 ▾（可折叠 · 按渠道过滤 · 自动滚底）
+          </text>
+          <rect x="412" y="378" width="320" height="120" rx="8" class="gr" />
+          <g class="t3">
+            <text x="424" y="398">14:32:01 asc upload ok (3.3.0/330)</text>
+            <text x="424" y="416">14:32:44 huawei upload ok</text>
+            <text x="424" y="434">14:33:10 vivo 401 unauthorized</text>
+            <rect x="420" y="440" width="304" height="16" rx="3" fill="#FDECEB" />
+            <text x="424" y="452" fill="#D0342C">14:33:10 vivo ERROR retry scheduled</text>
+            <text x="424" y="486">…</text>
+          </g>
+          <text x="400" y="530" class="tt">第 4 步 · 结果</text>
+          <rect x="412" y="544" width="320" height="44" rx="10" fill="#FFF6E5" />
+          <circle cx="430" cy="566" r="5" class="warn" />
+          <text x="444" y="570" font-size="12" fill="#8a6508">部分成功 · 3/4 渠道</text>
+          <g class="t3">
+            <text x="424" y="612">ASC 提审成功 · 单号 8f21…</text>
+            <text x="424" y="630">华为 提审成功</text>
+            <text x="424" y="648">vivo ✗ 401 · 未提审</text>
+          </g>
+          <rect x="412" y="668" width="140" height="32" rx="8" fill="#0A62FF" />
+          <text x="482" y="688" fill="#fff" font-size="12" text-anchor="middle">重试失败项</text>
+          <rect x="564" y="668" width="90" height="32" rx="8" class="ln" />
+          <text x="609" y="688" font-size="12" text-anchor="middle" fill="#333">完成</text>
+          <text x="412" y="740" class="t3">
+            （P2 release 向导：同骨架 + 分阶段比例列 + tag 补打结果组）
+          </text>
+        </svg>
+        <figcaption>
+          线框 B1 ·
+          发版向导：左=第2步确认（推荐投递可改选、强制确认框、凭据缺失行降级）；右上=第3步分
+          stage/渠道进度 + 失败行内重试/跳过 + 折叠日志；右下=第4步部分成功结果。
+        </figcaption>
+      </figure>
 
-<h2>附 C · 线框：macOS 状态栏 Popup（360×480）</h2>
-<figure>
-<svg viewBox="0 0 460 520" width="460" xmlns="http://www.w3.org/2000/svg">
-  <style>.ln{stroke:#9a9a9a;fill:none}.thin{stroke:#c9c9c9;fill:none}.gr{fill:#f3f3f3}.txt{fill:#333;font-size:11px}.t2{fill:#777;font-size:10px}.t3{fill:#999;font-size:9px;font-family:"SF Mono",monospace}.tt{fill:#222;font-size:12px;font-weight:600}.ok{fill:#28A745}.warn{fill:#B8860B}.bad{fill:#D0342C}.stale{fill:#8E8E93}.acc{fill:#0A62FF}</style>
-  <!-- menu bar icon -->
-  <rect x="0" y="0" width="460" height="24" fill="#e8e8e8"/>
-  <text x="384" y="16" class="t2">▲applift</text>
-  <line x1="382" y1="24" x2="392" y2="34" class="thin"/>
-  <!-- popup -->
-  <rect x="222" y="34" width="360" height="480" rx="12" fill="#fff" class="ln"/>
-  <g transform="translate(222,34)">
-    <text x="16" y="26" class="tt">applift</text>
-    <text x="150" y="26" class="t2">更新于 2 分前</text>
-    <text x="344" y="26" class="t2">⚙</text>
-    <!-- summary -->
-    <rect x="12" y="40" width="336" height="28" rx="8" class="gr"/>
-    <text x="24" y="58" class="txt">正常 14</text><text x="90" y="58" fill="#B8860B">审核中 4</text><text x="160" y="58" fill="#D0342C">异常 2</text>
-    <!-- project rows -->
-    <rect x="12" y="80" width="336" height="56" rx="8" class="thin"/>
-    <circle cx="170" cy="36" r="0"/>
-    <circle cx="30" cy="98" r="4" fill="#aaa"/><text x="42" y="102" class="txt" font-weight="600">qy-driver</text>
-    <circle cx="360" cy="86" r="3" class="acc"/>
-    <g><circle cx="42" cy="118" r="3.5" class="ok"/><circle cx="56" cy="118" r="3.5" class="ok"/><circle cx="70" cy="118" r="3.5" class="warn"/><circle cx="84" cy="118" r="3.5" class="bad"/><circle cx="98" cy="118" r="3.5" class="bad"/><text x="110" y="121" class="t2">+4</text></g>
-    <text x="336" y="121" class="t3" text-anchor="end">2分</text>
-    <!-- expanded channel mini rows -->
-    <g class="t3">
-      <text x="42" y="150">OPPO</text><circle cx="118" cy="146" r="3" class="bad"/><text x="130" y="150">被拒 3.3.0</text>
-      <text x="42" y="166">vivo</text><circle cx="118" cy="162" r="3" class="bad"/><text x="130" y="166">错误</text>
-      <text x="42" y="182">AGC</text><circle cx="118" cy="178" r="3" class="warn"/><text x="130" y="182">审核中 3.3.0</text>
-    </g>
-    <rect x="12" y="196" width="336" height="48" rx="8" class="thin"/>
-    <circle cx="30" cy="220" r="4" fill="#aaa"/><text x="42" y="216" class="txt" font-weight="600">qianyun-ios</text>
-    <g><circle cx="42" cy="232" r="3.5" class="ok"/><circle cx="56" cy="232" r="3.5" class="warn"/><circle cx="70" cy="232" r="3.5" class="ok"/></g>
-    <text x="336" y="232" class="t3" text-anchor="end">2分</text>
-    <text x="24" y="290" class="t3">（加载：首帧缓存 + 顶部细进度条；错误：摘要位→「数据不可用·重试」）</text>
-    <text x="24" y="306" class="t3">（空：「添加项目后在此查看状态 · 打开完整界面」）</text>
-    <text x="24" y="322" class="t3">（跃迁角标：行右上蓝点，打开 3s 后清除）</text>
-    <!-- credential hint bar -->
-    <rect x="12" y="368" width="336" height="26" rx="6" fill="#FDECEB"/>
-    <text x="24" y="385" font-size="10" fill="#D0342C">2 个渠道未配置凭据 →</text>
-    <!-- bottom actions -->
-    <line x1="12" y1="406" x2="348" y2="406" class="thin"/>
-    <rect x="16" y="418" width="150" height="36" rx="8" fill="#0A62FF"/><text x="91" y="440" fill="#fff" font-size="12" text-anchor="middle">发版…</text>
-    <rect x="182" y="418" width="150" height="36" rx="8" class="ln"/><text x="257" y="440" font-size="12" text-anchor="middle" fill="#333">打开完整界面</text>
-  </g>
-  <!-- native notification mock -->
-  <rect x="10" y="120" width="300" height="64" rx="14" fill="#fff" class="ln"/>
-  <text x="28" y="146" class="txt" font-weight="600">applift</text><text x="90" y="146" class="t2">现在</text>
-  <text x="28" y="164" class="txt">qy-driver · 华为</text>
-  <text x="28" y="178" class="t2">状态变更为：被拒</text>
-  <text x="230" y="172" class="t2">查看  忽略</text>
-</svg>
-<figcaption>线框 C1 · macOS popup 360×480：摘要条、项目行（渠道点簇+新鲜度+跃迁角标）、展开的渠道迷你行、凭据提示条、底部快捷发版/打开主窗口；左上为系统通知样式示意。</figcaption>
-</figure>
+      <h2>附 C · 线框：macOS 状态栏 Popup（360×480）</h2>
+      <figure>
+        <svg viewBox="0 0 460 520" width="460" xmlns="http://www.w3.org/2000/svg">
+          <style>
+            .ln {
+              stroke: #9a9a9a;
+              fill: none;
+            }
+            .thin {
+              stroke: #c9c9c9;
+              fill: none;
+            }
+            .gr {
+              fill: #f3f3f3;
+            }
+            .txt {
+              fill: #333;
+              font-size: 11px;
+            }
+            .t2 {
+              fill: #777;
+              font-size: 10px;
+            }
+            .t3 {
+              fill: #999;
+              font-size: 9px;
+              font-family: "SF Mono", monospace;
+            }
+            .tt {
+              fill: #222;
+              font-size: 12px;
+              font-weight: 600;
+            }
+            .ok {
+              fill: #28a745;
+            }
+            .warn {
+              fill: #b8860b;
+            }
+            .bad {
+              fill: #d0342c;
+            }
+            .stale {
+              fill: #8e8e93;
+            }
+            .acc {
+              fill: #0a62ff;
+            }
+          </style>
+          <!-- menu bar icon -->
+          <rect x="0" y="0" width="460" height="24" fill="#e8e8e8" />
+          <text x="384" y="16" class="t2">▲applift</text>
+          <line x1="382" y1="24" x2="392" y2="34" class="thin" />
+          <!-- popup -->
+          <rect x="222" y="34" width="360" height="480" rx="12" fill="#fff" class="ln" />
+          <g transform="translate(222,34)">
+            <text x="16" y="26" class="tt">applift</text>
+            <text x="150" y="26" class="t2">更新于 2 分前</text>
+            <text x="344" y="26" class="t2">⚙</text>
+            <!-- summary -->
+            <rect x="12" y="40" width="336" height="28" rx="8" class="gr" />
+            <text x="24" y="58" class="txt">正常 14</text>
+            <text x="90" y="58" fill="#B8860B">审核中 4</text>
+            <text x="160" y="58" fill="#D0342C">异常 2</text>
+            <!-- project rows -->
+            <rect x="12" y="80" width="336" height="56" rx="8" class="thin" />
+            <circle cx="170" cy="36" r="0" />
+            <circle cx="30" cy="98" r="4" fill="#aaa" />
+            <text x="42" y="102" class="txt" font-weight="600">qy-driver</text>
+            <circle cx="360" cy="86" r="3" class="acc" />
+            <g>
+              <circle cx="42" cy="118" r="3.5" class="ok" />
+              <circle cx="56" cy="118" r="3.5" class="ok" />
+              <circle cx="70" cy="118" r="3.5" class="warn" />
+              <circle cx="84" cy="118" r="3.5" class="bad" />
+              <circle cx="98" cy="118" r="3.5" class="bad" />
+              <text x="110" y="121" class="t2">+4</text>
+            </g>
+            <text x="336" y="121" class="t3" text-anchor="end">2分</text>
+            <!-- expanded channel mini rows -->
+            <g class="t3">
+              <text x="42" y="150">OPPO</text>
+              <circle cx="118" cy="146" r="3" class="bad" />
+              <text x="130" y="150">被拒 3.3.0</text>
+              <text x="42" y="166">vivo</text>
+              <circle cx="118" cy="162" r="3" class="bad" />
+              <text x="130" y="166">错误</text>
+              <text x="42" y="182">AGC</text>
+              <circle cx="118" cy="178" r="3" class="warn" />
+              <text x="130" y="182">审核中 3.3.0</text>
+            </g>
+            <rect x="12" y="196" width="336" height="48" rx="8" class="thin" />
+            <circle cx="30" cy="220" r="4" fill="#aaa" />
+            <text x="42" y="216" class="txt" font-weight="600">qianyun-ios</text>
+            <g>
+              <circle cx="42" cy="232" r="3.5" class="ok" />
+              <circle cx="56" cy="232" r="3.5" class="warn" />
+              <circle cx="70" cy="232" r="3.5" class="ok" />
+            </g>
+            <text x="336" y="232" class="t3" text-anchor="end">2分</text>
+            <text x="24" y="290" class="t3">
+              （加载：首帧缓存 + 顶部细进度条；错误：摘要位→「数据不可用·重试」）
+            </text>
+            <text x="24" y="306" class="t3">（空：「添加项目后在此查看状态 · 打开完整界面」）</text>
+            <text x="24" y="322" class="t3">（跃迁角标：行右上蓝点，打开 3s 后清除）</text>
+            <!-- credential hint bar -->
+            <rect x="12" y="368" width="336" height="26" rx="6" fill="#FDECEB" />
+            <text x="24" y="385" font-size="10" fill="#D0342C">2 个渠道未配置凭据 →</text>
+            <!-- bottom actions -->
+            <line x1="12" y1="406" x2="348" y2="406" class="thin" />
+            <rect x="16" y="418" width="150" height="36" rx="8" fill="#0A62FF" />
+            <text x="91" y="440" fill="#fff" font-size="12" text-anchor="middle">发版…</text>
+            <rect x="182" y="418" width="150" height="36" rx="8" class="ln" />
+            <text x="257" y="440" font-size="12" text-anchor="middle" fill="#333">
+              打开完整界面
+            </text>
+          </g>
+          <!-- native notification mock -->
+          <rect x="10" y="120" width="300" height="64" rx="14" fill="#fff" class="ln" />
+          <text x="28" y="146" class="txt" font-weight="600">applift</text>
+          <text x="90" y="146" class="t2">现在</text>
+          <text x="28" y="164" class="txt">qy-driver · 华为</text>
+          <text x="28" y="178" class="t2">状态变更为：被拒</text>
+          <text x="230" y="172" class="t2">查看 忽略</text>
+        </svg>
+        <figcaption>
+          线框 C1 · macOS popup
+          360×480：摘要条、项目行（渠道点簇+新鲜度+跃迁角标）、展开的渠道迷你行、凭据提示条、底部快捷发版/打开主窗口；左上为系统通知样式示意。
+        </figcaption>
+      </figure>
 
-<h2>附 D · 场景适配与一致性结论</h2>
-<div class="card">
-<ul>
-<li><b>管理/工具型定位</b>：全部页面沿用「摘要条→过滤→列表/矩阵」骨架与同一 StatusBadge/FreshnessLabel 词汇，状态色是唯一饱和色，信息密度高但三层灰阶 + 留白分组保持克制，符合 Apple 风格且贯穿一致。</li>
-<li><b>强光/单手等移动场景</b>：非目标场景（桌面工具），popup 已按 glanceable 原则压缩为「点簇一眼读态」，webui 最小支持 1280px，不承诺移动端布局。</li>
-<li><b>深浅模式</b>：token 全量双份，状态色暗色下提亮（pending 琥珀在暗底改亮金 #E0A020、rejected #FF6B5E）保证 4.5:1 对比。</li>
-<li><b>MVP 边界复查</b>：§1–§5 为一期必须；§6–§8 二期（§6/§7 与 §4/驾驶舱组件复用率高，无新增组件族）；§9 仅侧栏灰置入口 + 占位页。</li>
-</ul>
-</div>
-
-</div>
-</body>
+      <h2>附 D · 场景适配与一致性结论</h2>
+      <div class="card">
+        <ul>
+          <li>
+            <b>管理/工具型定位</b>：全部页面沿用「摘要条→过滤→列表/矩阵」骨架与同一
+            StatusBadge/FreshnessLabel 词汇，状态色是唯一饱和色，信息密度高但三层灰阶 +
+            留白分组保持克制，符合 Apple 风格且贯穿一致。
+          </li>
+          <li>
+            <b>强光/单手等移动场景</b>：非目标场景（桌面工具），popup 已按 glanceable
+            原则压缩为「点簇一眼读态」，webui 最小支持 1280px，不承诺移动端布局。
+          </li>
+          <li>
+            <b>深浅模式</b>：token 全量双份，状态色暗色下提亮（pending 琥珀在暗底改亮金
+            #E0A020、rejected #FF6B5E）保证 4.5:1 对比。
+          </li>
+          <li>
+            <b>MVP 边界复查</b>：§1–§5 为一期必须；§6–§8 二期（§6/§7 与
+            §4/驾驶舱组件复用率高，无新增组件族）；§9 仅侧栏灰置入口 + 占位页。
+          </li>
+        </ul>
+      </div>
+    </div>
+  </body>
 </html>

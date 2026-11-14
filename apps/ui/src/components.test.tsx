@@ -6,6 +6,7 @@ import { PageCtxProvider, type PageCtx } from "./state.js";
 import { ConfirmCard } from "./pages/Release.js";
 import ProjectPage from "./pages/Project.js";
 import SettingsPage from "./pages/Settings.js";
+import InstallBlock from "./InstallBlock.js";
 import AddProjectDialog from "./AddProjectDialog.js";
 import type { HostAdapter } from "./host.js";
 
@@ -106,7 +107,7 @@ describe("Settings 轮询 clamp", () => {
     document.body.append(el);
     localStorage.setItem("applift-ui:settings", JSON.stringify({ fgMinutes: 5, bgMinutes: 60 }));
     const applyIntervals = vi.fn(async () => {});
-    const client = { applyIntervals } as unknown as UiClient;
+    const client = { applyIntervals, availability: vi.fn(async () => null) } as unknown as UiClient;
     const { rerender } = render(
       withCtx(<SettingsPage theme="auto" onThemeChange={vi.fn()} />, client),
     );
@@ -128,7 +129,10 @@ describe("Settings 轮询 clamp", () => {
     el.id = "toast";
     document.body.append(el);
     localStorage.setItem("applift-ui:settings", JSON.stringify({ fgMinutes: 5, bgMinutes: 60 }));
-    const client = { applyIntervals: vi.fn(async () => {}) } as unknown as UiClient;
+    const client = {
+      applyIntervals: vi.fn(async () => {}),
+      availability: vi.fn(async () => null),
+    } as unknown as UiClient;
     render(withCtx(<SettingsPage theme="auto" onThemeChange={vi.fn()} />, client));
     const bg = document.querySelector('.stepper[data-key="bg"]')!;
     const minus = bg.querySelector('button[data-dir="-1"]')!;
@@ -145,7 +149,9 @@ describe("Settings 轮询 clamp", () => {
 describe("AddProjectDialog 双路径", () => {
   const HOST = { notify: vi.fn(), pickDirectory: vi.fn(async () => null), setBadge: vi.fn() };
 
-  function fsClient(over: Partial<Record<"fsRoots" | "fsList" | "addProject", unknown>> = {}) {
+  function fsClient(
+    over: Partial<Record<"fsRoots" | "fsList" | "addProject" | "availability", unknown>> = {},
+  ) {
     return {
       fsRoots: vi.fn(async () => [{ name: "主目录", path: "/tmp/home" }]),
       fsList: vi.fn(async (dir: string) =>
@@ -197,6 +203,12 @@ describe("AddProjectDialog 双路径", () => {
       addProject: vi.fn(async () => {
         throw new Error("no applift.config.ts");
       }),
+      availability: vi.fn(async () => ({
+        nodeVersion: "v22.0.0",
+        nodeOk: true,
+        sources: [{ kind: "global", path: "/usr/local/bin/applift", version: "0.14.0" }],
+        latest: null,
+      })),
     });
     const onClose = vi.fn();
     render(withCtx(<AddProjectDialog host={HOST} onClose={onClose} />, client));
@@ -280,5 +292,115 @@ describe("AddProjectDialog 加固（错误态/重试/竞态）", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(document.querySelector("#fsList")!.textContent).toContain("📁 plain");
     expect(client.fsList).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("引导安装块（InstallBlock 三态 + 添加项目联动）", () => {
+  const HOST = { notify: vi.fn(), pickDirectory: vi.fn(async () => null), setBadge: vi.fn() };
+
+  /** 可控安装桩客户端：installApplift 返回固定 taskId，emitTask/emitEnd 手推事件 */
+  function installClient(extra: Record<string, unknown> = {}) {
+    const taskFns = new Set<(ev: Record<string, unknown>) => void>();
+    const endFns = new Set<(tid: string, code: number) => void>();
+    return {
+      installApplift: vi.fn(async () => "install:t1"),
+      onInstallTask: vi.fn((fn: (ev: Record<string, unknown>) => void) => {
+        taskFns.add(fn);
+        return () => taskFns.delete(fn);
+      }),
+      onTaskEnd: vi.fn((fn: (tid: string, code: number) => void) => {
+        endFns.add(fn);
+        return () => endFns.delete(fn);
+      }),
+      taskEndCode: vi.fn(() => undefined),
+      emitTask: (ev: Record<string, unknown>) => {
+        for (const fn of taskFns) fn(ev);
+      },
+      emitEnd: (code: number) => {
+        for (const fn of endFns) fn("install:t1", code);
+      },
+      ...extra,
+    } as unknown as UiClient & {
+      emitTask: (e: Record<string, unknown>) => void;
+      emitEnd: (c: number) => void;
+    };
+  }
+
+  it("三态：ready 发起 → running 日志滚动 → 成功回 ready 并回调 onDone(true)", async () => {
+    const client = installClient();
+    const onDone = vi.fn();
+    render(<InstallBlock client={client} label="安装到全局" onDone={onDone} />);
+    const block = document.querySelector("#installBlock")!;
+    expect(block.getAttribute("data-install")).toBe("ready");
+
+    fireEvent.click(document.querySelector("#installBtn")!);
+    expect(block.getAttribute("data-install")).toBe("running");
+    expect(client.installApplift).toHaveBeenCalledWith(false);
+
+    client.emitTask({ type: "install.log", level: "info", msg: "added 1 package" });
+    await waitFor(() =>
+      expect(document.querySelector("#installLog")!.textContent).toContain("added 1 package"),
+    );
+    client.emitTask({ type: "install.result", ok: true, code: 0 });
+    client.emitEnd(0);
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith(true));
+    expect(block.getAttribute("data-install")).toBe("ready");
+  });
+
+  it("失败态：exit≠0 → failed 可重试，重试再走一轮发起", async () => {
+    const client = installClient();
+    render(<InstallBlock client={client} label="安装到全局" onDone={vi.fn()} />);
+    fireEvent.click(document.querySelector("#installBtn")!);
+    await waitFor(() => expect(client.installApplift).toHaveBeenCalled());
+    client.emitTask({ type: "install.result", ok: false, code: 1 });
+    client.emitEnd(1);
+    const block = document.querySelector("#installBlock")!;
+    await waitFor(() => expect(block.getAttribute("data-install")).toBe("failed"));
+    expect(screen.getByText("安装失败，可重试")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("重试"));
+    await waitFor(() => expect(client.installApplift).toHaveBeenCalledTimes(2));
+    expect(block.getAttribute("data-install")).toBe("running");
+  });
+
+  it("添加失败且 sources 全空 → 未检测到 applift 块；安装成功自动重试 add", async () => {
+    const client = installClient({
+      fsRoots: vi.fn(async () => []),
+      fsList: vi.fn(async () => []),
+      addProject: vi.fn().mockRejectedValueOnce(new Error("applift 不可用")).mockResolvedValueOnce({
+        id: "p9",
+        name: "proj",
+        path: "/tmp/proj",
+      }),
+      availability: vi.fn(async () => ({
+        nodeVersion: "v18.0.0",
+        nodeOk: false,
+        sources: [],
+        latest: null,
+      })),
+    });
+    render(withCtx(<AddProjectDialog host={HOST} onClose={vi.fn()} />, client));
+    fireEvent.click(document.querySelector('button[data-tab="manual"]')!);
+    fireEvent.change(document.querySelector<HTMLInputElement>("#manualPath")!, {
+      target: { value: "/tmp/proj" },
+    });
+    fireEvent.click(document.querySelector("#manualAdd")!);
+
+    const hint = await waitFor(() => {
+      const el = document.querySelector("#installHint");
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    expect(hint.textContent).toContain("未检测到 applift");
+    expect(hint.textContent).toContain("v18.0.0");
+    expect(hint.textContent).toContain("Node ≥ 20");
+
+    fireEvent.click(document.querySelector("#installBtn")!);
+    await waitFor(() => expect(client.installApplift).toHaveBeenCalled());
+    client.emitTask({ type: "install.result", ok: true, code: 0 });
+    client.emitEnd(0);
+    // 安装成功 → 自动重试 validate（第二次 add 成功）
+    await waitFor(() => expect(client.addProject).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(client.availability).toHaveBeenCalledTimes(1));
   });
 });

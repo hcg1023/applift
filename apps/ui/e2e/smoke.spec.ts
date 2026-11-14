@@ -99,3 +99,27 @@ test("添加项目：服务端目录浏览器点选可用（webui 路径）", as
   await dlg.locator("button[aria-label='关闭']").click();
   await expect(dlg).toBeHidden();
 });
+
+test("引导安装：未检测到 applift → 安装到全局 → validate 自动重试通过", async ({ page }) => {
+  await page.goto("/#/overview");
+  await page.locator("#addProject").click();
+  const dlg = page.locator("#addProjectDlg");
+  await expect(dlg).toBeVisible();
+
+  // 手输一个 applift 不可用的路径（e2e 桩：marker 未写 → validate 失败）
+  await dlg.locator('button[data-tab="manual"]').click();
+  await dlg.locator("#manualPath").fill("/tmp/e2e-guided-install");
+  await dlg.locator("#manualAdd").click();
+
+  // availability sources 全空 → 「未检测到 applift」引导块
+  const hint = dlg.locator("#installHint");
+  await expect(hint).toBeVisible({ timeout: 15_000 });
+  await expect(hint).toContainText("未检测到 applift");
+  await expect(hint).toContainText("Node v");
+
+  // 安装到全局 → 桩 npm 写 marker + 日志行 → install.result 成功 → 自动重试 validate
+  await hint.locator("#installBtn").click();
+  await expect(hint.locator("#installLog")).toContainText("added 1 package", { timeout: 15_000 });
+  await expect(dlg).toBeHidden({ timeout: 15_000 });
+  await expect(page.locator("#toast")).toContainText("项目已添加");
+});

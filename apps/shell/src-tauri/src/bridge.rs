@@ -64,16 +64,23 @@ fn with_supervisor<T>(
 #[tauri::command]
 pub fn retry_server_start(app: AppHandle) -> Result<u16, String> {
     let state = app.state::<ShellState>();
-    let result = {
+    let (result, was_ready) = {
         let mut guard = state.supervisor.lock().unwrap();
-        match guard.as_mut() {
+        // M-2：仅非 Ready → Ready 的转变重启守护线程；Ready 态幂等重试不得叠加 monitor
+        let was_ready = guard
+            .as_ref()
+            .is_some_and(|s| matches!(s.state(), ServerState::Ready { .. }));
+        let result = match guard.as_mut() {
             Some(sup) => sup.retry(),
             None => Err("node 缺失（壳未初始化 supervisor）".into()),
-        }
+        };
+        (result, was_ready)
     };
     if let Ok(port) = result {
         crate::nav_port(&app, port);
-        crate::spawn_monitor(app);
+        if !was_ready {
+            crate::spawn_monitor(app);
+        }
     }
     result
 }

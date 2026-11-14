@@ -76,6 +76,21 @@ export interface FsRoot {
   path: string;
 }
 
+/** GET /api/applift/availability：applift 检索链单源（工程内 / 全局） */
+export interface AppliftSource {
+  kind: "project" | "global";
+  path: string;
+  version: string | null;
+}
+
+/** GET /api/applift/availability 响应体（node 环境探测 + 已检出来源 + npm latest） */
+export interface Availability {
+  nodeVersion: string;
+  nodeOk: boolean;
+  sources: AppliftSource[];
+  latest: string | null;
+}
+
 export type DownMessage =
   | { t: "snapshot"; data: ProjectSnapshot }
   | { t: "feed"; data: FeedEvent }
@@ -542,5 +557,28 @@ export class UiClient {
       `/api/fs/list?dir=${encodeURIComponent(dir)}`,
     );
     return body.entries ?? [];
+  }
+
+  /** applift 检索链探测（Tauri 壳 §2 引导安装）：path 为待添加工程目录（工程内源探测） */
+  async availability(path?: string): Promise<Availability> {
+    const q = path === undefined || path === "" ? "" : `?path=${encodeURIComponent(path)}`;
+    return this.json<Availability>(`/api/applift/availability${q}`);
+  }
+
+  /** 引导安装 / 更新全局（POST /api/applift/install | update-global）：返回 install: 前缀 taskId，
+   *  进度经 onInstallTask（install.log 行 / install.result 终态），退出经 onTaskEnd */
+  async installApplift(update = false): Promise<string> {
+    const body = await this.json<{ taskId: string }>(
+      `/api/applift/${update ? "update-global" : "install"}`,
+      { method: "POST" },
+    );
+    return body.taskId;
+  }
+
+  /** 安装任务事件订阅（onTask 的 install: 前缀过滤封装）；返回退订函数 */
+  onInstallTask(fn: (ev: TaskEvent) => void): () => void {
+    return this.onTask((taskId, ev) => {
+      if (taskId.startsWith("install:")) fn(ev);
+    });
   }
 }

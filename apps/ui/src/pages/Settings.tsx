@@ -1,4 +1,6 @@
 import { useEffect, useReducer, useState } from "react";
+import InstallBlock from "../InstallBlock.js";
+import type { Availability } from "../api.js";
 import {
   BG_MAX,
   BG_MIN,
@@ -105,6 +107,26 @@ const THEME_SEGS: Array<{ key: Settings["theme"]; label: string }> = [
   { key: "dark", label: "深色" },
 ];
 
+/** latest > 全局源已装版本（数值段比较；任一不可解析 → null 不提示） */
+function globalUpdate(avail: Availability): string | null {
+  const global = avail.sources.find((s) => s.kind === "global");
+  if (global === undefined || global.version === null || avail.latest === null) return null;
+  const parse = (v: string): number[] | null => {
+    const parts = v.split(".").map((p) => Number(p));
+    return parts.length === 3 && parts.every((n) => Number.isInteger(n)) ? parts : null;
+  };
+  const cur = parse(global.version);
+  const next = parse(avail.latest);
+  if (cur === null || next === null) return null;
+  for (let i = 0; i < 3; i += 1) {
+    const a = next[i] ?? 0;
+    const b = cur[i] ?? 0;
+    if (a > b) return avail.latest;
+    if (a < b) return null;
+  }
+  return null;
+}
+
 /**
  * 通用设置：轮询 stepper（护栏 clamp + PUT /api/settings 服务端热接入）/ 通知开关 / 外观。
  * fg/bg/开关以 localStorage 为单一事实源（渲染期读、点击即写 + force 重渲），主题由 app.tsx 经 props 同步。
@@ -119,6 +141,15 @@ export default function SettingsPage({
   const { client } = usePageCtx();
   const [, force] = useReducer((n: number) => n + 1, 0);
   const settings = loadSettings();
+  const [avail, setAvail] = useState<Availability | null>(null);
+
+  // applift 段数据源：检索链探测（全局源 + npm latest；失败静默——段内降级文案）
+  useEffect(() => {
+    void client
+      .availability()
+      .then(setAvail)
+      .catch(() => {});
+  }, [client]);
 
   const onStep = (spec: StepperSpec, dir: number) => {
     const current = spec.key === "fg" ? settings.fgMinutes : settings.bgMinutes;
@@ -210,6 +241,57 @@ export default function SettingsPage({
           </div>
         </>
       ) : null}
+      <div className="group-title">applift</div>
+      <div className="group" id="appliftGroup">
+        {avail === null ? (
+          <div className="set-sub">检索链探测中/不可用…</div>
+        ) : (
+          <>
+            {avail.sources.map((s) => (
+              <div className="set-row" key={`${s.kind}:${s.path}`}>
+                <div className="set-main">
+                  <div className="set-title">{s.kind === "global" ? "全局安装" : "工程内"}</div>
+                  <div className="set-sub">
+                    {s.path} · {s.version ?? "版本未知"}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {avail.sources.length === 0 ? (
+              <div className="set-sub">未检测到已安装的 applift（添加项目时可引导安装）</div>
+            ) : null}
+            <div className="set-row">
+              <div className="set-main">
+                <div className="set-title">npm latest</div>
+                <div className="set-sub">{avail.latest ?? "未知（离线或 registry 不可达）"}</div>
+              </div>
+            </div>
+            {globalUpdate(avail) !== null ? (
+              <div className="set-row">
+                <div className="set-main">
+                  <div className="set-title">可更新 {globalUpdate(avail)}</div>
+                  <div className="set-sub">
+                    全局源可一键更新；工程内源版本由工程锁定，请升级工程依赖
+                  </div>
+                </div>
+                <InstallBlock
+                  client={client}
+                  update
+                  label={`一键更新到 ${globalUpdate(avail)}`}
+                  onDone={(ok) => {
+                    // 更新成功重拉 availability（服务端安装结束已失效版本缓存）
+                    if (ok)
+                      void client
+                        .availability()
+                        .then(setAvail)
+                        .catch(() => {});
+                  }}
+                />
+              </div>
+            ) : null}
+          </>
+        )}
+      </div>
       <div className="group-title">外观</div>
       <div className="group">
         <div className="set-row">

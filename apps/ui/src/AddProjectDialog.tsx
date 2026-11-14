@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { FsEntry, FsRoot } from "./api.js";
+import InstallBlock from "./InstallBlock.js";
+import type { Availability, FsEntry, FsRoot } from "./api.js";
 import type { HostAdapter } from "./host.js";
 import { isTauriEnv } from "./host.tauri.js";
 import { toast } from "./util.js";
@@ -45,6 +46,8 @@ export default function AddProjectDialog({
   const [listError, setListError] = useState<string | null>(null);
   const [manualPath, setManualPath] = useState("");
   const [adding, setAdding] = useState(false);
+  const [avail, setAvail] = useState<Availability | null>(null);
+  const lastPath = useRef("");
   const [rootsRetry, setRootsRetry] = useState(0);
   const [listRetry, setListRetry] = useState(0);
   const listSeq = useRef(0);
@@ -78,12 +81,16 @@ export default function AddProjectDialog({
   const add = async (path: string): Promise<void> => {
     if (adding) return;
     setAdding(true);
+    lastPath.current = path;
     try {
       await client.addProject(path);
       toast("项目已添加");
       onClose();
     } catch (err) {
-      toast(`添加失败：${err instanceof Error ? err.message : String(err)}`);
+      // validate 失败 → 检索链探测：未装 applift（sources 全空）转引导安装块；否则维持 toast 报错
+      const av = await client.availability(path).catch(() => null);
+      if (av !== null && av.sources.length === 0) setAvail(av);
+      else toast(`添加失败：${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setAdding(false);
     }
@@ -222,6 +229,23 @@ export default function AddProjectDialog({
             </button>
           </div>
         )}
+        {avail !== null ? (
+          <div className="dlg-install" id="installHint">
+            <div className="dlg-install-title">未检测到 applift</div>
+            <div className="dlg-install-sub">
+              Node {avail.nodeVersion}
+              {avail.nodeOk ? "" : "（版本过低，引导安装需要 Node ≥ 20）"}
+            </div>
+            <InstallBlock
+              client={client}
+              label="安装到全局"
+              onDone={(ok) => {
+                // 安装成功 → 自动重试 validate（同一目录直接再 add）
+                if (ok && lastPath.current !== "") void add(lastPath.current);
+              }}
+            />
+          </div>
+        ) : null}
       </div>
     </div>,
     document.body,

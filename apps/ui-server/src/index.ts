@@ -20,6 +20,7 @@ import {
 } from "./routes.js";
 import { createAvailabilityProber } from "./applift-install.js";
 import { AppliftRunner, resolveAppliftBin } from "./runner.js";
+import type { ValidateReport } from "./routes.js";
 import { WsChannel } from "./ws.js";
 
 export { startUiServer } from "./http.js";
@@ -84,6 +85,10 @@ export interface CreateServerOptions {
   runnerFactory?: (cwd: string) => AppliftRunner;
   /** 轮询档位持久化路径；缺省 defaultSettingsPath()。测试必须注入临时路径（否则读到开发机真实 settings.json，默认档断言会挂） */
   settingsPath?: string;
+  /** 添加项目校验注入（e2e）；缺省 validateProject */
+  validate?: (path: string) => Promise<ValidateReport>;
+  /** npm 命令形态（e2e 桩注入；默认 PATH 上的 npm——安装任务与 npm view 共用） */
+  npmBin?: string | string[];
 }
 
 /** 前端静态资源缺省目录：dist/public（源码期 src → ../public 不存在，构建后 dist/public 同深度） */
@@ -132,7 +137,9 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
     },
   });
   // 检索链探测器（版本探测 60s 缓存；npm view 10s 超时置 null）
-  const availabilityProber = createAvailabilityProber();
+  const availabilityProber = createAvailabilityProber(
+    opts.npmBin === undefined ? {} : { npmBin: opts.npmBin },
+  );
   let closing = false;
   const close = async (): Promise<void> => {
     if (closing) return;
@@ -143,6 +150,7 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
   };
   const server = await startUiServer({
     port: opts.port,
+    validate: opts.validate,
     staticDir: opts.staticDir ?? defaultStaticDir(),
     // 「重新检查」toast 的服务端真话：当前档位（前台/后台）实际轮询间隔
     healthInfo: () => ({ refreshIntervalMs: aggregator.currentIntervalMs() }),
@@ -166,7 +174,7 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
         availability: (cwd) => availabilityProber.get(cwd),
         startInstallTask: (o) =>
           ws.startInstallTask({
-            runner: new AppliftRunner({ bin: "npm" }),
+            runner: new AppliftRunner({ bin: opts.npmBin ?? "npm" }),
             ...o,
             // 任务结束（无论成败）失效版本缓存：前端立即重拉 availability 拿新版本
             onDone: () => availabilityProber.invalidate(),

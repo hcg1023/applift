@@ -1264,6 +1264,56 @@ kbd {
 .dlg-input:focus-visible {
   border-color: var(--blue);
 }
+
+/* 引导安装块（添加项目弹层 / 设置 applift 段共用） */
+.dlg-install {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--separator);
+  margin-top: 4px;
+}
+.dlg-install-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--orange, #d97706);
+}
+.dlg-install-sub {
+  font-size: 12px;
+  color: var(--secondary-label);
+}
+.install-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px;
+}
+.install-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.install-fail {
+  color: var(--red, #d33);
+}
+.install-log {
+  width: 100%;
+  box-sizing: border-box;
+  max-height: 120px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--secondary-label);
+  background: var(--surface-2);
+  border-radius: 8px;
+}
 .fs-roots {
   display: flex;
   gap: 6px;

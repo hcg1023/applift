@@ -25,24 +25,27 @@
 ### Task 1: `doctor --json` 结构化输出
 
 **Files:**
+
 - Modify: `packages/cli/src/index.ts`（doctor 命令，约 1697-1852 行）
 - Test: `packages/cli/src/doctor.test.ts`（追加）
 
 **Interfaces:**
+
 - Consumes: doctor 现有内部数据（framework/ids/creds/stores/missing 检查，全部已在 action 里算好）
 - Produces: `DoctorJsonReport`（stdout JSON，ui-server Task 5 消费）：
+
 ```ts
 interface DoctorJsonReport {
-  ok: boolean;                       // = 现有 healthy
+  ok: boolean; // = 现有 healthy
   cwd: string;
-  framework: { id: string; label: string } | null;   // resolveFramework 结果
+  framework: { id: string; label: string } | null; // resolveFramework 结果
   suggestedFramework: { id: string; label: string } | null; // suggestFramework 结果
   bundleIds: { android?: string; harmony?: string; ios?: string; iosScheme?: string };
-  profiles: string[];                // Object.keys(creds.profiles)
+  profiles: string[]; // Object.keys(creds.profiles)
   activeProfile: { name: string; source: string } | null;
   stores: Array<{ id: string; credentialsOk: boolean; missing: string[] }>;
   updateProviders: Array<{ id: string; platforms: string[] | null }>;
-  channels: string[];                // config.beta 渠道
+  channels: string[]; // config.beta 渠道
 }
 ```
 
@@ -87,27 +90,31 @@ git commit -m "feat(cli): doctor --json structured report"
 ### Task 2: `applift projects validate <path> --json`
 
 **Files:**
+
 - Create: `packages/cli/src/validate.ts`
 - Modify: `packages/cli/src/lifecycle.ts`（注册新命令）
 - Test: `packages/cli/src/validate.test.ts`
 
 **Interfaces:**
+
 - Consumes: `@applift/core` 的 `loadProjectConfig(cwd)`（config/project.ts:63）、`resolveFramework`、`suggestFramework`、`detectBundleIds`
 - Produces: stdout `ProjectValidation`（ui-server 添加项目即时校验消费）：
+
 ```ts
 interface ProjectValidation {
   ok: boolean;
   path: string;
-  configFound: boolean;      // findUp 命中 applift.config.ts
-  name?: string;             // config.name
-  framework: { id: string; label: string } | null;      // 插件注册声明
+  configFound: boolean; // findUp 命中 applift.config.ts
+  name?: string; // config.name
+  framework: { id: string; label: string } | null; // 插件注册声明
   suggestedFramework: { id: string; label: string } | null;
   bundleIds: { android?: string; harmony?: string; ios?: string; iosScheme?: string };
-  platforms: string[];       // 由 bundleIds 命中端推导
+  platforms: string[]; // 由 bundleIds 命中端推导
   appliftAvailable: boolean; // node_modules 里有 applift 可执行依赖（探测 package.json deps）
-  error?: string;            // configFound=false 时的原因（"未找到 applift.config.ts"）
+  error?: string; // configFound=false 时的原因（"未找到 applift.config.ts"）
 }
 ```
+
 - 注册形态：`registerValidateCommand(program, { setup: setupChannels, registry })`，与 lifecycle/listing 同构（registry 传入但 validate 只用 core 探测，不需要渠道——保持签名一致便于未来扩展）。
 
 - [ ] **Step 1: 写失败测试**
@@ -144,7 +151,10 @@ Expected: FAIL（unknown command `projects`）
 命令注册（commander）：`.command("projects")` + `.command("validate <path>")` 子命令组合，或直接 `.command("validate <path>")`（简单起见选后者，spec 文案 `applift projects validate` 保留 alias 描述——**采用 `applift validate <path>`，spec 措辞以实现为准更新**，避免 commander 两级空壳）。核心：
 
 ```ts
-export function registerValidateCommand(program: Command, _deps: { setup: () => void; registry: ChannelRegistry }) {
+export function registerValidateCommand(
+  program: Command,
+  _deps: { setup: () => void; registry: ChannelRegistry },
+) {
   program
     .command("validate <path>")
     .description("校验目录是否为 applift 工程（--json 供 UI 消费）")
@@ -152,8 +162,11 @@ export function registerValidateCommand(program: Command, _deps: { setup: () => 
     .action(async (target: string, cmdOpts: { json?: boolean }) => {
       const cwd = path.resolve(target);
       const report = await validateProject(cwd); // 导出供测试直接调用（断言在导出接口）
-      if (cmdOpts.json) { console.log(JSON.stringify(report, null, 2)); }
-      else { /* 人读：p.log.success/error 摘要 */ }
+      if (cmdOpts.json) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        /* 人读：p.log.success/error 摘要 */
+      }
       if (!report.ok) process.exitCode = 1;
     });
 }
@@ -178,20 +191,23 @@ git commit -m "feat(cli): validate <path> command for project discovery"
 ### Task 3: `beta --dry-run --json` 判定预览
 
 **Files:**
+
 - Modify: `packages/cli/src/index.ts`（beta 命令，约 560-1080 行；`resolveDeliveryMode` 约 91-156 行）
 - Test: `packages/cli/src/index.test.ts`（追加）
 
 **Interfaces:**
+
 - Consumes: `resolveDeliveryMode` 现有判定链（collectReleaseDiff → routeDelivery → judgement）
 - Produces: stdout `BetaDryRunReport`（发版向导第一步预览消费）：
+
 ```ts
 interface BetaDryRunReport {
   platform: string;
-  provider: string | null;        // 判定 provider id；null = 无热更 provider（原生路径）
-  recommendation: "ota" | "native" | "uncertain" | null;   // null = 未路由（无 provider）
+  provider: string | null; // 判定 provider id；null = 无热更 provider（原生路径）
+  recommendation: "ota" | "native" | "uncertain" | null; // null = 未路由（无 provider）
   confidence: "high" | "medium" | "low" | null;
   evidence: Array<{ path: string; rule: string; note?: string }>;
-  note: string;                   // 人读摘要（UI 直接展示）
+  note: string; // 人读摘要（UI 直接展示）
 }
 ```
 
@@ -230,11 +246,24 @@ beta 命令加 `.option("--dry-run", "只出判定预览，不发布")`。在 `r
 ```ts
 if (cmdOpts.dryRun) {
   const report: BetaDryRunReport = decision
-    ? { platform, provider: decision.provider?.id ?? null,
-        recommendation: judgement.recommendation, confidence: judgement.confidence,
-        evidence: judgement.evidence.slice(0, 50).map(e => ({ path: e.path, rule: e.rule, note: e.note })),
-        note: `判定：${judgement.recommendation}（${judgement.confidence}）` }
-    : { platform, provider: null, recommendation: null, confidence: null, evidence: [], note: "未接入热更（原生路径）" };
+    ? {
+        platform,
+        provider: decision.provider?.id ?? null,
+        recommendation: judgement.recommendation,
+        confidence: judgement.confidence,
+        evidence: judgement.evidence
+          .slice(0, 50)
+          .map((e) => ({ path: e.path, rule: e.rule, note: e.note })),
+        note: `判定：${judgement.recommendation}（${judgement.confidence}）`,
+      }
+    : {
+        platform,
+        provider: null,
+        recommendation: null,
+        confidence: null,
+        evidence: [],
+        note: "未接入热更（原生路径）",
+      };
   if (cmdOpts.json) console.log(JSON.stringify(report, null, 2));
   else p.log.message(report.note);
   return; // 不进任何发布分支
@@ -260,31 +289,49 @@ git commit -m "feat(cli): beta --dry-run --json judgement preview"
 ### Task 4: NDJSON 事件流协议核心（`--interactive-events`）
 
 **Files:**
+
 - Create: `packages/cli/src/events.ts`（协议通道：序列化 + 确认问答 + 超时）
 - Modify: `packages/cli/src/index.ts`（beta 命令接线：`resolveDeliveryMode` 交互替换）
 - Test: `packages/cli/src/events.test.ts`
 
 **Interfaces:**
+
 - Produces（ui-server EventStream 消费，协议版本 1）：
+
 ```ts
 type OutEvent =
-  | { type: "hello"; protocol: 1; cli: string }        // cli = pkg.version
-  | { type: "stage"; stage: string }                    // judge/pack/upload/notify/...
-  | { type: "judgement"; platform: string; recommendation: "ota"|"native"|"uncertain"|null; confidence: string|null; provider: string|null; evidence: Array<{path:string;rule:string;note?:string}> }
-  | { type: "confirm_required"; id: string; question: string; choices: Array<{ value: string; label: string; recommended?: boolean }> }
+  | { type: "hello"; protocol: 1; cli: string } // cli = pkg.version
+  | { type: "stage"; stage: string } // judge/pack/upload/notify/...
+  | {
+      type: "judgement";
+      platform: string;
+      recommendation: "ota" | "native" | "uncertain" | null;
+      confidence: string | null;
+      provider: string | null;
+      evidence: Array<{ path: string; rule: string; note?: string }>;
+    }
+  | {
+      type: "confirm_required";
+      id: string;
+      question: string;
+      choices: Array<{ value: string; label: string; recommended?: boolean }>;
+    }
   | { type: "progress"; stage: string; channel?: string; pct?: number; msg?: string }
-  | { type: "log"; level: "info"|"warn"|"error"; msg: string }
+  | { type: "log"; level: "info" | "warn" | "error"; msg: string }
   | { type: "result"; ok: boolean; summary: Record<string, unknown>; error?: string };
 type InEvent = { type: "confirm"; id: string; value: string };
 ```
+
 - `EventChannel` 类（events.ts 导出）：
+
 ```ts
 export class EventChannel {
-  constructor(write: (line: string) => void, opts?: { confirmTimeoutMs?: number })  // 默认 10 * 60_000
-  emit(e: OutEvent): void                       // JSON.stringify + \n
-  async confirm(id: string, question: string, choices): Promise<string>  // emit confirm_required → 等 stdin 一行 → 校验 value ∈ choices → 超时 throw ConfirmTimeout
+  constructor(write: (line: string) => void, opts?: { confirmTimeoutMs?: number }); // 默认 10 * 60_000
+  emit(e: OutEvent): void; // JSON.stringify + \n
+  async confirm(id: string, question: string, choices): Promise<string>; // emit confirm_required → 等 stdin 一行 → 校验 value ∈ choices → 超时 throw ConfirmTimeout
 }
 ```
+
 - stdin 读取：`readline.createInterface({ input: process.stdin })` 逐行 `JSON.parse`，坏行 emit `{type:"log",level:"error"}` 并继续（协议容错）。
 
 - [ ] **Step 1: 写失败测试**（events.test.ts：进程内测 EventChannel，不跑真 CLI）
@@ -293,13 +340,13 @@ export class EventChannel {
 describe("EventChannel", () => {
   it("emit 序列化为 NDJSON 单行", () => {
     const lines: string[] = [];
-    const ch = new EventChannel(l => lines.push(l));
+    const ch = new EventChannel((l) => lines.push(l));
     ch.emit({ type: "hello", protocol: 1, cli: "0.13.0" });
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0])).toEqual({ type: "hello", protocol: 1, cli: "0.13.0" });
   });
   it("confirm：回写合法值 → 解析返回", async () => {
-    const inputs = new PassThrough();  // node:stream 模拟 stdin
+    const inputs = new PassThrough(); // node:stream 模拟 stdin
     const ch = new EventChannel(() => {}, { input: inputs });
     const p = ch.confirm("delivery", "投递方式", [
       { value: "ota", label: "热更", recommended: true },
@@ -308,7 +355,9 @@ describe("EventChannel", () => {
     inputs.write(JSON.stringify({ type: "confirm", id: "delivery", value: "ota" }) + "\n");
     await expect(p).resolves.toBe("ota");
   });
-  it("confirm：非法 value → error log 并继续等待", async () => { /* 同上，先写坏值再写好值 */ });
+  it("confirm：非法 value → error log 并继续等待", async () => {
+    /* 同上，先写坏值再写好值 */
+  });
   it("confirm 超时 → ConfirmTimeout（假时钟：vi.useFakeTimers）", async () => {
     vi.useFakeTimers();
     const ch = new EventChannel(() => {}, { input: new PassThrough(), confirmTimeoutMs: 1000 });
@@ -345,10 +394,12 @@ git commit -m "feat(cli): NDJSON event channel with confirm protocol"
 ### Task 5: beta 接线 `--interactive-events`（判定确认走协议）
 
 **Files:**
+
 - Modify: `packages/cli/src/index.ts`（beta 命令 + `resolveDeliveryMode` 加可选 channel 参数）
 - Test: `packages/cli/src/index.test.ts`（追加 e2e 风格：子进程跑真 CLI dist，stdin 喂确认）
 
 **Interfaces:**
+
 - Consumes: Task 4 的 `EventChannel`
 - Produces: `applift beta <platform> --interactive-events` 完整事件序列（ui-server 发版向导消费）：
   `hello → stage(judge) → judgement → confirm_required(delivery) → [confirm 回写] → stage(publish) → progress* → log* → result`
@@ -358,13 +409,15 @@ git commit -m "feat(cli): NDJSON event channel with confirm protocol"
 ```ts
 it("beta --interactive-events：判定确认经 stdin 回写后完成发布", async () => {
   const dir = await makeOtaFixture();
-  const proc = spawn("node", [CLI_BIN, "beta", "android", "--interactive-events", "--cwd", dir], { stdio: ["pipe","pipe","pipe"] });
-  const lines = await collectNdjson(proc.stdout);    // helper：逐行收集直到 result
+  const proc = spawn("node", [CLI_BIN, "beta", "android", "--interactive-events", "--cwd", dir], {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const lines = await collectNdjson(proc.stdout); // helper：逐行收集直到 result
   expect(lines[0]).toMatchObject({ type: "hello", protocol: 1 });
-  const confirmEvt = lines.find(l => l.type === "confirm_required");
+  const confirmEvt = lines.find((l) => l.type === "confirm_required");
   expect(confirmEvt.id).toBe("delivery");
   proc.stdin.write(JSON.stringify({ type: "confirm", id: "delivery", value: "ota" }) + "\n");
-  const result = await waitResult(proc);             // helper：等到 result 事件
+  const result = await waitResult(proc); // helper：等到 result 事件
   expect(result.ok).toBe(true);
 });
 it("beta 无 --interactive-events：stdout 不是 NDJSON（零侵入）", async () => {
@@ -403,25 +456,32 @@ git commit -m "feat(cli): beta --interactive-events NDJSON protocol wiring"
 ### Task 6: status --json 补 platform/version 字段 + 契约快照测试
 
 **Files:**
+
 - Modify: `packages/cli/src/lifecycle.ts`（status 命令，约 262-346 行）
 - Test: `packages/cli/src/lifecycle.test.ts`（追加）
 
 **Interfaces:**
+
 - Consumes: status 现有循环（channel/status API 已返回 ReviewStatus）
 - Produces: stdout `StatusReport`（ui-server StatusAggregator 消费，Task 8）：
+
 ```ts
 interface StatusReport {
-  fetchedAt: string;             // ISO
+  fetchedAt: string; // ISO
   results: Array<{
     channel: string;
-    platform: "android" | "ios" | "harmony" | string;   // 从 config 渠道归属推导（android.stores → android；ios/harmony 渠道 id 前缀映射）
-    version?: string;            // ReviewStatus 无 version——渠道实现里有线上版本的不多，一期置 undefined
+    platform: "android" | "ios" | "harmony" | string; // 从 config 渠道归属推导（android.stores → android；ios/harmony 渠道 id 前缀映射）
+    version?: string; // ReviewStatus 无 version——渠道实现里有线上版本的不多，一期置 undefined
     state: "reviewing" | "approved" | "rejected" | "unknown";
-    live?: boolean; reason?: string; raw?: string; error?: string;   // 现有字段保持
-    fetchedAt: string;           // 单渠道时间戳
+    live?: boolean;
+    reason?: string;
+    raw?: string;
+    error?: string; // 现有字段保持
+    fetchedAt: string; // 单渠道时间戳
   }>;
 }
 ```
+
 - platform 推导规则（core 零框架知识的边界内）：status 现有 storeIds 来自 `config.android.stores`——全部标 `android`；未来 ios/harmony 渠道接入 status 时由渠道 `id` 映射表扩展（`PGYER→多端`，具体在渠道层补充，此处建立字段占位）。**一期如实输出：全部 android + 版本字段 undefined，不为造数据造字段。**
 
 - [ ] **Step 1: 写失败测试**（快照断言——契约测试）
@@ -432,8 +492,8 @@ it("status --json 契约快照（含 platform/fetchedAt）", async () => {
   const { stdout } = await runCli(["status", "--cwd", dir, "--json"]);
   const r = JSON.parse(stdout);
   expect(r.fetchedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-  expect(r.results.every(x => x.platform && x.state && x.fetchedAt)).toBe(true);
-  expect(r.results.map(x => x.channel)).toMatchInlineSnapshot();  // 渠道清单快照
+  expect(r.results.every((x) => x.platform && x.state && x.fetchedAt)).toBe(true);
+  expect(r.results.map((x) => x.channel)).toMatchInlineSnapshot(); // 渠道清单快照
 });
 ```
 
@@ -464,6 +524,7 @@ git commit -m "feat(cli)!: status --json wrapped report with platform field"
 ### Task 7: 文档更新 + 阶段收尾
 
 **Files:**
+
 - Modify: `README.md`（若存在命令文档段落）
 - Modify: `docs/superpowers/specs/2026-11-13-applift-ui-design.md` §4（validate 命令名定为 `applift validate`）
 

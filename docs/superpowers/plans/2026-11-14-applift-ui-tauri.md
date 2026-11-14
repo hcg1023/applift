@@ -4,7 +4,7 @@
 
 **Goal:** 交付 applift-ui 桌面壳：Tauri 2 薄壳（窗口+托盘+原生能力）+ ui-server 检索链/引导安装 API + Popup 页。
 
-**Architecture:** 壳 webview load localhost（前端零分叉）；Rust 侧只做 supervisor（node 自检 + ui-server sidecar 起停）与桥接命令；applift 获取=工程内>全局>npm 引导安装（用户本地 Node 必须）。
+**Architecture:** 壳内嵌前端（frontendDist = ui 构建产物；首屏本地立现，就绪后 `?serverPort` 注入回 index，壳 origin 白名单放行跨源）——定稿放弃 load localhost（启动失败即白屏，详见 spec §1 取舍）；Rust 侧只做 supervisor（node 自检 + ui-server sidecar 起停）与桥接命令；applift 获取=工程内>全局>npm 引导安装（用户本地 Node 必须）。
 
 **Tech Stack:** Tauri 2（tauri-plugin-notification/dialog）、Rust（cargo test）、既有 apps/ui（React）/apps/ui-server。
 
@@ -25,11 +25,13 @@
 ### Task 1: ui-server 检索链与安装 API
 
 **Files:**
+
 - Modify: `apps/ui-server/src/runner.ts`（bin 解析函数抽 public `resolveAppliftBin(cwd)`：工程 node_modules/.bin > PATH `applift` > null）、`apps/ui-server/src/routes.ts`、`apps/ui-server/src/index.ts`
 - Create: `apps/ui-server/src/applift-install.ts`（安装任务管理：npm install -g @applift/cli 走 spawnStream，事件经 WS task 通道转发，taskId 前缀 `install:`；去重=进行中拒绝二次）
 - Test: `apps/ui-server/src/applift-install.test.ts` + routes 追加
 
 **Interfaces:**
+
 - `GET /api/applift/availability` → `{nodeVersion: string|null, nodeOk: boolean, sources: [{kind:"project"|"global", path, version}], latest: string|null}`（latest 来自 `npm view @applift/cli version`，10s 超时失败置 null）
 - `POST /api/applift/install` → `{taskId}`（Host 校验+去重；npm install -g 失败重试由前端再次发起）
 - `POST /api/applift/update-global` → `{taskId}`（= install latest 的别名实现）
@@ -42,10 +44,12 @@
 ### Task 2: apps/shell 脚手架 + supervisor
 
 **Files:**
+
 - Create: `apps/shell/package.json`（tauri CLI devDep，不含运行时依赖）、`apps/shell/src-tauri/`（main.rs/lib.rs/supervisor.rs/bridge.rs/tauri.conf.json/Cargo.toml）
 - Test: `apps/shell/src-tauri/src/supervisor.rs` 内联 `#[cfg(test)]`
 
 **Interfaces:**
+
 - supervisor：`detect_node() -> Option<String>`（node --version，≥20 判定）；`spawn_server(port_hint) -> ServerHandle`（spawn `node <ui-server main>` detached=false，读 stdout 端口行或 health 轮询≤10s；崩溃重启≤1 次；`shutdown()`=POST /api/shutdown 再 kill 兜底）
 - 壳单例：tauri single-instance 插件（二次启动唤起既有主窗口）
 - 主窗口：load `http://127.0.0.1:<dynamic port>`；server 未就绪时 load 内嵌 `startup.html`（空白+连接中+失败重试按钮，asset 协议）；node 缺失时 load `node-required.html`（下载链接）
@@ -59,6 +63,7 @@
 ### Task 3: HostAdapter Tauri 实现 + 前端接线
 
 **Files:**
+
 - Create: `apps/ui/src/host.tauri.ts`（notify/pickDirectory/setBadge 三实现，经 `window.__TAURI_INTERNALS__` 探测包装在 host.ts 的 `pickHost()`）
 - Modify: `apps/ui/src/host.ts`（导出 `pickHost(): HostAdapter`：TAURI 探测→tauri 实现，否则 webuiHost；main.tsx/app.tsx 消费点替换）
 - Test: `apps/ui/src/host.tauri.test.ts`（探测分支/mock invoke）
@@ -69,17 +74,19 @@
 ### Task 4: 托盘 + Popup 页 + 原生通知
 
 **Files:**
+
 - Modify: `apps/shell/src-tauri/`（托盘：角标数字、左键 popup 窗口 360×480 无边框 load `#/popup`、右键菜单 打开主窗/立即刷新/退出；关窗隐藏）
 - Create: `apps/ui/src/pages/Popup.tsx`（#/popup 路由：项目概览行=状态计数+异常高亮+最新动态；点行开主窗对应详情——`window.__TAURI_INTERNALS__` invoke `open_main`；快捷发版入口导航主窗 #/release）
 - Modify: `apps/ui/src/app.tsx`（popup 路由分支：无侧栏布局）、`host.tauri.ts`（setBadge 接托盘角标——feed 未读数）
 - Test: Popup 组件测 + Rust 侧托盘状态测（可测部分）+ Playwright #/popup 冒烟
 
-- [ ] 失败测试 → 实现 → gate + Playwright
-- [ ] Commit `feat(shell): tray, popup page, native notifications`
+- [x] 失败测试 → 实现 → gate + Playwright
+- [x] Commit `feat(shell): tray, popup page, native notifications`
 
 ### Task 5: 打包、CI 与验收
 
 **Files:**
+
 - Modify: `apps/shell/src-tauri/tauri.conf.json`（bundle targets dmg/exe、签名占位）、`.github/workflows/`（新增 shell job：cargo test + tauri build，macos-latest + windows-latest）
 - README：桌面壳章节（安装/托盘/检索链/引导安装）
 
@@ -89,4 +96,5 @@
 - [ ] Commit `feat(shell): bundling and ci` + changeset
 
 ## 验收总则
+
 gate 全绿；dmg 实机走 spec §6 验收链；未实机验证项在报告中显式标注（Windows 侧允许 CI-only，用户无 Windows 环境）。
