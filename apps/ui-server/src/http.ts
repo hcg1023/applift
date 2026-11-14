@@ -2,6 +2,8 @@ import type { Server } from "node:http";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
+import { ProjectRegistry } from "./registry.js";
+import { createProjectRoutes, sendJson, type ApiHandler } from "./routes.js";
 
 export interface UiServerHandle {
   /** 实际监听端口（port: 0 时由系统分配） */
@@ -17,6 +19,10 @@ export interface UiServerOptions {
   port?: number;
   /** 前端静态资源根目录 */
   staticDir: string;
+  /** 项目注册表（含持久化路径）；提供后挂 /api/projects REST 路由 */
+  registry?: ProjectRegistry;
+  /** 额外 API 路由；先于静态托管执行（/api/projects 之外的扩展点） */
+  apiHandler?: ApiHandler;
 }
 
 const MIME: Record<string, string> = {
@@ -37,12 +43,6 @@ const MIME: Record<string, string> = {
 };
 
 const VERSION = "0.1.0";
-
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  const payload = JSON.stringify(body);
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
-  res.end(payload);
-}
 
 /** 解析静态路径：拒绝越界（..），目录落 index.html；返回 null 表示 404 */
 async function resolveStatic(staticRoot: string, urlPath: string): Promise<string | null> {
@@ -77,10 +77,14 @@ async function handle(
   req: IncomingMessage,
   res: ServerResponse,
   staticRoot: string,
+  apiHandlers: ApiHandler[],
 ): Promise<void> {
   if (req.method === "GET" && (req.url === "/api/health" || req.url === "/api/health/")) {
     sendJson(res, 200, { ok: true, version: VERSION });
     return;
+  }
+  for (const apiHandler of apiHandlers) {
+    if (await apiHandler(req, res)) return;
   }
   if (req.method !== "GET" && req.method !== "HEAD") {
     sendJson(res, 405, { ok: false, error: "method not allowed" });
@@ -99,8 +103,11 @@ async function handle(
 
 export async function startUiServer(opts: UiServerOptions): Promise<UiServerHandle> {
   const staticRoot = resolve(opts.staticDir);
+  const apiHandlers: ApiHandler[] = [];
+  if (opts.registry) apiHandlers.push(createProjectRoutes({ registry: opts.registry }));
+  if (opts.apiHandler) apiHandlers.push(opts.apiHandler);
   const httpServer = createServer((req, res) => {
-    handle(req, res, staticRoot).catch((err: unknown) => {
+    handle(req, res, staticRoot, apiHandlers).catch((err: unknown) => {
       if (!res.headersSent) sendJson(res, 500, { ok: false, error: String(err) });
       else res.destroy();
     });

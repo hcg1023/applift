@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
 import { startUiServer } from "./http.js";
+import { ProjectRegistry } from "./registry.js";
+import type { ProjectEntry } from "./registry.js";
 
 const tmpDirs: string[] = [];
 afterAll(async () => {
@@ -99,6 +101,84 @@ describe("路径穿越守卫（原始 path）", () => {
     await writeFile(join(dir, "index.html"), "<html>s</html>", "utf8");
     const srv = await startUiServer({ staticDir: dir, port: 0 });
     expect(await rawGet(srv.port, "/..%5csecret.txt")).toBe(404);
+    await srv.close();
+  });
+});
+
+describe("/api/projects REST 路由", () => {
+  it("POST 合法工程目录 200；GET 列表；DELETE 移除", async () => {
+    const staticDir = await mkdtempStatic("<html>p</html>");
+    const storeDir = await mkdtemp(join(tmpdir(), "ui-server-store-"));
+    tmpDirs.push(storeDir);
+    const projDir = join(storeDir, "my-app");
+    await mkdir(projDir);
+    await writeFile(join(projDir, "applift.config.ts"), "export default {}", "utf8");
+    const srv = await startUiServer({
+      staticDir,
+      registry: new ProjectRegistry(join(storeDir, "projects.json")),
+    });
+    const base = `http://127.0.0.1:${srv.port}`;
+
+    const added = await fetch(`${base}/api/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: projDir }),
+    });
+    expect(added.status).toBe(200);
+    const addedBody = (await added.json()) as { ok: boolean; project: ProjectEntry };
+    expect(addedBody.ok).toBe(true);
+    expect(addedBody.project.name).toBe("my-app");
+
+    const list = await fetch(`${base}/api/projects`).then((r) => r.json());
+    expect(list).toMatchObject({ ok: true, projects: [{ id: addedBody.project.id }] });
+
+    const removed = await fetch(`${base}/api/projects/${addedBody.project.id}`, {
+      method: "DELETE",
+    });
+    expect(removed.status).toBe(200);
+    const afterDelete = await fetch(`${base}/api/projects`).then((r) => r.json());
+    expect(afterDelete).toMatchObject({ projects: [] });
+    await srv.close();
+  });
+
+  it("POST 空目录 400 带 error 与 report", async () => {
+    const staticDir = await mkdtempStatic("<html>e</html>");
+    const emptyDir = await mkdtemp(join(tmpdir(), "ui-server-empty-"));
+    tmpDirs.push(emptyDir);
+    const srv = await startUiServer({
+      staticDir,
+      registry: new ProjectRegistry(join(emptyDir, "..", "store", "projects.json")),
+    });
+    const res = await fetch(`http://127.0.0.1:${srv.port}/api/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: emptyDir }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { ok: boolean; error: string; report: { ok: boolean } };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBeTruthy();
+    expect(body.report.ok).toBe(false);
+    await srv.close();
+  });
+
+  it("POST 缺 path 400；DELETE 未知 id 404", async () => {
+    const staticDir = await mkdtempStatic("<html>v</html>");
+    const storeDir = await mkdtemp(join(tmpdir(), "ui-server-store2-"));
+    tmpDirs.push(storeDir);
+    const srv = await startUiServer({
+      staticDir,
+      registry: new ProjectRegistry(join(storeDir, "projects.json")),
+    });
+    const base = `http://127.0.0.1:${srv.port}`;
+    const bad = await fetch(`${base}/api/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(bad.status).toBe(400);
+    const miss = await fetch(`${base}/api/projects/none`, { method: "DELETE" });
+    expect(miss.status).toBe(404);
     await srv.close();
   });
 });
