@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -182,6 +182,27 @@ describe("AppliftRunner.run", () => {
     // SIGTERM 被吞 → 等 SIGKILL 升级（预算 10s > 5s 升级窗口）
     await waitProcessGone(grandchild, 10_000);
   }, 30_000);
+
+  it("T5-壳场景：宿主 PATH 无 node 时 shim（shebang env node）仍可执行——node 目录前置子进程 PATH", async () => {
+    const dir = await newTmpDir("shim-path");
+    const shim = join(dir, "applift"); // 模拟工程/全局命中的 npm bin shim（js + shebang）
+    await writeFile(
+      shim,
+      "#!/usr/bin/env node\nconsole.log('shim-ok:' + process.version);\n",
+      "utf8",
+    );
+    await chmod(shim, 0o755);
+    const savedPath = process.env.PATH;
+    // GUI 宿主（launchd/Tauri 壳）形态：PATH 只有系统目录——shebang 的 env node 原本会 127
+    process.env.PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
+    try {
+      const r = await new AppliftRunner({ bin: [shim] }).run(["--version"]);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain("shim-ok:");
+    } finally {
+      process.env.PATH = savedPath;
+    }
+  }, 20_000);
 });
 
 describe("AppliftRunner.spawnStream", () => {

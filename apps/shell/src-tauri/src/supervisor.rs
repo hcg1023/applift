@@ -15,6 +15,36 @@ pub const MIN_NODE_MAJOR: u32 = 20;
 /// 单次运行内崩溃重启上限（简报：≤1 次）
 pub const MAX_RESTARTS: u32 = 1;
 
+/// 子进程 PATH 增补：GUI 启动（Finder/open/launchd）继承的 PATH 常缺 Homebrew 等安装目录
+/// （node 与全局 applift 装在那里）——spawn node / ui-server 前并入常见前缀（去重、保序）。
+/// Windows 的 PATH 由安装器维护，无需增补（返回原值）。
+pub fn augmented_path(base: Option<&str>) -> String {
+    let current = base
+        .map(str::to_string)
+        .or_else(|| std::env::var("PATH").ok())
+        .unwrap_or_default();
+    let mut seen: Vec<std::path::PathBuf> = std::env::split_paths(&current).collect();
+    let mut extras: Vec<std::path::PathBuf> = Vec::new();
+    if cfg!(target_os = "macos") {
+        extras.push("/opt/homebrew/bin".into());
+        extras.push("/usr/local/bin".into());
+        // node 版本管理器稳定目录（存在才加；nvm 目录带版本号不可枚举，不覆盖）
+        if let Some(home) = std::env::var_os("HOME") {
+            let h = std::path::PathBuf::from(home);
+            extras.push(h.join(".local/share/fnm/aliases/default/bin"));
+            extras.push(h.join(".volta/bin"));
+        }
+    }
+    for e in extras {
+        if !seen.contains(&e) && e.is_dir() {
+            seen.push(e);
+        }
+    }
+    std::env::join_paths(&seen)
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or(current)
+}
+
 // ---------------------------------------------------------------------------
 // node 自检
 // ---------------------------------------------------------------------------
@@ -30,6 +60,7 @@ impl NodeProbe for SysNodeProbe {
     fn node_version_output(&self) -> Option<String> {
         Command::new("node")
             .arg("--version")
+            .env("PATH", augmented_path(None))
             .output()
             .ok()
             .filter(|o| o.status.success())
@@ -190,6 +221,8 @@ impl ServerLauncher for NodeServerLauncher {
             .arg(&self.server_entry)
             .arg("--port")
             .arg(port.to_string())
+            // GUI 启动的 PATH 缺 homebrew 目录：ui-server 内部的 applift 检索链（PATH 扫描）靠它命中全局安装
+            .env("PATH", augmented_path(None))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
@@ -562,6 +595,32 @@ mod tests {
     impl NodeProbe for StubProbe {
         fn node_version_output(&self) -> Option<String> {
             self.0.clone()
+        }
+    }
+
+    #[test]
+    fn augmented_path_appends_missing_common_dirs() {
+        let p = augmented_path(Some("/usr/bin:/bin"));
+        if cfg!(target_os = "macos") {
+            // 探测型目录（fnm/volta，视机器而定）存在才加——断言用包含式
+            assert!(p.starts_with("/usr/bin:/bin"), "got {p}");
+            assert!(p.contains("/opt/homebrew/bin") || p.split(':').count() >= 2, "got {p}");
+        } else {
+            assert_eq!(p, "/usr/bin;/bin"); // join_paths 按平台分隔符；非 macOS 无增补
+        }
+    }
+
+    #[test]
+    fn augmented_path_dedupes_existing_entries() {
+        let p = augmented_path(Some("/usr/local/bin:/usr/bin"));
+        if cfg!(target_os = "macos") {
+            // 已存在的不重复：/usr/local/bin 只出现一次，且保持原序在前
+            let first_local = p.find("/usr/local/bin").expect("kept original entry");
+            let last_local = p.rfind("/usr/local/bin").expect("kept original entry");
+            assert_eq!(first_local, last_local, "duplicated entry in {p}");
+            assert!(p.starts_with("/usr/local/bin:/usr/bin"), "got {p}");
+        } else {
+            assert_eq!(p, "/usr/local/bin;/usr/bin");
         }
     }
 

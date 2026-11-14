@@ -4,8 +4,6 @@
   "version": "0.1.0",
   "identifier": "com.applift.shell",
   "build": {
-    "beforeDevCommand": "node ../scripts/prepare-frontend.mjs",
-    "beforeBuildCommand": "node ../scripts/prepare-frontend.mjs",
     "devUrl": null,
     "frontendDist": "../../ui-server/dist/public"
   },
@@ -24,6 +22,18 @@
     }
   },
   "bundle": {
-    "active": false
+    "active": true,
+    "targets": ["dmg", "nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "resources/ui-server": "ui-server"
+    }
   }
 }

@@ -170,6 +170,21 @@ applift ui --stop          # 停止服务（无运行实例时提示，不算失
 - 安全边界：服务仅监听 `127.0.0.1`（不监听局域网）；`/api/shutdown` 与发版任务路由校验 Host 头（仅认 127.0.0.1 / localhost，防其他网页跨站直发与 DNS rebinding）；无多用户鉴权——远程部署不在一期范围。
 - 通知：页面打开时尝试系统通知（浏览器 Notification 授权拒绝自动降级为总览未读角标）；添加项目为路径手输（浏览器无安全的目录选择能力）。
 
+### 桌面壳（Tauri，applift.app）
+
+```bash
+# 仓库内构建（macOS 出 dmg / Windows 出 NSIS 安装包；需 Rust 工具链）
+cd apps/shell && npm ci && npm run build        # 产物：src-tauri/target*/release/bundle/
+# 开发形态（连本仓 ui-server dist，资源不打包）
+cd apps/shell && npm run dev
+```
+
+- **形态**：Tauri 2 薄壳（托盘常驻 + 主窗口 + 左键弹窗 + 原生通知/目录选择对话框），界面与 webui 同一份前端（壳内走 HostAdapter 原生实现）。壳不发布 npm——产物只有安装包（CI artifact 分发）。
+- **前置**：本机 Node ≥ 20（壳不捆绑 Node：缺失时首屏引导页给下载链接）；applift 检索链 = 工程内 `node_modules/.bin` > 全局 PATH > 页内引导 `npm install -g @applift/cli`。
+- **打包内容**：壳二进制 + ui-server 运行时（dist + 前端 + 生产依赖 node_modules）随 resources 捆绑；关窗=隐藏到托盘，菜单退出才真退（退出前优雅停 ui-server）。macOS GUI 启动的 PATH 缺 Homebrew 目录时壳会自动增补（`/opt/homebrew/bin` 等）再探测 node。
+- **卸载**：macOS 拖废纸篓 / Windows 控制面板。若开启过「登录自启」，macOS 需手动删 `~/Library/LaunchAgents/com.applift.shell.plist`（Windows 卸载器自动清注册表 Run 项）。
+- **CI**：`shell` job（macos-latest 出 universal dmg、windows-latest 出 NSIS exe，artifact 上传）；cargo test 全桩、无真网络交互。
+
 ## AI / CI
 
 - `--json` 结构化输出（channels/status/history/listing/release 支持；stdout 纯净，进度走 stderr）；退出码 0=全成 1=有败

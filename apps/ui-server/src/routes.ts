@@ -1,4 +1,4 @@
-import { AppliftRunner } from "./runner.js";
+import { AppliftRunner, resolveAppliftBin } from "./runner.js";
 import { fileURLToPath } from "node:url";
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -33,24 +33,58 @@ export function sendJson(res: ServerResponse, status: number, body: unknown): vo
   res.end(JSON.stringify(body));
 }
 
-/** CLI bin 定位：`applift ui` spawn server 时经 APPLIFT_CLI_BIN 传入真实 bin 绝对路径（发布安装布局下仓库相对路径不存在）；
- *  env 短路直读（不走检索链 PATH 扫描——内部 validate/轮询不依赖用户全局安装）；env 缺席（开发直跑）回落本仓库 dist */
+/** CLI bin 定位（检索链兜底）：APPLIFT_CLI_BIN env > 工程node_modules/.bin > PATH > 本仓库 dist（开发直跑）。
+ *  打包壳（Tauri resources）下仓库相对路径不存在——添加项目校验必须走检索链才能在用户全局/工程内命中。 */
+export function validateBin(path: string): string[] {
+  return resolveAppliftBin(path).bin ?? [process.execPath, cliBinPath()];
+}
+
+/** env 短路直读（不走检索链 PATH 扫描）；env 缺席回落本仓库 dist */
 export function cliBinPath(): string {
   const fromEnv = process.env.APPLIFT_CLI_BIN;
   if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv.trim();
   return fileURLToPath(new URL("../../../packages/cli/dist/bin.mjs", import.meta.url));
 }
-const VALIDATE_TIMEOUT_MS = 60_000; // validate 为只读探测（findUp/config 解析），60s 远超正常耗时
+const VALIDATE_TIMEOUT_MS = 20_000; // validate 正常 <5s；超时/旧版都快速落降级（GUI 子进程环境下偶发 shim 挂起）
+
+/** applift 配置文件名集合（降级探测用；与 CLI config 装载的候选文件对齐） */
+const CONFIG_FILE_NAMES = [
+  "applift.config.ts",
+  "applift.config.mts",
+  "applift.config.js",
+  "applift.config.mjs",
+  "applift.config.cjs",
+  "applift.config.json",
+] as const;
+
+/** 旧版 CLI（<0.13 无 validate 命令）降级：目录内存在 applift 配置文件即认工程。
+ *  检索链命中工程内旧版时 validate 不可用——添加项目不应被工程锁定的 CLI 版本阻塞（状态/发版仍用工程版本）。 */
+export async function validateByConfigProbe(path: string): Promise<ValidateReport> {
+  for (const name of CONFIG_FILE_NAMES) {
+    if (await fileExists(join(path, name))) {
+      return { ok: true, configFound: true, framework: null, appliftAvailable: true };
+    }
+  }
+  return { ok: false, error: "目录内无 applift 配置文件（applift.config.ts 等）" };
+}
 
 export async function validateProject(path: string): Promise<ValidateReport> {
-  // 本仓库 CLI 入口直连（不经 npx）：ui-server 与 CLI 同仓发布，避免 npx 解析不确定性
-  const runner = new AppliftRunner({ bin: [process.execPath, cliBinPath()] }); // 数组形态：路径含空格不被切分
+  // CLI 定位走检索链（工程 > 全局；env 短路）：bin 数组直接执行（不经 npx）——路径含空格不被切分
+  const runner = new AppliftRunner({ bin: validateBin(path) });
   const { code, stdout, stderr } = await runner.run(["validate", path, "--json"], {
     timeoutMs: VALIDATE_TIMEOUT_MS,
   });
   try {
     return JSON.parse(stdout) as ValidateReport;
   } catch {
+    // CLI <0.13 无 validate（unknown command）或 GUI 子进程环境 shim 挂起超时——配置文件探测降级，
+    // 添加项目不被工程锁定的 CLI 版本/宿主环境阻塞（状态/发版仍用工程版本）
+    if (
+      code !== 0 &&
+      (/unknown command ['"]validate['"]/.test(stderr) || stderr.includes("命令超时"))
+    ) {
+      return validateByConfigProbe(path);
+    }
     return {
       ok: false,
       error: `applift validate 输出无法解析（exit=${code}）${stderr.trim()}`,

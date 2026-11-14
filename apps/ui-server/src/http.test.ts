@@ -1,10 +1,12 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
 import { startUiServer } from "./http.js";
-import { cliBinPath } from "./routes.js";
+import { cliBinPath, validateBin, validateProject } from "./routes.js";
 import { ProjectRegistry } from "./registry.js";
 import type { ProjectEntry } from "./registry.js";
 
@@ -217,6 +219,12 @@ describe("/api/projects REST 路由", () => {
     const projDir = join(storeDir, "my-app");
     await mkdir(projDir);
     await writeFile(join(projDir, "applift.config.ts"), "export default {}", "utf8");
+    // 工程级 applift（指 repo dist）：validate 走检索链时工程命中优先——不依赖开发机全局安装版本
+    //（全局可能是旧版 0.7.x，validate 行为不同 → 400），同时覆盖「工程 > 全局」链序
+    const projBin = join(projDir, "node_modules", ".bin");
+    await mkdir(projBin, { recursive: true });
+    const repoBin = fileURLToPath(new URL("../../../packages/cli/dist/bin.mjs", import.meta.url));
+    await symlink(repoBin, join(projBin, "applift"));
     const srv = await startUiServer({
       staticDir,
       registry: new ProjectRegistry(join(storeDir, "projects.json")),
@@ -327,6 +335,43 @@ describe("cliBinPath（C-1 发布布局 bin 定位）", () => {
     process.env.APPLIFT_CLI_BIN = "   ";
     expect(cliBinPath()).toMatch(/packages[\\/]cli[\\/]dist[\\/]bin\.mjs$/);
     restore();
+  });
+});
+
+describe("validateBin（T5 打包壳：validate 走检索链）", () => {
+  const prev = process.env.APPLIFT_CLI_BIN;
+  const restore = (): void => {
+    if (prev === undefined) delete process.env.APPLIFT_CLI_BIN;
+    else process.env.APPLIFT_CLI_BIN = prev;
+  };
+  const projDir = join(tmpdir(), `ui-server-validate-bin-${process.pid}`);
+
+  afterAll(() => {
+    rmSync(projDir, { recursive: true, force: true });
+  });
+
+  it("工程 node_modules/.bin/applift 存在 → 单元素 bin（直 spawn shim）", () => {
+    delete process.env.APPLIFT_CLI_BIN;
+    mkdirSync(join(projDir, "node_modules", ".bin"), { recursive: true });
+    writeFileSync(join(projDir, "node_modules", ".bin", "applift"), "#!/bin/sh\n");
+    expect(validateBin(projDir)).toEqual([join(projDir, "node_modules", ".bin", "applift")]);
+  });
+
+  it("env 仍最高优先（applift ui 注入时短路工程命中）", () => {
+    process.env.APPLIFT_CLI_BIN = "/npm/lib/node_modules/@applift/cli/dist/bin.mjs";
+    expect(validateBin(projDir)).toEqual([
+      process.execPath,
+      "/npm/lib/node_modules/@applift/cli/dist/bin.mjs",
+    ]);
+    restore();
+  });
+
+  it("全缺（工程无 + 无全局 + 无 env）→ 回落仓库 dist（开发布局兜底）", () => {
+    delete process.env.APPLIFT_CLI_BIN;
+    const bin = validateBin(join(projDir, "no-such-subdir"));
+    // 开发机可能装有全局 applift：有全局时命中全局 shim（单元素），否则回落仓库 dist（双元素）
+    if (bin.length === 1) expect(typeof bin[0]).toBe("string");
+    else expect(bin[1]).toMatch(/packages[\\/]cli[\\/]dist[\\/]bin\.mjs$/);
   });
 });
 

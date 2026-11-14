@@ -136,3 +136,75 @@ jobs:
           bun --version
           bun packages/cli/dist/bin.mjs --version
           bun packages/cli/dist/bin.mjs channels --json > /dev/null
+
+  # Tauri 桌面壳（独立于 pnpm workspace：cargo test 全桩无真网络交互；tauri build 出安装包 artifact）
+  shell:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add macOS Universal Target
+        if: runner.os == 'macOS'
+        run: rustup target add x86_64-apple-darwin # dmg universal（spec §5）
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/shell/src-tauri
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Workspace Dist
+        run: pnpm run build
+
+      - name: Prepare Shell Resources
+        # tauri-build 校验 resources 路径存在：cargo test 前先装配（前端页 + ui-server 运行时）
+        run: |
+          node apps/shell/scripts/prepare-frontend.mjs
+          node apps/shell/scripts/prepare-server-bundle.mjs
+        shell: bash
+
+      - name: Cargo Test (stubbed)
+        run: cargo test --manifest-path apps/shell/src-tauri/Cargo.toml
+
+      - name: Install Tauri CLI
+        run: npm ci --no-audit --no-fund
+        working-directory: apps/shell
+
+      - name: Build Shell Bundles (macOS universal dmg)
+        if: runner.os == 'macOS'
+        run: npm run build -- --target universal-apple-darwin
+        working-directory: apps/shell
+
+      - name: Build Shell Bundles (Windows nsis)
+        if: runner.os == 'Windows'
+        run: npm run build
+        working-directory: apps/shell
+
+      - name: Upload Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: applift-shell-${{ matrix.os }}
+          path: |
+            apps/shell/src-tauri/target*/release/bundle/dmg/*.dmg
+            apps/shell/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error

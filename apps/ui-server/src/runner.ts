@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 
 /** 运行中的长任务句柄（发版流）：取消 kill、stdin 交互、完成信号 */
 export interface RunningTask {
@@ -107,6 +107,16 @@ function capSink(chunks: Buffer[]): (chunk: Buffer) => void {
   };
 }
 
+/** 子进程 PATH：node 自身目录前置——工程/全局命中的 applift 是 shim（shebang `env node` 或 sh 内嵌 node），
+ *  GUI 宿主（Tauri 壳/launchd）的 PATH 常缺 node 安装目录，shim 直 spawn 会 127（env: node: No such file or directory）。
+ *  前置 dirname(process.execPath) 后 shebang/sh 内部的 node 解析必中（js/sh shim 通吃，无需识别 shim 类型）。 */
+function childEnv(): NodeJS.ProcessEnv {
+  const path = process.env.PATH ?? "";
+  const nodeDir = dirname(process.execPath);
+  if (path.split(delimiter).includes(nodeDir)) return { ...process.env };
+  return { ...process.env, PATH: [nodeDir, path].filter((s) => s !== "").join(delimiter) };
+}
+
 /** 杀整棵子树：spawn detached 已把子树放进以 pid 为 pgid 的新进程组，负 pid 即组内全体（组杀仅 POSIX；win32 降级单进程杀） */
 function killProcessGroup(child: ChildProcess, signal: NodeJS.Signals = "SIGTERM"): void {
   const groupKill = (sig: NodeJS.Signals): boolean => {
@@ -186,6 +196,7 @@ export class AppliftRunner {
       cwd: this.cwd,
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
+      env: childEnv(),
       windowsHide: true, // win32 下 cmd.exe /c 包装命令不弹控制台窗口 [未实机]
     });
     const out: Buffer[] = [];
@@ -246,6 +257,7 @@ export class AppliftRunner {
       cwd: this.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       detached: true,
+      env: childEnv(),
       windowsHide: true, // win32 下 cmd.exe /c 包装命令不弹控制台窗口 [未实机]
     });
     const { promise, resolve } = Promise.withResolvers<{ code: number }>();

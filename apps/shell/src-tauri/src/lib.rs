@@ -21,15 +21,22 @@ struct ShellState {
     supervisor: Arc<Mutex<Option<Supervisor>>>,
 }
 
-/// 解析 ui-server 入口（dist/main.mjs）：env 覆盖 > 相对 cwd 候选（dev 与打包后 cwd 不同）
-fn resolve_server_entry() -> String {
+/// 解析 ui-server 入口（dist/main.mjs）：
+///   env 覆盖 > resource_dir 打包布局（release：bundle resources 内 ui-server/dist）> 相对 cwd 候选（dev）
+fn resolve_server_entry(resource_dir: Option<&std::path::Path>) -> String {
     if let Some(p) = std::env::var_os("APPLIFT_UI_SERVER_ENTRY") {
         return p.to_string_lossy().into_owned();
     }
+    if let Some(dir) = resource_dir {
+        let bundled = dir.join("ui-server").join("dist").join("main.mjs");
+        if bundled.is_file() {
+            return bundled.to_string_lossy().into_owned();
+        }
+    }
     const CANDIDATES: [&str; 3] = [
-        "apps/ui-server/dist/main.mjs",     // cwd = 仓库根（打包后 resources 布局同构）
-        "../../ui-server/dist/main.mjs",    // cwd = apps/shell/src-tauri（cargo tauri dev）
-        "../ui-server/dist/main.mjs",       // cwd = apps/shell
+        "apps/ui-server/dist/main.mjs",  // cwd = 仓库根
+        "../../ui-server/dist/main.mjs", // cwd = apps/shell/src-tauri（cargo tauri dev）
+        "../ui-server/dist/main.mjs",    // cwd = apps/shell
     ];
     for c in CANDIDATES {
         if std::path::Path::new(c).exists() {
@@ -94,7 +101,7 @@ fn shell_main(app: AppHandle) {
         Box::new(LocalHttp::default()),
         Box::new(NodeServerLauncher {
             node_bin: "node".into(),
-            server_entry: resolve_server_entry(),
+            server_entry: resolve_server_entry(app.path().resource_dir().ok().as_deref()),
             log: log.clone(),
         }),
         cfg,
@@ -229,4 +236,29 @@ pub fn run() {
                 _ => {}
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_server_entry;
+    use std::path::PathBuf;
+
+    #[test]
+    fn server_entry_prefers_bundled_resource_layout() {
+        let tmp = std::env::temp_dir().join(format!("applift-shell-entry-{}", std::process::id()));
+        let dist = tmp.join("ui-server").join("dist");
+        std::fs::create_dir_all(&dist).unwrap();
+        std::fs::write(dist.join("main.mjs"), "// stub").unwrap();
+        let got = resolve_server_entry(Some(&tmp));
+        std::fs::remove_dir_all(&tmp).ok();
+        assert_eq!(PathBuf::from(&got), dist.join("main.mjs"));
+    }
+
+    #[test]
+    fn server_entry_falls_back_to_cwd_candidates_when_resource_missing() {
+        // 指向不存在目录：回到 dev cwd 候选（仓库内任一形态）
+        let nope = std::env::temp_dir().join("applift-shell-no-such-resource");
+        let got = resolve_server_entry(Some(&nope));
+        assert!(got.contains("main.mjs"), "unexpected entry: {got}");
+    }
 }
