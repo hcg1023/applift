@@ -76,7 +76,10 @@ export function relTime(ts: number, now = Date.now()): string {
 export function freshness(iso: string, now = Date.now()): { text: string; warn: boolean } {
   const ts = Date.parse(iso);
   if (Number.isNaN(ts)) return { text: "— 更新", warn: true };
-  return { text: `${relTime(ts, now)}更新`, warn: now - ts > 30 * 60_000 };
+  const rel = relTime(ts, now);
+  // 「昨天 12:30更新」补空格：相对词结尾（刚刚/N 前）直接拼接，日期形态前加空格
+  const text = `${rel}${rel.endsWith("刚刚") || rel.endsWith("前") ? "" : " "}更新`;
+  return { text, warn: now - ts > 30 * 60_000 };
 }
 
 let toastTimer: number | undefined;

@@ -278,9 +278,14 @@ export function createSettingsRoutes(opts: SettingsRoutesOptions): ApiHandler {
       return true;
     }
     const body = await readJsonBody(req, res);
-    if (body !== null && "tooLarge" in body) return true; // 已回 413
-    if (body === null) {
-      sendJson(res, 400, { ok: false, error: "body 必须是 JSON 对象" });
+    // 非对象 body（字符串/数字）会让 `in` 抛 TypeError：先判对象再查 tooLarge
+    if (body !== null && typeof body === "object" && "tooLarge" in body) return true; // 已回 413
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      // 空/坏 JSON 与非对象 body（"fast"/123/[]）同罪：400，而非静默回落默认档
+      sendJson(res, 400, {
+        ok: false,
+        error: "body 必须是含 foregroundMs/backgroundMs 的 JSON 对象",
+      });
       return true;
     }
     const { foregroundMs, backgroundMs } = body as {

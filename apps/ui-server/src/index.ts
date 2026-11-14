@@ -60,6 +60,8 @@ export interface CreateServerOptions {
   registry?: ProjectRegistry;
   /** cwd → runner；缺省与 routes.ts validate 同源：node + 本仓库 CLI bin */
   runnerFactory?: (cwd: string) => AppliftRunner;
+  /** 轮询档位持久化路径；缺省 defaultSettingsPath()。测试必须注入临时路径（否则读到开发机真实 settings.json，默认档断言会挂） */
+  settingsPath?: string;
 }
 
 /** 前端静态资源缺省目录：dist/public（源码期 src → ../public 不存在，构建后 dist/public 同深度） */
@@ -83,7 +85,7 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
     onFeed: (e: FeedEvent) => ws.broadcastFeed(e),
   });
   // 启动读取 settings.json（注册表同目录）：上次 PUT /api/settings 的档位跨重启保留；缺失/损坏回落默认档
-  const settingsPath = defaultSettingsPath();
+  const settingsPath = opts.settingsPath ?? defaultSettingsPath();
   try {
     const saved = JSON.parse(readFileSync(settingsPath, "utf8")) as {
       foregroundMs?: unknown;

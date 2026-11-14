@@ -374,6 +374,15 @@ describe("PUT /api/settings（轮询档位热接入）", () => {
     expect(applied[1]).toEqual({ fg: 60_000, bg: 900_000 });
 
     // 非数字 → 400；非 PUT → 405
+    // 非对象 body（字符串/数字/数组）→ 400，不静默重置默认档
+    for (const bad of ['"fast"', "123", "[]"]) {
+      const r = await fetch(`${base}/api/settings`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: bad,
+      });
+      expect(r.status, `body=${bad}`).toBe(400);
+    }
     const bad = await fetch(`${base}/api/settings`, {
       method: "PUT",
       headers: { "content-type": "application/json" },

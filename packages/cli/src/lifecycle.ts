@@ -23,7 +23,7 @@ import {
 } from "@applift/core";
 import { resolveChannelTarget } from "./target.js";
 import type { Command } from "commander";
-import type { Channel, ChannelRegistry } from "@applift/core";
+import type { Channel, ChannelRegistry, MobilePlatform } from "@applift/core";
 import { KNOWN_CREDENTIAL_KEYS } from "./channel-meta.js";
 
 /** 各渠道在 init/status 场景需要的凭据键与获取指引（导出供与 CREDENTIAL_GROUPS 一致性测试对拍） */
@@ -86,7 +86,7 @@ export const CREDENTIAL_GROUPS: Record<string, string[]> = {
 export function platformForChannel(
   id: string,
   channel?: Pick<Channel, "platform">,
-): "android" | "ios" | "harmony" {
+): MobilePlatform {
   if (channel?.platform) return channel.platform;
   if (id === "agc") return "harmony";
   if (id === "asc") return "ios";

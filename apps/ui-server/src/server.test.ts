@@ -164,7 +164,14 @@ describe("createServer 组合层", () => {
       statusCalls++;
       return stubRunner();
     };
-    const server = await createServer({ registry, runnerFactory, staticDir: dir, port: 0 });
+    const server = await createServer({
+      registry,
+      runnerFactory,
+      staticDir: dir,
+      port: 0,
+      // 测试封闭性：注入临时 settings.json，避免读到开发机真实档位（默认档断言会挂）
+      settingsPath: join(dir, "settings.json"),
+    });
     servers.push(server);
 
     // 启动即发起一轮（不等前台档默认 5min 定时器）
