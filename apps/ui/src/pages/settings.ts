@@ -118,7 +118,9 @@ export function renderSettings(_ctx: PageCtx): HTMLElement {
     const max = Number(wrap.dataset.max);
     const dir = Number((btn as HTMLElement).dataset.dir);
     const current = key === "fg" ? settings.fgMinutes : settings.bgMinutes;
-    const clamped = clamp(current + dir, min, max);
+    // 原型语义：后台档（min≥15）步长 15，前台档步长 1
+    const step = min >= 15 ? 15 : 1;
+    const clamped = clamp(current + dir * step, min, max);
     if (clamped === current) {
       // 护栏提示：到界后再点同方向按钮
       toast(dir < 0 ? `已是最短间隔：${min} 分钟` : `已是最长间隔：${max} 分钟`);

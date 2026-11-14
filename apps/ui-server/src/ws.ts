@@ -58,7 +58,7 @@ function parseUp(raw: unknown): UpMessage | undefined {
  * 挂载在 T1 的 http.Server 上（path=/ws 过滤升级请求）。
  */
 export class WsChannel {
-  private readonly runnerFactory: () => AppliftRunner;
+  private readonly runnerFactory: (cwd: string) => AppliftRunner;
   private readonly onConnectionsChange?: (count: number) => void;
   private wss: WebSocketServer | undefined;
   private readonly clients = new Set<WebSocket>();
@@ -68,7 +68,7 @@ export class WsChannel {
   private archive: ArchivedTask[] = [];
 
   constructor(deps: {
-    runnerFactory: () => AppliftRunner;
+    runnerFactory: (cwd: string) => AppliftRunner;
     onConnectionsChange?: (count: number) => void;
   }) {
     this.runnerFactory = deps.runnerFactory;
@@ -106,12 +106,17 @@ export class WsChannel {
   }
 
   /**
-   * 启动 beta 发版任务：spawnStream("beta", platform, ...opts.args)，
-   * NDJSON 行广播全部连接；result / 退出后归档（ring buffer 最近 20 条）。
+   * 启动 beta 发版任务：cwd = 前端选中项目目录（registry 解析；T8 落定，不再用服务进程 cwd）。
+   * spawnStream("beta", platform, ...opts.args)，NDJSON 行广播全部连接；
+   * result / 退出后归档（ring buffer 最近 20 条）。
    */
-  startBetaTask(projectId: string, platform: string, opts: { args?: string[] } = {}): string {
+  startBetaTask(
+    projectId: string,
+    platform: string,
+    opts: { args?: string[]; cwd: string },
+  ): string {
     const taskId = randomUUID();
-    const runner = this.runnerFactory();
+    const runner = this.runnerFactory(opts.cwd);
     const task: ActiveTask = { taskId, projectId, platform, events: [], startedAt: Date.now() };
     const handle = runner.spawnStream(["beta", platform, ...(opts.args ?? [])], {
       onLine: (e) => {

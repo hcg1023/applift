@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  UiClient,
   UiState,
   classify,
   encodeCancel,
@@ -142,5 +143,106 @@ describe("UiState", () => {
     expect(s.archivedTasks.length).toBe(1);
     s.apply({ t: "task.end", taskId: "t1", code: 0 });
     expect(s.archivedTasks.length).toBe(1);
+  });
+});
+
+describe("UiClient 任务 REST", () => {
+  /** fetch 替身：记录请求并按路由回放响应 */
+  const fakeFetch =
+    (
+      log: Array<{ url: string; method: string; body?: string }>,
+      respond: (url: string, body: unknown) => unknown,
+    ) =>
+    (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      log.push({
+        url,
+        method: init?.method ?? "GET",
+        body: typeof init?.body === "string" ? init.body : undefined,
+      });
+      return Promise.resolve(
+        new Response(JSON.stringify(respond(url, init?.body)), { status: 200 }),
+      );
+    };
+
+  it("dryRun：POST /api/tasks/dry-run 带 projectId+platform，返回 report", async () => {
+    const log: Array<{ url: string; method: string; body?: string }> = [];
+    const report = {
+      platform: "android",
+      provider: "stub",
+      recommendation: "ota" as const,
+      confidence: "high",
+      evidence: [],
+      note: "判定：ota（high）",
+    };
+    const client = new UiClient({
+      httpBase: "http://x",
+      fetchImpl: fakeFetch(log, (_u, _b) => ({ ok: true, report })) as unknown as typeof fetch,
+      socketFactory: () => ({ send: () => {}, close: () => {} }),
+    });
+    const r = await client.dryRun("p1", "android");
+    expect(r).toEqual(report);
+    expect(log).toEqual([
+      {
+        url: "http://x/api/tasks/dry-run",
+        method: "POST",
+        body: JSON.stringify({ projectId: "p1", platform: "android" }),
+      },
+    ]);
+  });
+
+  it("startBeta：无 args 不带键；有 args 原样透传；返回 taskId", async () => {
+    const log: Array<{ url: string; method: string; body?: string }> = [];
+    const client = new UiClient({
+      httpBase: "http://x",
+      fetchImpl: fakeFetch(log, () => ({ ok: true, taskId: "t-9" })) as unknown as typeof fetch,
+      socketFactory: () => ({ send: () => {}, close: () => {} }),
+    });
+    await expect(client.startBeta("p1", "ios")).resolves.toBe("t-9");
+    await expect(client.startBeta("p1", "android", ["--delivery", "ota"])).resolves.toBe("t-9");
+    expect(log.map((l) => l.body)).toEqual([
+      JSON.stringify({ projectId: "p1", platform: "ios" }),
+      JSON.stringify({ projectId: "p1", platform: "android", args: ["--delivery", "ota"] }),
+    ]);
+  });
+
+  it("服务端 ok:false → 抛 error 文案", async () => {
+    const client = new UiClient({
+      httpBase: "http://x",
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ ok: false, error: "project not found" }), {
+          status: 404,
+        })) as unknown as typeof fetch,
+      socketFactory: () => ({ send: () => {}, close: () => {} }),
+    });
+    await expect(client.dryRun("nope", "android")).rejects.toThrow("project not found");
+  });
+
+  it("onTask/onTaskEnd：task 下行分发；退订后不再收", async () => {
+    let push: ((raw: string) => void) | undefined;
+    const client = new UiClient({
+      httpBase: "http://x",
+      fetchImpl: (async () => new Response("{}")) as unknown as typeof fetch,
+      socketFactory: (_url, onMessage) => {
+        push = onMessage;
+        return { send: () => {}, close: () => {} };
+      },
+    });
+    await client.start();
+    // fetchImpl 替身给空对象——refreshProjects 需要 projects 键（undefined → 空）不炸即可
+    const seen: Array<[string, unknown]> = [];
+    const ends: Array<[string, number]> = [];
+    const offTask = client.onTask((taskId, ev) => seen.push([taskId, ev]));
+    const offEnd = client.onTaskEnd((taskId, code) => ends.push([taskId, code]));
+    push?.(JSON.stringify({ t: "task", taskId: "t1", data: { type: "log", msg: "hi" } }));
+    push?.(JSON.stringify({ t: "task.end", taskId: "t1", code: 3 }));
+    expect(seen).toEqual([["t1", { type: "log", msg: "hi" }]]);
+    expect(ends).toEqual([["t1", 3]]);
+    offTask();
+    offEnd();
+    push?.(JSON.stringify({ t: "task", taskId: "t2", data: { type: "log" } }));
+    push?.(JSON.stringify({ t: "task.end", taskId: "t2", code: 0 }));
+    expect(seen).toHaveLength(1);
+    expect(ends).toHaveLength(1);
   });
 });

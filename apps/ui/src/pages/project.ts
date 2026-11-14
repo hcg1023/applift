@@ -105,12 +105,10 @@ export function renderProject(ctx: PageCtx, id: string): HTMLElement {
     <p class="page-sub mono">${esc(proj.path)} · 更新于 ${snap === undefined ? "—" : esc(relTime(Date.parse(snap.fetchedAt) || Date.now()))}</p>
     <div class="summary" id="summary">${cards}</div>
     ${listHtml}
-    <p class="note">行内展开可看被拒原因；「发版」向导为后续任务接入。</p>`;
+    <p class="note">行内展开可看被拒原因。</p>`;
 
   el.querySelector("#backOv")?.addEventListener("click", () => ctx.navigate("#/overview"));
-  el.querySelector("#goRelease")?.addEventListener("click", () => {
-    toast("发版向导将在后续任务接入；可先在终端运行 applift beta");
-  });
+  el.querySelector("#goRelease")?.addEventListener("click", () => ctx.navigate("#/release"));
 
   el.querySelector("#summary")?.addEventListener("click", (e) => {
     const card = (e.target as HTMLElement).closest(".sum-card") as HTMLElement | null;

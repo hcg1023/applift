@@ -3,7 +3,7 @@ import { StatusAggregator } from "./aggregator.js";
 import type { FeedEvent, ProjectSnapshot } from "./aggregator.js";
 import { startUiServer } from "./http.js";
 import { ProjectRegistry, defaultStorePath } from "./registry.js";
-import { cliBinPath, sendJson } from "./routes.js";
+import { cliBinPath, createTaskRoutes, sendJson } from "./routes.js";
 import { AppliftRunner } from "./runner.js";
 import { WsChannel } from "./ws.js";
 
@@ -11,8 +11,14 @@ export { startUiServer } from "./http.js";
 export type { UiServerHandle, UiServerOptions } from "./http.js";
 export { ProjectRegistry, defaultStorePath } from "./registry.js";
 export type { ProjectEntry } from "./registry.js";
-export { createProjectRoutes, validateProject, cliBinPath } from "./routes.js";
-export type { ApiHandler, ProjectRoutesOptions, ValidateReport } from "./routes.js";
+export { createProjectRoutes, createTaskRoutes, validateProject, cliBinPath } from "./routes.js";
+export type {
+  ApiHandler,
+  BetaDryRunReport,
+  ProjectRoutesOptions,
+  TaskRoutesOptions,
+  ValidateReport,
+} from "./routes.js";
 export { WsChannel } from "./ws.js";
 export type { ArchivedTask, TaskEvent } from "./ws.js";
 export { StatusAggregator } from "./aggregator.js";
@@ -59,8 +65,8 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
     onFeed: (e: FeedEvent) => ws.broadcastFeed(e),
   });
   const ws = new WsChannel({
-    // WsChannel 任务无 cwd 语境（beta 在前端选中项目的 cwd 执行属后续路由职责），暂以服务进程 cwd 起跑
-    runnerFactory: () => runnerFactory(process.cwd()),
+    // cwd 由 startBetaTask 调用方传入（REST 路由按 registry 解析项目目录）
+    runnerFactory,
     onConnectionsChange: (count) => aggregator.setVisible(count > 0),
   });
   let closing = false;
@@ -75,20 +81,29 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
     port: opts.port,
     staticDir: opts.staticDir ?? defaultStaticDir(),
     registry,
-    // POST /api/shutdown：仅本机可达（http 层固定监听 127.0.0.1）；`applift ui --stop` 消费
-    apiHandler: (req, res) => {
-      if (req.method !== "POST" || !req.url?.startsWith("/api/shutdown"))
-        return Promise.resolve(false);
-      // Host 校验：浏览器页面可对任意地址发 no-cors POST（DNS rebinding 同理），仅认本机 Host
-      const hostname = (req.headers.host ?? "").split(":")[0];
-      if (hostname !== "127.0.0.1" && hostname !== "localhost") {
-        sendJson(res, 403, { ok: false, error: "forbidden host" });
+    extraApiHandlers: [
+      // POST /api/tasks/beta + /api/tasks/dry-run：发版向导入口（T8）——registry 查项目拿 cwd
+      createTaskRoutes({
+        registry,
+        runnerFactory,
+        startBetaTask: (projectId, platform, taskOpts) =>
+          ws.startBetaTask(projectId, platform, taskOpts),
+      }),
+      // POST /api/shutdown：仅本机可达（http 层固定监听 127.0.0.1）；`applift ui --stop` 消费
+      (req, res) => {
+        if (req.method !== "POST" || !req.url?.startsWith("/api/shutdown"))
+          return Promise.resolve(false);
+        // Host 校验：浏览器页面可对任意地址发 no-cors POST（DNS rebinding 同理），仅认本机 Host
+        const hostname = (req.headers.host ?? "").split(":")[0];
+        if (hostname !== "127.0.0.1" && hostname !== "localhost") {
+          sendJson(res, 403, { ok: false, error: "forbidden host" });
+          return Promise.resolve(true);
+        }
+        sendJson(res, 200, { ok: true });
+        void close();
         return Promise.resolve(true);
-      }
-      sendJson(res, 200, { ok: true });
-      void close();
-      return Promise.resolve(true);
-    },
+      },
+    ],
   });
   // 先于项目路由注册？不——startUiServer 内 registry 路由先入列，shutdown 靠前缀区分，无冲突
   ws.attach(server.httpServer);

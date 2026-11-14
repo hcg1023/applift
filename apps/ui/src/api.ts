@@ -52,6 +52,16 @@ export interface ArchivedTask {
   code: number;
 }
 
+/** beta --dry-run 报告（CLI BetaDryRunReport 契约透传） */
+export interface JudgementReport {
+  platform: string;
+  provider: string | null;
+  recommendation: "ota" | "native" | "uncertain" | null;
+  confidence: string | null;
+  evidence: Array<{ path: string; rule: string; note?: string }>;
+  note: string;
+}
+
 export type DownMessage =
   | { t: "snapshot"; data: ProjectSnapshot }
   | { t: "feed"; data: FeedEvent }
@@ -295,6 +305,9 @@ export class UiClient {
   private readonly fetchImpl: typeof fetch;
   private readonly socketFactory: SocketFactory;
   private readonly listeners = new Set<() => void>();
+  /** 任务事件直通订阅（发版向导消费；与 listeners 不同：带 payload、不触发全页重渲） */
+  private readonly taskListeners = new Set<(taskId: string, ev: TaskEvent) => void>();
+  private readonly taskEndListeners = new Set<(taskId: string, code: number) => void>();
   private socket: Transport | undefined;
   private reconnectTimer: number | undefined;
   private closed = false;
@@ -312,6 +325,18 @@ export class UiClient {
   subscribe(fn: () => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
+  }
+
+  /** 任务事件订阅（task 下行原样）；返回退订函数 */
+  onTask(fn: (taskId: string, ev: TaskEvent) => void): () => void {
+    this.taskListeners.add(fn);
+    return () => this.taskListeners.delete(fn);
+  }
+
+  /** 任务退出订阅（task.end 下行）；返回退订函数 */
+  onTaskEnd(fn: (taskId: string, code: number) => void): () => void {
+    this.taskEndListeners.add(fn);
+    return () => this.taskEndListeners.delete(fn);
   }
 
   private emit(): void {
@@ -337,6 +362,8 @@ export class UiClient {
         const m = parseDown(raw);
         if (m === null) return;
         this.state.apply(m);
+        if (m.t === "task") for (const fn of this.taskListeners) fn(m.taskId, m.data);
+        else if (m.t === "task.end") for (const fn of this.taskEndListeners) fn(m.taskId, m.code);
         this.emit();
       },
       () => {
@@ -377,6 +404,24 @@ export class UiClient {
     await this.json(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
     this.state.snapshots.delete(id);
     await this.refreshProjects();
+  }
+
+  /** 判定预览（beta --dry-run --json；只读安全） */
+  async dryRun(projectId: string, platform: string): Promise<JudgementReport> {
+    const body = await this.json<{ report: JudgementReport }>("/api/tasks/dry-run", {
+      method: "POST",
+      body: JSON.stringify({ projectId, platform }),
+    });
+    return body.report;
+  }
+
+  /** 发起 beta 发版任务（ws 桥）；返回 taskId（后续 task/task.end 事件按此路由） */
+  async startBeta(projectId: string, platform: string, args?: string[]): Promise<string> {
+    const body = await this.json<{ taskId: string }>("/api/tasks/beta", {
+      method: "POST",
+      body: JSON.stringify(args ? { projectId, platform, args } : { projectId, platform }),
+    });
+    return body.taskId;
   }
 
   confirm(taskId: string, id: string, value: string): void {

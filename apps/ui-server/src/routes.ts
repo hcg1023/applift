@@ -40,12 +40,19 @@ export async function validateProject(path: string): Promise<ValidateReport> {
   }
 }
 
-async function readJsonBody(req: IncomingMessage): Promise<{ path?: string } | null> {
+async function readJsonBody(
+  req: IncomingMessage,
+): Promise<{ path?: string; projectId?: string; platform?: string; args?: unknown } | null> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(chunk as Buffer);
   if (chunks.length === 0) return null;
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as { path?: string };
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+      path?: string;
+      projectId?: string;
+      platform?: string;
+      args?: unknown;
+    };
   } catch {
     return null;
   }
@@ -110,5 +117,86 @@ export function createProjectRoutes(opts: ProjectRoutesOptions): ApiHandler {
     }
 
     return false;
+  };
+}
+
+/** beta --dry-run --json 的 stdout 报告（CLI BetaDryRunReport 契约；只读安全——不进发布分支） */
+export interface BetaDryRunReport {
+  platform: string;
+  provider: string | null;
+  recommendation: "ota" | "native" | "uncertain" | null;
+  confidence: string | null;
+  evidence: Array<{ path: string; rule: string; note?: string }>;
+  note: string;
+}
+
+export interface TaskRoutesOptions {
+  registry: ProjectRegistry;
+  /** 测试可注入；缺省与本文件 validate 同源（node + 本仓库 CLI dist） */
+  runnerFactory: (cwd: string) => AppliftRunner;
+  /** beta 发版任务发起（ws 桥）；返回 taskId */
+  startBetaTask: (
+    projectId: string,
+    platform: string,
+    opts: { args?: string[]; cwd: string },
+  ) => string;
+}
+
+const DRY_RUN_TIMEOUT_MS = 120_000; // 判定含 git diff 采集，大仓冷缓存留余量
+const BETA_PLATFORMS: Record<string, true> = { android: true, ios: true, harmony: true };
+
+/** POST /api/tasks/beta + POST /api/tasks/dry-run：发版向导的服务端入口（T8） */
+export function createTaskRoutes(opts: TaskRoutesOptions): ApiHandler {
+  const { registry, runnerFactory, startBetaTask } = opts;
+  return async (req, res) => {
+    const url = (req.url ?? "").split("?")[0] ?? "";
+    if (url !== "/api/tasks/beta" && url !== "/api/tasks/dry-run") return false;
+    if (req.method !== "POST") {
+      sendJson(res, 405, { ok: false, error: "method not allowed" });
+      return true;
+    }
+    const body = await readJsonBody(req);
+    const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+    const platform = typeof body?.platform === "string" ? body.platform : "";
+    const entry = registry.get(projectId);
+    if (entry === undefined) {
+      sendJson(res, 404, { ok: false, error: "project not found" });
+      return true;
+    }
+    if (!BETA_PLATFORMS[platform]) {
+      sendJson(res, 400, { ok: false, error: "platform must be one of android|ios|harmony" });
+      return true;
+    }
+
+    if (url === "/api/tasks/beta") {
+      const rawArgs: unknown = (body as { args?: unknown } | null)?.args;
+      const userArgs =
+        Array.isArray(rawArgs) && rawArgs.every((a) => typeof a === "string")
+          ? (rawArgs as string[])
+          : [];
+      // UI 任务固定事件流模式（NDJSON + stdin 确认回写）；调用方只补业务参数
+      const taskId = startBetaTask(projectId, platform, {
+        args: ["--interactive-events", ...userArgs],
+        cwd: entry.path,
+      });
+      sendJson(res, 200, { ok: true, taskId });
+      return true;
+    }
+
+    // dry-run：只读判定预览（不进发布分支）；stdout 纯 JSON 契约
+    const runner = runnerFactory(entry.path);
+    const { code, stdout, stderr } = await runner.run(["beta", platform, "--dry-run", "--json"], {
+      timeoutMs: DRY_RUN_TIMEOUT_MS,
+    });
+    try {
+      const report = JSON.parse(stdout) as BetaDryRunReport;
+      sendJson(res, 200, { ok: true, report });
+    } catch {
+      sendJson(res, 502, {
+        ok: false,
+        error: `applift beta --dry-run 输出无法解析（exit=${code}）${stderr.trim()}`,
+      });
+    }
+    return true;
   };
 }

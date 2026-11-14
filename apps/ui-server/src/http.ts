@@ -21,8 +21,10 @@ export interface UiServerOptions {
   staticDir: string;
   /** 项目注册表（含持久化路径）；提供后挂 /api/projects REST 路由 */
   registry?: ProjectRegistry;
-  /** 额外 API 路由；先于静态托管执行（/api/projects 之外的扩展点） */
+  /** 额外 API 路由（多个，按序尝试）；先于静态托管执行（/api/projects 之外的扩展点） */
   apiHandler?: ApiHandler;
+  /** 追加路由（apiHandler 之后的扩展点；T8 任务路由） */
+  extraApiHandlers?: ApiHandler[];
 }
 
 const MIME: Record<string, string> = {
@@ -106,6 +108,7 @@ export async function startUiServer(opts: UiServerOptions): Promise<UiServerHand
   const apiHandlers: ApiHandler[] = [];
   if (opts.registry) apiHandlers.push(createProjectRoutes({ registry: opts.registry }));
   if (opts.apiHandler) apiHandlers.push(opts.apiHandler);
+  apiHandlers.push(...(opts.extraApiHandlers ?? []));
   const httpServer = createServer((req, res) => {
     handle(req, res, staticRoot, apiHandlers).catch((err: unknown) => {
       if (!res.headersSent) sendJson(res, 500, { ok: false, error: String(err) });

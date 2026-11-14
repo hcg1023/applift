@@ -87,10 +87,18 @@ async function mkStaticDir(): Promise<string> {
   return dir;
 }
 
+/** 任务 cwd 断言用占位目录（spawn 的是桩 bin，不真读该目录） */
+const projDir = "/tmp/applift-ws-test-proj";
+
 async function setup(bin?: string): Promise<{ port: number; channel: WsChannel }> {
   const server = await startUiServer({ port: 0, staticDir: await mkStaticDir() });
   servers.push(server);
-  const channel = new WsChannel({ runnerFactory: () => new AppliftRunner(bin ? { bin } : {}) });
+  const channel = new WsChannel({
+    runnerFactory: (cwd) => {
+      if (cwd !== projDir) throw new Error(`unexpected cwd: ${cwd}`);
+      return new AppliftRunner(bin ? { bin } : {});
+    },
+  });
   channel.attach(server.httpServer);
   channels.push(channel);
   return { port: server.port, channel };
@@ -165,7 +173,7 @@ setInterval(()=>{},60000);`,
     const { port, channel } = await setup(`node ${stub}`);
     const client = connect(port);
 
-    const taskId = channel.startBetaTask("p1", "android", {});
+    const taskId = channel.startBetaTask("p1", "android", { cwd: projDir });
     expect(typeof taskId).toBe("string");
 
     const hello = await client.next((m) => m.t === "task" && m.data.type === "hello");
@@ -190,7 +198,7 @@ setInterval(()=>{},60000);`,
     );
     const { port, channel } = await setup(`node ${stub}`);
     const client = connect(port);
-    const taskId = channel.startBetaTask("p1", "harmony", {});
+    const taskId = channel.startBetaTask("p1", "harmony", { cwd: projDir });
     await client.next((m) => m.t === "task");
     const cancel: Up = { t: "task.cancel", taskId };
     client.ws.send(JSON.stringify(cancel));
@@ -210,7 +218,7 @@ setInterval(()=>{},60000);`,
     );
     const { port, channel } = await setup(`node ${stub}`);
     const c1 = connect(port);
-    const taskId = channel.startBetaTask("p1", "android", {});
+    const taskId = channel.startBetaTask("p1", "android", { cwd: projDir });
     await c1.next((m) => m.t === "task" && m.data.type === "confirm_required");
 
     // 重连客户端：补发范围内必须含运行中任务的累积事件（hello + confirm_required，带 taskId）
@@ -234,7 +242,7 @@ process.stdout.write(JSON.stringify({type:"result",ok:true})+"\\n");`,
     );
     const { port, channel } = await setup(`node ${stub}`);
     const c1 = connect(port);
-    const taskId = channel.startBetaTask("p1", "android", {});
+    const taskId = channel.startBetaTask("p1", "android", { cwd: projDir });
     await c1.next((m) => m.t === "task" && m.data.type === "result");
     await c1.next((m) => m.t === "task.end");
     c1.ws.close();
@@ -262,7 +270,7 @@ process.stdout.write(JSON.stringify({type:"result",ok:true})+"\\n");`,
       `process.stdout.write(JSON.stringify({type:"result",ok:true})+"\\n");`,
     );
     const { channel } = await setup(`node ${stub}`);
-    for (let i = 0; i < 25; i++) channel.startBetaTask(`p${i}`, "android", {});
+    for (let i = 0; i < 25; i++) channel.startBetaTask(`p${i}`, "android", { cwd: projDir });
     await vi.waitFor(() => expect(channel.archivedTasks()).toHaveLength(20));
   });
 });

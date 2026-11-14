@@ -1,16 +1,18 @@
 import { UiClient } from "./api.js";
-import { renderOverview, type PageCtx } from "./pages/overview.js";
+import { renderOverview, resetOverviewPageState, type PageCtx } from "./pages/overview.js";
 import { renderProject, resetProjectPageState } from "./pages/project.js";
+import { renderRelease, resetReleasePageState } from "./pages/release.js";
 import { renderSettings } from "./pages/settings.js";
 import { applyTheme, loadSettings, saveSettings, toast } from "./util.js";
 const TITLES: Record<string, string> = {
   overview: "总览",
   project: "项目详情",
+  release: "发版",
   settings: "通用设置",
 };
 
 interface Route {
-  page: "overview" | "project" | "settings";
+  page: "overview" | "project" | "release" | "settings";
   id?: string;
 }
 
@@ -25,6 +27,7 @@ function parseRoute(hash: string): Route {
     }
     if (id !== "") return { page: "project", id };
   }
+  if (hash === "#/release") return { page: "release" };
   if (hash === "#/settings") return { page: "settings" };
   return { page: "overview" };
 }
@@ -84,12 +87,16 @@ async function main(): Promise<void> {
       );
     });
     if (route.page !== "project") resetProjectPageState();
+    if (route.page !== "overview" && route.page !== "project") resetOverviewPageState();
+    if (route.page !== "release") resetReleasePageState();
     content.replaceChildren(
       route.page === "project"
         ? renderProject(ctx, route.id ?? "")
-        : route.page === "settings"
-          ? renderSettings(ctx)
-          : renderOverview(ctx),
+        : route.page === "release"
+          ? renderRelease(ctx)
+          : route.page === "settings"
+            ? renderSettings(ctx)
+            : renderOverview(ctx),
     );
     updateBadge();
   };
@@ -111,10 +118,6 @@ async function main(): Promise<void> {
     const item = (e.target as HTMLElement).closest(".nav-item") as HTMLElement | null;
     if (item === null) return;
     const nav = item.dataset.nav;
-    if (nav === "release") {
-      toast("发版向导将在后续任务接入");
-      return;
-    }
     ctx.navigate(`#/${nav}`);
   });
   document.getElementById("themeBtn")?.addEventListener("click", () => {

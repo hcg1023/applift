@@ -1,5 +1,5 @@
 import { classify, type UiClient } from "../api.js";
-import { esc, relTime, toast } from "../util.js";
+import { esc, loadSettings, relTime, toast } from "../util.js";
 
 export interface PageCtx {
   client: UiClient;
@@ -49,7 +49,8 @@ function openMenu(anchor: HTMLElement, ctx: PageCtx, id: string, name: string): 
         toast(`移除失败：${err instanceof Error ? err.message : String(err)}`);
       }
     } else if (act === "recheck") {
-      toast("已请求重新检查（服务端排期执行）");
+      // 一期无 REST 触发（aggregator.refreshNow 未对外）；服务端轮询会自然刷新，给真话
+      toast(`重新检查暂未接入：状态按设置的间隔自动刷新（${loadSettings().fgMinutes} 分钟内）`);
     }
   });
   document.body.appendChild(pop);
@@ -227,18 +228,24 @@ const emptyFeedBox = `<div class="state-box" style="padding:32px 24px"><div clas
 /** 过滤态存活于模块级：跨重渲染保持用户选择 */
 let feedFilter = "all";
 
+/** 离开总览时复位动态过滤（原型 nav 语义：过滤不跨导航保留） */
+export function resetOverviewPageState(): void {
+  feedFilter = "all";
+}
+
 function renderFeedOnly(el: HTMLElement, ctx: PageCtx): void {
   const feed = el.querySelector("#ovFeed");
   if (feed === null) return;
   const items = ctx.client.state.feed
     .filter((e) => feedFilter === "all" || e.projectId === feedFilter)
-    .map(
-      (e) => `
+    .map((e) => {
+      const proj = ctx.client.state.projects.find((p) => p.id === e.projectId);
+      return `
         <div class="tl-item ${classify(e.to).key === "ok" ? "ok" : classify(e.to).key === "err" ? "err" : "info"}" data-proj="${esc(e.projectId)}">
-          <div class="tl-time">${relTime(e.ts)}</div>
+          <div class="tl-time">${esc(proj?.name ?? e.projectId)} · ${relTime(e.ts)}</div>
           <div class="tl-txt"><b>${esc(e.channel)}</b> ${esc(classify(e.from).label)} → ${esc(classify(e.to).label)}</div>
-        </div>`,
-    )
+        </div>`;
+    })
     .join("");
   feed.innerHTML = items || emptyFeedBox;
 }
