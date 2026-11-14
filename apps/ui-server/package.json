@@ -1,0 +1,21 @@
+{
+  "name": "@applift/ui-server",
+  "version": "0.1.0",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "dist/index.mjs",
+  "exports": {
+    "import": "./dist/index.mjs",
+    "types": "./dist/index.d.mts"
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts --format esm --dts --clean",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "tsdown": "^0.23.1"
+  }
+}

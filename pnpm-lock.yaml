@@ -194,6 +194,12 @@ importers:
         specifier: ^5.0.4
         version: 5.0.4(@types/node@26.6.5)(@vitest/coverage-v8@5.0.4)(vite@7.3.7(@types/node@26.6.5)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
+  apps/ui-server:
+    devDependencies:
+      tsdown:
+        specifier: ^0.23.1
+        version: 0.23.1(tsx@4.23.15)(typescript@7.0.2)
+
   packages/cli:
     dependencies:
       '@applift/core':
