@@ -26,6 +26,7 @@ export type {
   ValidateReport,
 } from "./routes.js";
 export { WsChannel } from "./ws.js";
+export type { HostAdapter } from "./host.js";
 export type { ArchivedTask, TaskEvent } from "./ws.js";
 export { StatusAggregator } from "./aggregator.js";
 export type { ChannelSnapshot, FeedEvent, ProjectSnapshot } from "./aggregator.js";

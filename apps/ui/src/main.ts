@@ -1,9 +1,11 @@
-import { UiClient } from "./api.js";
+import { UiClient, classify } from "./api.js";
+import { createWebuiHost } from "./host.js";
 import { renderOverview, resetOverviewPageState, type PageCtx } from "./pages/overview.js";
 import { renderProject, resetProjectPageState } from "./pages/project.js";
 import { renderRelease, resetReleasePageState } from "./pages/release.js";
 import { renderSettings } from "./pages/settings.js";
 import { applyTheme, loadSettings, saveSettings, toast } from "./util.js";
+
 const TITLES: Record<string, string> = {
   overview: "总览",
   project: "项目详情",
@@ -56,7 +58,12 @@ async function main(): Promise<void> {
       <div class="titlebar">
         <div class="traffic"><span class="r"></span><span class="y"></span><span class="g"></span></div>
         <div class="title" id="winTitle">总览</div>
+        <span class="conn-pill" id="connPill" hidden>重连中…</span>
         <button class="icon-btn" id="themeBtn" title="切换外观" aria-label="切换深浅外观">${SUN_SVG}</button>
+      </div>
+      <div class="conn-banner" id="connBanner" hidden>
+        <span class="dot d-wait"></span>
+        与本地服务的连接已断开，正在重连（服务重启或休眠后自动恢复；长时间未恢复可运行 <span class="cmd">applift ui --stop</span> 后重新启动）。
       </div>
       <div class="body">
         <nav class="sidebar" aria-label="主导航">
@@ -69,8 +76,10 @@ async function main(): Promise<void> {
     </div>`;
 
   const content = document.getElementById("content")!;
+  const host = createWebuiHost();
   const ctx: PageCtx = {
     client,
+    host,
     navigate: (hash: string) => {
       location.hash = hash;
     },
@@ -115,6 +124,30 @@ async function main(): Promise<void> {
     }
   };
 
+  /** 连接态横幅/顶栏 pill（T7 I-1：断连必须有 UI 反馈；首连成功前不显示——加载态与连接失败 toast 已覆盖） */
+  let everConnected = false;
+  const updateConn = (): void => {
+    const off = everConnected && client.connectionState !== "connected";
+    document.getElementById("connBanner")?.toggleAttribute("hidden", !off);
+    document.getElementById("connPill")?.toggleAttribute("hidden", !off);
+  };
+
+  /** 未读通知走 HostAdapter：系统通知失败降级未读列表（notifyState 开关控制） */
+  let notifiedFeedId = "";
+  const notifyUnread = (): void => {
+    if (!loadSettings().notifyState) return;
+    const lastRead = Number(localStorage.getItem("applift-ui:feedRead") ?? "0");
+    const unread = client.state.feed.filter((e) => e.ts > lastRead);
+    const ev = unread[0];
+    if (ev === undefined || ev.id === notifiedFeedId) return;
+    notifiedFeedId = ev.id;
+    const proj = client.state.projects.find((p) => p.id === ev.projectId);
+    void host.notify(
+      "渠道状态变化",
+      `${proj?.name ?? ev.projectId} · ${ev.channel} ${classify(ev.from).label} → ${classify(ev.to).label}`,
+    );
+  };
+
   window.addEventListener("hashchange", render);
   app.querySelector(".sidebar")?.addEventListener("click", (e) => {
     const item = (e.target as HTMLElement).closest(".nav-item") as HTMLElement | null;
@@ -133,7 +166,16 @@ async function main(): Promise<void> {
     });
   });
 
-  client.subscribe(render);
+  client.subscribe(() => {
+    render();
+    notifyUnread(); // feed 事件到达即尝试系统通知（降级语义见 host.notify）
+    updateConn();
+  });
+  client.onConnectionChange((s) => {
+    if (s === "connected") everConnected = true;
+    updateConn();
+    if (s === "connected") notifyUnread();
+  });
   render(); // 首帧（加载态）先上屏，避免 REST/WS 慢时空白
   await client.start().catch((err: unknown) => {
     toast(`连接服务失败：${err instanceof Error ? err.message : String(err)}`);

@@ -2,6 +2,7 @@
  * 服务端协议客户端（阶段二定案契约，接线以此为准）：
  * - REST：GET/POST /api/projects、DELETE /api/projects/:id
  * - WS：下行 snapshot/feed/task/tasks/task.end；上行 confirm/task.cancel
+ * - 连接态：connectionState（connected/reconnecting）+ onConnectionChange 订阅
  * 协议解析与状态合并为纯逻辑（单测覆盖）；传输层可注入（测试/浏览器双环境）。
  */
 
@@ -189,6 +190,8 @@ export function encodeCancel(taskId: string): string {
   return JSON.stringify({ t: "task.cancel", taskId });
 }
 
+export type ConnectionState = "connected" | "reconnecting";
+
 export type StateKey = "ok" | "wait" | "err" | "off";
 
 /** CLI status 契约（channel.d.ts ReviewStatus）：approved/reviewing/rejected/unknown */
@@ -308,9 +311,11 @@ export class UiClient {
   /** 任务事件直通订阅（发版向导消费；与 listeners 不同：带 payload、不触发全页重渲） */
   private readonly taskListeners = new Set<(taskId: string, ev: TaskEvent) => void>();
   private readonly taskEndListeners = new Set<(taskId: string, code: number) => void>();
+  private readonly connListeners = new Set<(s: ConnectionState) => void>();
   private socket: Transport | undefined;
   private reconnectTimer: number | undefined;
   private closed = false;
+  private connState: ConnectionState = "reconnecting";
 
   constructor(opts: UiClientOptions = {}) {
     const loc = typeof location === "object" ? location : undefined;
@@ -320,6 +325,17 @@ export class UiClient {
     this.fetchImpl = opts.fetchImpl ?? fetch.bind(globalThis);
     this.socketFactory = opts.socketFactory ?? browserSocket;
     this.state = opts.state ?? new UiState();
+  }
+
+  /** 当前连接态：connected = WS 活跃收信；reconnecting = 断连重试中 */
+  get connectionState(): ConnectionState {
+    return this.connState;
+  }
+
+  /** 连接态变化订阅（断连/恢复各触发一次；重连重试不重复发） */
+  onConnectionChange(fn: (s: ConnectionState) => void): () => void {
+    this.connListeners.add(fn);
+    return () => this.connListeners.delete(fn);
   }
 
   subscribe(fn: () => void): () => void {
@@ -343,9 +359,20 @@ export class UiClient {
     for (const fn of this.listeners) fn();
   }
 
+  private setConn(next: ConnectionState): void {
+    if (this.connState === next) return;
+    this.connState = next;
+    for (const fn of this.connListeners) fn(next);
+    this.emit(); // 连接态影响横幅，随全页重渲走
+  }
+
   async start(): Promise<void> {
-    await this.refreshProjects();
-    this.connect();
+    try {
+      await this.refreshProjects();
+    } finally {
+      // REST 失败也进 WS 重连循环：断连横幅与自愈恢复由此驱动（错误仍向上抛给调用方）
+      this.connect();
+    }
   }
 
   stop(): void {
@@ -361,6 +388,7 @@ export class UiClient {
       (raw) => {
         const m = parseDown(raw);
         if (m === null) return;
+        this.setConn("connected");
         this.state.apply(m);
         if (m.t === "task") for (const fn of this.taskListeners) fn(m.taskId, m.data);
         else if (m.t === "task.end") for (const fn of this.taskEndListeners) fn(m.taskId, m.code);
@@ -368,6 +396,7 @@ export class UiClient {
       },
       () => {
         if (this.closed) return;
+        this.setConn("reconnecting");
         this.reconnectTimer = setTimeout(() => this.connect(), 2000);
       },
     );

@@ -245,4 +245,49 @@ describe("UiClient 任务 REST", () => {
     expect(seen).toHaveLength(1);
     expect(ends).toHaveLength(1);
   });
+
+  it("connectionState：初始 reconnecting → 收消息 connected → 断连 reconnecting；退订后不再收", async () => {
+    let push: ((raw: string) => void) | undefined;
+    let drop: (() => void) | undefined;
+    const client = new UiClient({
+      httpBase: "http://x",
+      fetchImpl: (async () => new Response("{}")) as unknown as typeof fetch,
+      socketFactory: (_url, onMessage, onClose) => {
+        push = onMessage;
+        drop = onClose;
+        return { send: () => {}, close: () => {} };
+      },
+    });
+    await client.start();
+    expect(client.connectionState).toBe("reconnecting");
+    const states: string[] = [];
+    const off = client.onConnectionChange((s) => states.push(s));
+    push?.(JSON.stringify({ t: "tasks", data: [] }));
+    expect(client.connectionState).toBe("connected");
+    drop?.();
+    expect(client.connectionState).toBe("reconnecting");
+    expect(states).toEqual(["connected", "reconnecting"]);
+    off();
+    push?.(JSON.stringify({ t: "tasks", data: [] }));
+    drop?.();
+    expect(states).toEqual(["connected", "reconnecting"]); // 退订后不再推送
+    client.stop();
+  });
+
+  it("start() REST 失败仍进 WS 重连循环（错误向上抛，断连自愈由此驱动）", async () => {
+    let connects = 0;
+    const client = new UiClient({
+      httpBase: "http://x",
+      fetchImpl: (async () => {
+        throw new Error("server down");
+      }) as unknown as typeof fetch,
+      socketFactory: () => {
+        connects += 1;
+        return { send: () => {}, close: () => {} };
+      },
+    });
+    await expect(client.start()).rejects.toThrow("server down");
+    expect(connects).toBe(1); // 失败也建立了首次 WS 尝试（后续由重连定时器驱动）
+    client.stop();
+  });
 });

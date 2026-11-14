@@ -1,9 +1,12 @@
 import { classify, type UiClient } from "../api.js";
+import type { HostAdapter } from "../host.js";
 import { esc, loadSettings, relTime, toast } from "../util.js";
 
 export interface PageCtx {
   client: UiClient;
   navigate: (hash: string) => void;
+  /** 宿主能力（webui 降级实现；Tauri 壳注入 native） */
+  host: HostAdapter;
 }
 
 /** 项目图标底色：按名称稳定散列到一组渐变 */
@@ -171,7 +174,9 @@ export function renderOverview(ctx: PageCtx): HTMLElement {
     <p class="note">项目卡片点进去是渠道明细；动态默认显示全部项目，可按项目过滤。</p>`;
 
   el.querySelector("#addProject")?.addEventListener("click", async () => {
-    const path = window.prompt("输入工程目录路径（需含 applift.config.ts）：");
+    // HostAdapter：宿主有原生目录选择器则先弹选择（webui 恒 null → 直接手输路径）
+    const picked = await ctx.host.pickDirectory();
+    const path = picked ?? window.prompt("输入工程目录路径（需含 applift.config.ts）：");
     if (path === null || path.trim() === "") return;
     try {
       await client.addProject(path.trim());

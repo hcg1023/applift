@@ -1,5 +1,12 @@
 import { expect, test } from "@playwright/test";
 
+test("连接正常：断连横幅与顶栏 pill 隐藏", async ({ page }) => {
+  await page.goto("/#/overview");
+  await expect(page.locator(".ov-card[data-id]").first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator("#connBanner")).toBeHidden();
+  await expect(page.locator("#connPill")).toBeHidden();
+});
+
 test("总览 → 详情 → 被拒展开 → 设置 clamp", async ({ page }) => {
   await page.goto("/#/overview");
 

@@ -1,5 +1,5 @@
 import type { JudgementReport, TaskEvent, UiClient } from "../api.js";
-import { esc, toast } from "../util.js";
+import { esc, loadSettings, toast } from "../util.js";
 import type { PageCtx } from "./overview.js";
 
 /** 平台常量（与服务端 BETA_PLATFORMS 同源） */
@@ -758,6 +758,15 @@ async function runQueue(ctx: PageCtx): Promise<void> {
   }
   if (state.phase === 3) {
     state.phase = 4;
+    // 发版结束通知（notifyRelease 开关）：系统通知失败静默（结果页即信息源）
+    if (loadSettings().notifyRelease && state.results.size > 0) {
+      const ok = [...state.results.values()].filter((r) => r.ok).length;
+      const total = state.results.size;
+      void ctx.host.notify(
+        state.cancelled ? "发版已取消" : ok === total ? "发版完成" : "发版有失败",
+        state.cancelled ? "队列已停止" : `${ok}/${total} 个平台成功`,
+      );
+    }
     rerenderAll(ctx);
   }
 }

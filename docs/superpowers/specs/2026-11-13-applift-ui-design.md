@@ -1,6 +1,7 @@
 # applift-ui 设计文档
 
 > 2026-11-13 定稿（IA 重构版）。配套高保真可交互原型：`2026-11-13-applift-ui-prototype.html`（同目录，浏览器打开，Apple 风格明暗双主题、总览/详情/发版/设置全流程可点；顶部可切换 macOS/浏览器/Windows 三种外壳形态演示）。早期低保真线框稿 `2026-11-13-applift-ui-design.html` 已被原型取代，仅存档。
+
 ## 1. 定位与范围
 
 applift-ui：applift 的图形界面。解决三个痛点——多渠道审核状态要跑十几个官网才能看全、状态跃迁（审核通过/被拒）不能及时发现、多项目多应用状态散落。
@@ -10,13 +11,13 @@ applift-ui：applift 的图形界面。解决三个痛点——多渠道审核�
 
 ## 2. 架构决策（已定案）
 
-| 决策 | 结论 | 理由 |
-|---|---|---|
-| GUI ↔ applift 交互 | **spawn CLI，不嵌 core** | core 配置装载（c12/jiti 别名指向目标工程）天然是「在项目目录跑 CLI」形态；applift 升级 GUI 零改动；类型定义（枚举等）可静态 import，运行时不 import core |
-| 应用形态 | **webui 先行（`applift ui` 起 localhost 服务）**，HostAdapter 抽象宿主能力 | spawn 在 Node 侧最顺手；零打包签名成本；Tauri 壳二期按需包同一前端 |
-| 命名 | **applift-ui**，monorepo 新增 `apps/ui`（前端）+ `apps/ui-server`（Node 服务，随 CLI 分发） | |
-| 项目注册 | 手动添加（目录含 `applift.config.ts` 即合法），预留「扫描建议」口子（只扫用户指定父目录） | |
-| 凭据 | 一期只读引导（doctor 缺失项横幅 → 引导跑 `applift doctor`）；编辑界面二期，但在设计范围内 | |
+| 决策               | 结论                                                                                        | 理由                                                                                                                                                     |
+| ------------------ | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GUI ↔ applift 交互 | **spawn CLI，不嵌 core**                                                                    | core 配置装载（c12/jiti 别名指向目标工程）天然是「在项目目录跑 CLI」形态；applift 升级 GUI 零改动；类型定义（枚举等）可静态 import，运行时不 import core |
+| 应用形态           | **webui 先行（`applift ui` 起 localhost 服务）**，HostAdapter 抽象宿主能力                  | spawn 在 Node 侧最顺手；零打包签名成本；Tauri 壳二期按需包同一前端                                                                                       |
+| 命名               | **applift-ui**，monorepo 新增 `apps/ui`（前端）+ `apps/ui-server`（Node 服务，随 CLI 分发） |                                                                                                                                                          |
+| 项目注册           | 手动添加（目录含 `applift.config.ts` 即合法），预留「扫描建议」口子（只扫用户指定父目录）   |                                                                                                                                                          |
+| 凭据               | 一期只读引导（doctor 缺失项横幅 → 引导跑 `applift doctor`）；编辑界面二期，但在设计范围内   |                                                                                                                                                          |
 
 ## 3. 数据流与轮询
 
@@ -24,12 +25,12 @@ applift-ui：applift 的图形界面。解决三个痛点——多渠道审核�
 - **StatusAggregator**（server 侧）：逐项目跑 `applift status --json`（项目间串行错峰，项目内渠道由 CLI 并行），内存缓存 + fetchedAt 时间戳，UI 标注数据新鲜度。
 - **分级轮询**（间隔可在设置中调整，有下限护栏：前台 ≥1min、后台 ≥15min）：
 
-| 场景 | 触发 | 频率 |
-|---|---|---|
-| 聚焦刷新 | WebSocket 首连 / 页面重新可见 / 手动刷新 | 即时单次 |
-| 前台保持 | 页面可见定时器 | 默认 5 分钟 |
-| 后台巡航 | ui-server 存活期间 | 默认 1 小时 |
-| 变更通知 | 巡航发现状态跃迁 | 事件即推 |
+| 场景     | 触发                                     | 频率        |
+| -------- | ---------------------------------------- | ----------- |
+| 聚焦刷新 | WebSocket 首连 / 页面重新可见 / 手动刷新 | 即时单次    |
+| 前台保持 | 页面可见定时器                           | 默认 5 分钟 |
+| 后台巡航 | ui-server 存活期间                       | 默认 1 小时 |
+| 变更通知 | 巡航发现状态跃迁                         | 事件即推    |
 
 - `applift ui` 默认 detach 常驻（再跑幂等只开浏览器；`applift ui --stop` 停止）；巡航基线落盘 `state-history.jsonl`，重启不断档。
 - 通知走 HostAdapter：webui 宿主 = 页面开着用 Web Notification，页面关着等下次打开以「未读变更」列表呈现；Tauri 壳 = native notification + 状态栏 popup，协议不变。
@@ -86,14 +87,25 @@ applift-ui：applift 的图形界面。解决三个痛点——多渠道审核�
 
 ## 8. 二期窗口（一期只留接口不实现）
 
-| 项 | 预留口子 |
-|---|---|
+| 项               | 预留口子                                                    |
+| ---------------- | ----------------------------------------------------------- |
 | release 完整链路 | NDJSON 协议按通用任务设计（无 beta 私有字段），向导骨架复用 |
-| 凭据管理 | doctor JSON 结构化缺失项；server 预留文件写接口位 |
-| Tauri 壳 | HostAdapter 全量接口 + 常驻服务/跃迁事件队列 |
-| 远程/多用户 | API 与宿主解耦，鉴权留中间件位 |
-| 构建接管 | 仅设计占位，无接口 |
+| 凭据管理         | doctor JSON 结构化缺失项；server 预留文件写接口位           |
+| Tauri 壳         | HostAdapter 全量接口 + 常驻服务/跃迁事件队列                |
+| 远程/多用户      | API 与宿主解耦，鉴权留中间件位                              |
+| 构建接管         | 仅设计占位，无接口                                          |
 
 ## 9. 界面术语与命名（用户语言，与原型同步定稿）
 
 界面一律用用户能懂的词，不用实现层黑话：主导航为 **总览 / 发版 / 通用设置**（另有账号与凭据、构建与产物、宿主形态标注二期/预留/演示）；渠道状态只出现 **审核中 / 已上架 / 已发布 / 被拒 / 待你处理 / 未接入**；数据新鲜度显示「3 分钟前更新」而非 fetchedAt。「待你处理」= 需要用户在商店后台操作后才能继续的状态。二期/预留页在导航中直接标注，不隐藏。
+
+## 10. 实现备注（2026-11-14 阶段二落地核对；正文定稿不改，接线以实现为准）
+
+1. **startUiServer 返回结构**：`{ port, close, httpServer }`——原生 `http.Server` 暴露给 WS 升级与扩展路由挂载；组合入口 `createServer()` 另返回 `{ port, close, aggregator, ws }`（§3 未细化到该层）。
+2. **WS 协议消息面**：三通道语义（§3）固化为具体消息——下行 `snapshot` / `feed` / `task` / `tasks` / `task.end`（`task` 系带 `taskId` 路由；`tasks` 为归档 ring buffer 最近 20 条，重连补发含运行中任务累积事件）；上行 `confirm`（`value` 恒 string，布尔→choice 映射归前端）与 `task.cancel`。确认等待桥层看门狗 10 分钟兜底（CLI 侧同款超时在 stdin 挂起场景会挂死，kill 收口归桥层）。
+3. **HostAdapter**：接口在 `apps/ui/src/host.ts` 与 `@applift/ui-server` 导出处双声明（前端不跨包 import，与协议类型同款约定）。`webuiHost` 一期全降级：`notify` 走 Notification API 授权尝试（granted 直发 / default 当次请求且只在立即授予才发 / denied 或不可用返回 false → 未读角标兜底）；`pickDirectory` 恒 null（添加项目手输路径，浏览器无安全目录选择）；`setBadge` no-op。
+4. **通知形态**：feed 跃迁事件到达即尝试系统通知（`notifyState` 开关，未读列表=既有 feedRead 水位角标为降级形态）；断连恢复不补发历史通知（服务端 feed 不回放，未读角标承接页面关闭期间的变更）。
+5. **断连反馈**（T7 审查 I-1，原型无此元素）：`UiClient.connectionState`（connected / reconnecting），断连时顶栏 pill + 标题下横幅（含 `applift ui --stop` 自救指引），恢复自动隐藏。
+6. **设置生效边界**：轮询间隔 / 通知开关存 localStorage 本地生效；服务端轮询档位按 WS 连接数驱动（有连接=前台档，无连接=后台档），设置的 REST 热接入未做（设置页文案已注明）。项目卡「重新检查」无对应路由，菜单项如实提示按档位自动刷新。
+7. **安全边界实现**：http 层固定监听 127.0.0.1；`/api/shutdown` 与 `/api/tasks/*` 校验 Host 头（仅 127.0.0.1/localhost，防浏览器页面跨站 POST / DNS rebinding）；beta 任务 args 白名单仅 `--delivery ota|native`。
+8. **端口与幂等**：默认端口固定 47600（CLI 探测健康 + 写端口文件需预知端口，`--port 0` 非法）；再跑幂等沿用现活端口，忽略 `--port` 差异；端口被其他进程占用且非本服务健康响应时启动失败不静默换端口。

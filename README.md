@@ -155,6 +155,21 @@ applift release harmony --delivery ota --rollout 20   # 测试通道最新热更
 
 平台枚举开放（含 windows/macos/linux），桌面商店（winget/Homebrew 等）与游戏商店均为纯插件扩展。
 
+## 图形控制台（applift ui）
+
+```bash
+applift ui                 # 启动：后台常驻服务 + 打开浏览器（默认 http://127.0.0.1:47600）
+applift ui                 # 再跑幂等：只在现活端口上开浏览器，不重复起服务
+applift ui --no-open       # 不自动开浏览器（CI / 无头）
+applift ui --port 48080    # 自定义端口
+applift ui --stop          # 停止服务（无运行实例时提示，不算失败）
+```
+
+- 能力（一期）：多项目渠道状态总览（轮询聚合 + 状态跃迁动态时间线 + 未读角标）、beta 发版向导（判定预览 → 分平台确认 → 执行 → 结果）、通用设置（轮询间隔 / 通知 / 外观）；断连时自动重连并显示横幅，恢复后增量同步。
+- 数据链路：UI 服务逐项目 spawn `applift status --json`（分级轮询：前台默认 5 分钟 / 后台默认 1 小时，下限护栏 1 分钟 / 15 分钟），状态跃迁经 WebSocket 即推；发版走 `beta --interactive-events` 子进程桥（确认在页内回写，人保留拍板权）。
+- 安全边界：服务仅监听 `127.0.0.1`（不监听局域网）；`/api/shutdown` 与发版任务路由校验 Host 头（仅认 127.0.0.1 / localhost，防其他网页跨站直发与 DNS rebinding）；无多用户鉴权——远程部署不在一期范围。
+- 通知：页面打开时尝试系统通知（浏览器 Notification 授权拒绝自动降级为总览未读角标）；添加项目为路径手输（浏览器无安全的目录选择能力）。
+
 ## AI / CI
 
 - `--json` 结构化输出（channels/status/history/listing/release 支持；stdout 纯净，进度走 stderr）；退出码 0=全成 1=有败
@@ -162,13 +177,13 @@ applift release harmony --delivery ota --rollout 20   # 测试通道最新热更
 
 ### 机读接口（applift-ui / Agent 消费）
 
-| 命令 | 用途 | stdout 形态 |
-| --- | --- | --- |
-| `applift validate <path> --json` | 目录是否为合法 applift 工程（添加项目即时校验） | `ProjectValidation` 单对象 |
-| `applift doctor --cwd <dir> --json` | 体检报告：框架/包名/凭据/渠道逐项核对 | `DoctorJsonReport` 单对象 |
-| `applift beta <platform> --dry-run --json` | 热更判定预览（只判定不发布，无需凭据） | `BetaDryRunReport` 单对象 |
-| `applift beta <platform> --interactive-events` | 发版向导全流程事件流（见下） | stdout=NDJSON 事件，stdin=确认回写 |
-| `applift status --stores a,b --json` | 各渠道审核状态矩阵 | `{fetchedAt, results[]}`（每项含 `platform`/`fetchedAt`） |
+| 命令                                           | 用途                                            | stdout 形态                                               |
+| ---------------------------------------------- | ----------------------------------------------- | --------------------------------------------------------- |
+| `applift validate <path> --json`               | 目录是否为合法 applift 工程（添加项目即时校验） | `ProjectValidation` 单对象                                |
+| `applift doctor --cwd <dir> --json`            | 体检报告：框架/包名/凭据/渠道逐项核对           | `DoctorJsonReport` 单对象                                 |
+| `applift beta <platform> --dry-run --json`     | 热更判定预览（只判定不发布，无需凭据）          | `BetaDryRunReport` 单对象                                 |
+| `applift beta <platform> --interactive-events` | 发版向导全流程事件流（见下）                    | stdout=NDJSON 事件，stdin=确认回写                        |
+| `applift status --stores a,b --json`           | 各渠道审核状态矩阵                              | `{fetchedAt, results[]}`（每项含 `platform`/`fetchedAt`） |
 
 `validate` 报告要点：`ok`/`configFound`/`framework`（声明或 null）/`suggestedFramework`/`bundleIds`/`platforms`/`appliftAvailable`（工程依赖是否可执行 applift）；config 缺失或解析失败产出 `ok:false` 报告而非中断。`doctor --json` 与人读路径同源同链，profile 缺失时降级为 `ok:false` 仍出完整报告（`stores[].missing` 清单照常送达，UI 据此引导补凭据）。
 
@@ -178,7 +193,7 @@ applift release harmony --delivery ota --rollout 20   # 测试通道最新热更
 
 stdout 每行一个 JSON 事件，stdin 每行一个 JSON 回写；首事件 `hello` 携带协议版本，末事件 `result` 收口（失败也是 result，`ok:false` + `error`）。确认等待上限 10 分钟，超时 CLI 主动取消。互斥守卫：与 `--json` 互斥；仅支持单平台路径；不支持 `--bump`（`beta.autoBump` 在事件流下跳过 bump 引导、直接原生管线）。
 
-````
+```
 → {"type":"hello","protocol":1,"cli":"0.13.0"}
 → {"type":"stage","stage":"judge"}
 → {"type":"judgement","platform":"harmony","recommendation":"native","confidence":"high","provider":"rn-update","evidence":[{"path":"android/app/src/main/MainActivity.kt","rule":"原生代码"}]}
@@ -188,7 +203,7 @@ stdout 每行一个 JSON 事件，stdin 每行一个 JSON 回写；首事件 `he
 → {"type":"progress","stage":"upload","channel":"pgyer","msg":"上传中"}
 → {"type":"log","level":"info","msg":"蒲公英发布成功"}
 → {"type":"result","ok":true,"summary":{"mode":"native","channel":"pgyer","versionName":"4.0.0"}}
-````
+```
 
 `result.summary.mode` 取值：`ota`（热更发布）/ `native`（原生发布）/ `preview`（`--dry-run` 判定预览）。事件流下投递决策恒为用户拍板（confirm 回写即 explicit），原生判定直接走发布管线（失败如「未找到构建产物」以 `result(ok:false)` 收口）；三态 bump 引导仅存在于非事件流模式（stderr + exit 1，不发事件）。
 
