@@ -111,6 +111,9 @@ describe("startUiServer", () => {
     expect(js.status).toBe(200);
     // MIME 按扩展名给出；nosniff 是叠加的安全头而非替换 content-type
     expect(js.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+    // 目录落 index.html：html MIME 必须映射（误删会变 application/octet-stream → 浏览器下载）
+    const html = await fetch(`http://127.0.0.1:${srv.port}/`);
+    expect(html.headers.get("content-type")).toBe("text/html; charset=utf-8");
     expect(js.headers.get("x-content-type-options")).toBe("nosniff");
     const miss = await fetch(`http://127.0.0.1:${srv.port}/nope.txt`);
     expect(miss.status).toBe(404);

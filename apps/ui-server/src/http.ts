@@ -41,6 +41,7 @@ export const SHELL_ASSET_ORIGINS: readonly string[] = [
 ];
 
 const MIME: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".mjs": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
