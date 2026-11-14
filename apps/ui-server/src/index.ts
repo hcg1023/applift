@@ -79,6 +79,12 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
     apiHandler: (req, res) => {
       if (req.method !== "POST" || !req.url?.startsWith("/api/shutdown"))
         return Promise.resolve(false);
+      // Host 校验：浏览器页面可对任意地址发 no-cors POST（DNS rebinding 同理），仅认本机 Host
+      const hostname = (req.headers.host ?? "").split(":")[0];
+      if (hostname !== "127.0.0.1" && hostname !== "localhost") {
+        sendJson(res, 403, { ok: false, error: "forbidden host" });
+        return Promise.resolve(true);
+      }
       sendJson(res, 200, { ok: true });
       void close();
       return Promise.resolve(true);

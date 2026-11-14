@@ -88,7 +88,10 @@ export async function stopUi(
     return;
   }
   try {
-    await fetchImpl(`http://127.0.0.1:${saved}/api/shutdown`, { method: "POST" });
+    await fetchImpl(`http://127.0.0.1:${saved}/api/shutdown`, {
+      method: "POST",
+      signal: AbortSignal.timeout(2000),
+    });
     log(`applift ui 已停止（端口 ${saved}）`);
   } finally {
     await rm(portFile, { force: true });
@@ -148,6 +151,16 @@ export async function startUi(
   );
 }
 
+/** --port 参数校验：非法值（非整数/越界）在 spawn 前拒绝——否则 server 回落随机端口成不可回收孤儿 */
+export function validatePortArg(n: number): number {
+  if (!Number.isInteger(n) || n < 1 || n > 65535) {
+    throw new Error(
+      `--port 非法：${String(n)}（需 1-65535 整数；0 不适用——CLI 需固定端口探测健康并写端口文件）`,
+    );
+  }
+  return n;
+}
+
 export function registerUiCommand(program: Command): void {
   program
     .command("ui")
@@ -160,9 +173,10 @@ export function registerUiCommand(program: Command): void {
         await stopUi({}, console.log);
         return;
       }
-      if (cmdOpts.port === 0) {
-        throw new Error("--port 0 不适用：CLI 需固定端口探测健康并写入 ~/.applift/ui.port");
-      }
-      await startUi({ port: cmdOpts.port, open: cmdOpts.open }, {}, console.log);
+      await startUi(
+        { port: validatePortArg(cmdOpts.port ?? DEFAULT_UI_PORT), open: cmdOpts.open },
+        {},
+        console.log,
+      );
     });
 }

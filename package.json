@@ -12,7 +12,7 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "dev": "pnpm -r --parallel run dev",
-    "smoke": "pnpm -r build && node packages/cli/dist/bin.mjs --help >/dev/null && node packages/cli/dist/bin.mjs channels --json >/dev/null && node packages/cli/dist/bin.mjs doctor --cwd /tmp >/dev/null 2>&1 && node packages/cli/dist/bin.mjs ui --no-open --port 47600 && curl -sf http://127.0.0.1:47600/api/health >/dev/null && node packages/cli/dist/bin.mjs ui --stop; echo smoke-ok",
+    "smoke": "pnpm -r build && node packages/cli/dist/bin.mjs --help >/dev/null && node packages/cli/dist/bin.mjs channels --json >/dev/null && node packages/cli/dist/bin.mjs doctor --cwd /tmp >/dev/null 2>&1; node packages/cli/dist/bin.mjs ui --no-open --port 47600 && curl -sf http://127.0.0.1:47600/api/health >/dev/null && node packages/cli/dist/bin.mjs ui --stop && echo smoke-ok",
     "changeset": "changeset",
     "pack-version": "changeset version",
     "release": "pnpm -r build && changeset publish && changeset tag",

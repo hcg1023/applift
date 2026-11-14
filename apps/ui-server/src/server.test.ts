@@ -2,6 +2,7 @@
  * createServer 组合层集成测：真 registry/aggregator/ws + 桩 runner。
  * 覆盖：REST(/api/health /api/projects) + 静态 + ws 同端口可用；POST /api/shutdown 一键关停。
  */
+import http from "node:http";
 import net from "node:net";
 import { afterAll, describe, expect, it } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -78,9 +79,48 @@ describe("createServer 组合层", () => {
     expect(server.aggregator).toBeDefined();
     ws.close();
 
-    // shutdown：200 响应后端口不可再达（全链路 close）
-    const shutdown = await fetch(`${base}/api/shutdown`, { method: "POST" });
-    expect(shutdown.status).toBe(200);
+    // F2：Host 校验——恶意页面 no-cors POST（外域 Host）403 拒绝且不关停
+    // （fetch 会按 spec 静默丢弃 Host 禁改头，故走 node:http 原生请求）
+    const evilStatus = await new Promise<number>((resolveStatus, rejectStatus) => {
+      const req = http.request(
+        {
+          host: "127.0.0.1",
+          port: server.port,
+          path: "/api/shutdown",
+          method: "POST",
+          headers: { Host: "evil.com" },
+        },
+        (res) => {
+          res.resume();
+          res.on("end", () => resolveStatus(res.statusCode ?? 0));
+        },
+      );
+      req.on("error", rejectStatus);
+      req.end();
+    });
+    expect(evilStatus).toBe(403);
+    const stillAlive = await fetch(`${base}/api/health`);
+    expect(stillAlive.status).toBe(200);
+
+    // shutdown：localhost Host 放行，200 响应后端口不可再达（全链路 close）
+    const shutdownStatus = await new Promise<number>((resolveStatus, rejectStatus) => {
+      const req = http.request(
+        {
+          host: "127.0.0.1",
+          port: server.port,
+          path: "/api/shutdown",
+          method: "POST",
+          headers: { Host: `localhost:${server.port}` },
+        },
+        (res) => {
+          res.resume();
+          res.on("end", () => resolveStatus(res.statusCode ?? 0));
+        },
+      );
+      req.on("error", rejectStatus);
+      req.end();
+    });
+    expect(shutdownStatus).toBe(200);
     // 真实时钟轮询（集成测例外：关停由服务端异步完成且经真实 TCP 体现，假 timer 驱动不了 socket 事件）
     const refused = async (): Promise<boolean> =>
       new Promise((r) => {
