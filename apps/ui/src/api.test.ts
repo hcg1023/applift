@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   UiClient,
   UiState,
@@ -288,6 +288,30 @@ describe("UiClient 任务 REST", () => {
     });
     await expect(client.start()).rejects.toThrow("server down");
     expect(connects).toBe(1); // 失败也建立了首次 WS 尝试（后续由重连定时器驱动）
+    client.stop();
+  });
+
+  it("I1 自愈：首载 REST 失败 → WS 连上且项目表为空 → 补拉恢复项目列表", async () => {
+    let push: ((raw: string) => void) | undefined;
+    let restDown = true;
+    const projects = [{ id: "p1", name: "qy-driver", path: "/x", addedAt: 1 }];
+    const client = new UiClient({
+      httpBase: "http://x",
+      fetchImpl: (async () =>
+        new Response(
+          JSON.stringify(restDown ? { ok: false, error: "server down" } : { projects }),
+          { status: restDown ? 500 : 200 },
+        )) as unknown as typeof fetch,
+      socketFactory: (_url, onMessage) => {
+        push = onMessage;
+        return { send: () => {}, close: () => {} };
+      },
+    });
+    await expect(client.start()).rejects.toThrow("server down");
+    expect(client.state.projects).toEqual([]);
+    restDown = false;
+    push?.(JSON.stringify({ t: "tasks", data: [] })); // WS 恢复（收到下行）
+    await vi.waitFor(() => expect(client.state.projects).toEqual(projects));
     client.stop();
   });
 });

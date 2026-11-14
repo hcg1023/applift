@@ -53,3 +53,6 @@ export function createWebuiHost(deps: NotifyDeps = {}): HostAdapter {
     async setBadge(): Promise<void> {},
   };
 }
+
+/** 一期默认宿主实例（全降级语义；Tauri 壳注入 native 实现时替换此出口） */
+export const webuiHost: HostAdapter = createWebuiHost();

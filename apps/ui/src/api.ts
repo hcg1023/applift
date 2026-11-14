@@ -388,7 +388,12 @@ export class UiClient {
       (raw) => {
         const m = parseDown(raw);
         if (m === null) return;
+        const was = this.connState;
         this.setConn("connected");
+        if (was !== "connected" && this.state.projects.length === 0) {
+          // I1 自愈：首载 REST 失败时项目表为空——WS 已通则补拉，防总览永久加载态
+          void this.refreshProjects().catch(() => {});
+        }
         this.state.apply(m);
         if (m.t === "task") for (const fn of this.taskListeners) fn(m.taskId, m.data);
         else if (m.t === "task.end") for (const fn of this.taskEndListeners) fn(m.taskId, m.code);
@@ -416,7 +421,7 @@ export class UiClient {
 
   async refreshProjects(): Promise<void> {
     const body = await this.json<{ projects: ProjectEntry[] }>("/api/projects");
-    this.state.projects = body.projects;
+    this.state.projects = body.projects ?? [];
     this.emit();
   }
 

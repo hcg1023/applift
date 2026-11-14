@@ -1,5 +1,5 @@
 import { UiClient, classify } from "./api.js";
-import { createWebuiHost } from "./host.js";
+import { webuiHost } from "./host.js";
 import { renderOverview, resetOverviewPageState, type PageCtx } from "./pages/overview.js";
 import { renderProject, resetProjectPageState } from "./pages/project.js";
 import { renderRelease, resetReleasePageState } from "./pages/release.js";
@@ -76,7 +76,7 @@ async function main(): Promise<void> {
     </div>`;
 
   const content = document.getElementById("content")!;
-  const host = createWebuiHost();
+  const host = webuiHost;
   const ctx: PageCtx = {
     client,
     host,

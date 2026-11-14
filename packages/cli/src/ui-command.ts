@@ -10,7 +10,6 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import type { Command } from "commander";
-import { fileURLToPath } from "node:url";
 
 /** 固定默认端口：CLI 需先知端口才能探测健康 + 写端口文件（port 0 由系统分配则 CLI 无从得知） */
 export const DEFAULT_UI_PORT = 47600;
@@ -26,7 +25,7 @@ export function defaultPortFile(): string {
   return join(appliftHome(), "ui.port");
 }
 
-/** ui-server 独立进程入口（@applift/ui-server devDependency；发布形态随 T9 定） */
+/** ui-server 独立进程入口（@applift/ui-server 为 runtime dependency，随 CLI 发布安装） */
 export function defaultServerEntry(): string {
   const require = createRequire(import.meta.url);
   return require.resolve("@applift/ui-server/main");

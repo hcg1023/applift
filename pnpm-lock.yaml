@@ -227,6 +227,9 @@ importers:
       '@applift/core':
         specifier: workspace:*
         version: link:../core
+      '@applift/ui-server':
+        specifier: workspace:*
+        version: link:../../apps/ui-server
       '@clack/prompts':
         specifier: ^1.8.1
         version: 1.8.1
@@ -237,9 +240,6 @@ importers:
         specifier: ^1.1.1
         version: 1.1.1
     devDependencies:
-      '@applift/ui-server':
-        specifier: workspace:*
-        version: link:../../apps/ui-server
       tsdown:
         specifier: ^0.23.1
         version: 0.23.1(tsx@4.23.15)(typescript@7.0.2)

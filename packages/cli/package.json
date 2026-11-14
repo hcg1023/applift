@@ -33,12 +33,12 @@
   },
   "dependencies": {
     "@applift/core": "workspace:*",
+    "@applift/ui-server": "workspace:*",
     "@clack/prompts": "^1.8.1",
     "commander": "^15.0.0",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {
-    "@applift/ui-server": "workspace:*",
     "tsdown": "^0.23.1",
     "tsx": "^4.23.15"
   }
