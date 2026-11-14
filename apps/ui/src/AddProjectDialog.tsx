@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { FsEntry, FsRoot } from "./api.js";
 import type { HostAdapter } from "./host.js";
@@ -6,15 +6,17 @@ import { isTauriEnv } from "./host.tauri.js";
 import { toast } from "./util.js";
 import { usePageCtx } from "./state.js";
 
-/** 面包屑：每段累计路径可点回跳 */
+/** 面包屑：每段累计路径可点回跳（macOS/Linux "/" 与 Windows "\\" 分隔符均支持） */
 function Crumbs({ dir, onPick }: { dir: string; onPick: (p: string) => void }) {
-  const parts = dir.split("/").filter((p) => p !== "");
+  const sep = dir.includes("\\") ? "\\" : "/";
+  const parts = dir.split(/[\\/]/).filter((p) => p !== "");
+  const cumulative = (i: number): string =>
+    sep === "/" ? "/" + parts.slice(0, i + 1).join("/") : parts.slice(0, i + 1).join("\\") + "\\";
   return (
     <div className="fs-crumb" id="fsCrumb">
-      <button onClick={() => onPick("/")}>/</button>
       {parts.map((p, i) => (
-        <button key={`${p}-${i}`} onClick={() => onPick("/" + parts.slice(0, i + 1).join("/"))}>
-          {p}
+        <button key={`${p}-${i}`} onClick={() => onPick(cumulative(i))}>
+          {i === 0 && sep === "\\" ? `${p}${sep}` : p}
         </button>
       ))}
     </div>
@@ -39,31 +41,39 @@ export default function AddProjectDialog({
   const [roots, setRoots] = useState<FsRoot[]>([]);
   const [dir, setDir] = useState("");
   const [entries, setEntries] = useState<FsEntry[] | null>(null);
+  const [rootsError, setRootsError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
   const [manualPath, setManualPath] = useState("");
   const [adding, setAdding] = useState(false);
+  const [rootsRetry, setRootsRetry] = useState(0);
+  const [listRetry, setListRetry] = useState(0);
+  const listSeq = useRef(0);
 
   useEffect(() => {
+    setRootsError(null);
     void client
       .fsRoots()
       .then((rs) => {
         setRoots(rs);
         if (rs[0] !== undefined) setDir(rs[0].path);
       })
-      .catch((err: unknown) =>
-        toast(`目录读取失败：${err instanceof Error ? err.message : String(err)}`),
-      );
-  }, [client]);
+      .catch((err: unknown) => setRootsError(err instanceof Error ? err.message : String(err)));
+  }, [client, rootsRetry]);
 
   useEffect(() => {
     if (dir === "") return;
     setEntries(null);
+    setListError(null);
+    const seq = ++listSeq.current;
     void client
       .fsList(dir)
-      .then(setEntries)
-      .catch((err: unknown) =>
-        toast(`目录读取失败：${err instanceof Error ? err.message : String(err)}`),
-      );
-  }, [client, dir]);
+      .then((es) => {
+        if (listSeq.current === seq) setEntries(es);
+      })
+      .catch((err: unknown) => {
+        if (listSeq.current === seq) setListError(err instanceof Error ? err.message : String(err));
+      });
+  }, [client, dir, listRetry]);
 
   const add = async (path: string): Promise<void> => {
     if (adding) return;
@@ -124,20 +134,36 @@ export default function AddProjectDialog({
               </div>
             ) : (
               <>
-                <div className="fs-roots" id="fsRoots">
-                  {roots.map((r) => (
-                    <button
-                      key={r.path}
-                      className={`seg${r.path === dir ? " active" : ""}`}
-                      onClick={() => setDir(r.path)}
-                    >
-                      {r.name}
+                {rootsError !== null ? (
+                  <div className="state-box" id="rootsError">
+                    <div>起始根读取失败：{rootsError}</div>
+                    <button className="btn btn-sec" onClick={() => setRootsRetry((n) => n + 1)}>
+                      重试
                     </button>
-                  ))}
-                </div>
+                  </div>
+                ) : (
+                  <div className="fs-roots" id="fsRoots">
+                    {roots.map((r) => (
+                      <button
+                        key={r.path}
+                        className={`seg${r.path === dir ? " active" : ""}`}
+                        onClick={() => setDir(r.path)}
+                      >
+                        {r.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <Crumbs dir={dir} onPick={setDir} />
                 <div className="fs-list" id="fsList">
-                  {entries === null ? (
+                  {listError !== null ? (
+                    <div className="state-box">
+                      <div>目录读取失败：{listError}</div>
+                      <button className="btn btn-sec" onClick={() => setListRetry((n) => n + 1)}>
+                        重试
+                      </button>
+                    </div>
+                  ) : entries === null ? (
                     <div className="state-box">
                       <div className="spin" />
                       读取目录…

@@ -227,3 +227,58 @@ describe("AddProjectDialog 双路径", () => {
     }
   });
 });
+
+describe("AddProjectDialog 加固（错误态/重试/竞态）", () => {
+  const HOST = { notify: vi.fn(), pickDirectory: vi.fn(async () => null), setBadge: vi.fn() };
+
+  it("fsList 失败 → 错误态 + 重试再拉", async () => {
+    const client = {
+      fsRoots: vi.fn(async () => [{ name: "主目录", path: "/tmp/home" }]),
+      fsList: vi.fn().mockRejectedValueOnce(new Error("boom")).mockResolvedValue([]),
+      addProject: vi.fn(),
+    } as unknown as UiClient;
+    render(withCtx(<AddProjectDialog host={HOST} onClose={vi.fn()} />, client));
+    await waitFor(() =>
+      expect(document.querySelector("#fsList")!.textContent).toContain("目录读取失败：boom"),
+    );
+    fireEvent.click(document.querySelector("#fsList .btn")!);
+    await waitFor(() => expect(client.fsList).toHaveBeenCalledTimes(2));
+  });
+
+  it("fsRoots 失败 → 起始根错误态 + 重试", async () => {
+    const client = {
+      fsRoots: vi.fn().mockRejectedValueOnce(new Error("root down")).mockResolvedValue([]),
+      fsList: vi.fn(),
+      addProject: vi.fn(),
+    } as unknown as UiClient;
+    render(withCtx(<AddProjectDialog host={HOST} onClose={vi.fn()} />, client));
+    await waitFor(() =>
+      expect(document.querySelector("#rootsError")!.textContent).toContain("root down"),
+    );
+    fireEvent.click(document.querySelector("#rootsError .btn")!);
+    await waitFor(() => expect(client.fsRoots).toHaveBeenCalledTimes(2));
+  });
+
+  it("目录快速切换竞态：迟到旧响应不覆盖新目录结果", async () => {
+    const home = Promise.withResolvers<Array<{ name: string; path: string; hasConfig: boolean }>>();
+    const subdir =
+      Promise.withResolvers<Array<{ name: string; path: string; hasConfig: boolean }>>();
+    const client = {
+      fsRoots: vi.fn(async () => [{ name: "主目录", path: "/tmp/home" }]),
+      // /tmp/home 两次请求复用同一（已 resolve 的）promise；子目录请求挂起
+      fsList: vi.fn((dir: string) => (dir === "/tmp/home" ? home.promise : subdir.promise)),
+      addProject: vi.fn(),
+    } as unknown as UiClient;
+    render(withCtx(<AddProjectDialog host={HOST} onClose={vi.fn()} />, client));
+    home.resolve([{ name: "plain", path: "/tmp/home/plain", hasConfig: false }]);
+    await screen.findByText("📁 plain");
+    fireEvent.click(screen.getByText("📁 plain")); // /tmp/home/plain（seq 2，挂起）
+    // 面包屑跳回 /tmp/home（seq 3，复用已解 promise 立即应用）
+    fireEvent.click(document.querySelectorAll("#fsCrumb button")[1]!);
+    await screen.findByText("📁 plain");
+    subdir.resolve([]); // seq 2 迟到——不得覆盖 seq 3 的结果
+    await new Promise((r) => setTimeout(r, 20));
+    expect(document.querySelector("#fsList")!.textContent).toContain("📁 plain");
+    expect(client.fsList).toHaveBeenCalledTimes(3);
+  });
+});

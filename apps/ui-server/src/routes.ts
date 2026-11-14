@@ -401,7 +401,7 @@ const FS_ROOT_CANDIDATES: ReadonlyArray<{ name: string; sub: string | null }> = 
   { name: "下载", sub: "Downloads" },
 ];
 
-/** 只读探测：不做 Host 校验（同 /api/projects GET、/api/applift/availability 语义） */
+/** Host 校验（同 /api/projects 写款）：浏览器页面可对任意地址发 GET（DNS rebinding/恶意页探测本机目录拓扑），仅认本机 Host */
 export function createFsRoutes(): ApiHandler {
   return async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -410,6 +410,10 @@ export function createFsRoutes(): ApiHandler {
     if (!isRoots && !isList) return false;
     if (req.method !== "GET") {
       sendJson(res, 405, { ok: false, error: "method not allowed" });
+      return true;
+    }
+    if (!isLocalHostHeader(req)) {
+      sendJson(res, 403, { ok: false, error: "forbidden host" });
       return true;
     }
 
@@ -447,14 +451,16 @@ export function createFsRoutes(): ApiHandler {
     const entries: FsEntry[] = [];
     for (const name of names.sort((a, b) => a.localeCompare(b))) {
       const path = join(dir, name);
-      const hasConfig = await fileExists(join(path, "applift.config.ts"));
       let isDir: boolean;
       try {
         isDir = (await stat(path)).isDirectory();
       } catch {
         continue; // 悬空符号链接等不可 stat 项跳过
       }
-      if (isDir) entries.push({ name, path, hasConfig });
+      if (!isDir) continue;
+      // applift 工程标记只在子目录内探测（非目录项已被跳过，省一次无谓 stat）
+      const hasConfig = await fileExists(join(path, "applift.config.ts"));
+      entries.push({ name, path, hasConfig });
     }
     sendJson(res, 200, { ok: true, dir, entries });
     return true;

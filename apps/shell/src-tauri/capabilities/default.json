@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "主窗口默认能力（应用自有 invoke 命令不在此列；此处放开核心事件/基础 API + dialog/notification 插件——HostAdapter Tauri 实现经 plugin:* invoke 直调）",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default", "notification:default"]
+  "permissions": ["core:default", "dialog:allow-open", "notification:default"]
 }

@@ -1,7 +1,9 @@
 /**
  * GET /api/fs/roots + /api/fs/list（服务端目录浏览器）：
- * 临时目录桩——一层子目录 + applift.config.ts 高亮标记；不存在/文件路径 → 400。
+ * 临时目录桩——一层子目录 + applift.config.ts 高亮标记；不存在/文件路径 → 400；
+ * 外域 Host（恶意页/DNS rebinding 探测本机目录拓扑）→ 403。
  */
+import http from "node:http";
 import { afterAll, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,6 +16,30 @@ const dirs: string[] = [];
 afterAll(async () => {
   await Promise.all(servers.map((s) => s.close().catch(() => {})));
   await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true })));
+});
+
+describe("Host 校验（fs/roots + fs/list）", () => {
+  it("外域 Host → 403（浏览器页面可对任意地址发 GET 探测本机目录）", async () => {
+    const dir = await tmpDir();
+    const server = await createServer({
+      port: 0,
+      registry: new ProjectRegistry(join(dir, "projects.json")),
+    });
+    servers.push(server);
+    for (const path of ["/api/fs/roots", `/api/fs/list?dir=${encodeURIComponent(dir)}`]) {
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      const req = http.request(
+        { host: "127.0.0.1", port: server.port, path, headers: { host: "evil.com" } },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        },
+      );
+      req.on("error", reject);
+      req.end();
+      expect(await promise).toBe(403);
+    }
+  });
 });
 
 async function tmpDir(): Promise<string> {
