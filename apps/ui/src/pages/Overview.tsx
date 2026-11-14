@@ -213,7 +213,12 @@ export default function OverviewPage() {
           const snap = client.state.snapshot(p.id);
           if (snap === undefined) {
             return (
-              <div key={p.id} className="ov-card" data-id={p.id}>
+              <div
+                key={p.id}
+                className="ov-card"
+                data-id={p.id}
+                onClick={(e) => onCardClick(e, p.id)}
+              >
                 <div className="ov-head">
                   <span className="proj-icon" style={{ background: iconStyle(p.name) }}>
                     {p.name.slice(0, 1)}

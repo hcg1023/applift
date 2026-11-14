@@ -90,7 +90,7 @@ describe("Project 筛选与被拒展开", () => {
     expect(screen.getByText("ch-0")).toBeTruthy(); // 筛选复位回「全部渠道」
   });
 
-  it("被拒行点击展开原因 + 复制按钮 toast", () => {
+  it("被拒行点击展开原因", () => {
     const client = clientWith(snap(["rejected"]));
     render(withCtx(<ProjectPage id="p1" />, client));
     fireEvent.click(screen.getByText("ch-0"));

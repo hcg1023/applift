@@ -504,6 +504,7 @@ export default function ReleasePage() {
         };
       });
     state.phase = 2;
+    force();
   };
 
   /** ---------- 步骤3 队列 ---------- */
