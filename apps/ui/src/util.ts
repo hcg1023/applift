@@ -49,11 +49,6 @@ export function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
-/** 模板字符串插值统一转义 */
-export function esc(s: string): string {
-  return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-}
-
 /** 时间线相对时间：刚刚 / N 分钟前 / N 小时前 / 昨天 HH:MM / M月D日 */
 export function relTime(ts: number, now = Date.now()): string {
   const diff = Math.max(0, now - ts);
