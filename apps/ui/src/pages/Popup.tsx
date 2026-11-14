@@ -26,7 +26,9 @@ export default function PopupPage() {
   };
 
   const projects = client.state.projects;
-  const loading = projects.length === 0;
+  /** 未连接且无数据 = 首载拉取中；已连接仍无项目 = 真空态（引导去主窗添加） */
+  const connected = client.connectionState === "connected";
+  const loading = projects.length === 0 && !connected;
 
   /** 头部副标题：异常优先（N 个渠道被拒），否则 N 个项目状态正常 */
   const totalErr = projects.reduce(
@@ -40,17 +42,20 @@ export default function PopupPage() {
         <div className="pp-title">
           applift
           <span className={`sub${totalErr > 0 ? " err" : ""}`}>
-            {totalErr > 0 ? `${totalErr} 个渠道被拒` : "状态正常"}
+            {totalErr > 0 ? `${totalErr} 个渠道被拒` : projects.length === 0 ? "还没有项目" : "状态正常"}
           </span>
         </div>
-        <span className={`pp-conn${client.connectionState === "connected" ? "" : " off"}`}>
-          {client.connectionState === "connected" ? "已连接" : "重连中…"}
-        </span>
+        <span className={`pp-conn${connected ? "" : " off"}`}>{connected ? "已连接" : "重连中…"}</span>
       </div>
       {loading ? (
         <div className="state-box pp-loading">
           <div className="spin" />
           正在获取项目与渠道状态…
+        </div>
+      ) : projects.length === 0 ? (
+        <div className="state-box pp-empty">
+          <div className="big">—</div>
+          <div>还没有项目。到主窗口「添加项目」后，这里会显示渠道概览。</div>
         </div>
       ) : (
         <div className="pp-rows" id="ppRows">

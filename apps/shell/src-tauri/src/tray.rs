@@ -119,7 +119,7 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
         .icon_as_template(true)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open_main" => show_main(app),
-            "refresh_now" => request_refresh(app),
+            "refresh_now" => request_refresh(app), // 自带后台线程（HTTP/锁不占主线程）
             "quit" => app.exit(0),
             _ => {}
         })
@@ -131,7 +131,10 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
                 ..
             } = event
             {
-                toggle_popup(tray.app_handle(), Some(rect));
+                // 后台线程处理：current_port 抢 supervisor 锁（启动期 ensure_started 持锁可达秒级），
+                // 窗口创建/定位亦非必须主线程同步
+                let app = tray.app_handle().clone();
+                std::thread::spawn(move || toggle_popup(&app, Some(rect)));
             }
         })
         .build(app)
@@ -146,19 +149,23 @@ pub(crate) fn show_main(app: &AppHandle) {
     }
 }
 
-/// 菜单「立即刷新」：POST /api/refresh 触发服务端立即轮询（未就绪时记日志）
+/// 菜单「立即刷新」：POST /api/refresh 触发服务端立即轮询（未就绪时记日志）。
+/// 后台线程执行：HTTP 超时 1.5s + supervisor 锁等待，不占主线程。
 pub(crate) fn request_refresh(app: &AppHandle) {
-    let state = app.state::<ShellState>();
-    let ok = state
-        .supervisor
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|s| s.request_refresh())
-        .unwrap_or(false);
-    if !ok {
-        eprintln!("[shell] 立即刷新未送达：ui-server 未就绪");
-    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let state = app.state::<ShellState>();
+        let ok = state
+            .supervisor
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|s| s.request_refresh())
+            .unwrap_or(false);
+        if !ok {
+            eprintln!("[shell] 立即刷新未送达：ui-server 未就绪");
+        }
+    });
 }
 
 fn current_port(app: &AppHandle) -> Option<u16> {
@@ -172,6 +179,12 @@ fn toggle_popup(app: &AppHandle, rect: Option<tauri::Rect>) {
     if let Some(win) = app.get_webview_window(POPUP_LABEL) {
         if win.is_visible().unwrap_or(false) {
             let _ = win.hide();
+            return;
+        }
+        // 服务未就绪（无端口）：陈旧 popup 不再展示，与首建分支同款落回主窗
+        if current_port(app).is_none() {
+            let _ = win.hide();
+            show_main(app);
             return;
         }
         position_and_show(app, &win, rect);
@@ -203,11 +216,19 @@ fn toggle_popup(app: &AppHandle, rect: Option<tauri::Rect>) {
     }
 }
 
+/// popup URL 判定（精确 kv）：fragment 为 /popup 且 query 含 `serverPort=<port>` 精确键值
+pub(crate) fn popup_url_fresh(fragment: Option<&str>, query: Option<&str>, port: u16) -> bool {
+    let want = format!("serverPort={port}");
+    fragment == Some("/popup") && query.is_some_and(|q| q.split('&').any(|kv| kv == want))
+}
+
 /// popup 定位 + URL 校正（端口变化后重导航）+ 显示聚焦
 fn position_and_show(app: &AppHandle, win: &WebviewWindow, rect: Option<tauri::Rect>) {
     if let Some(port) = current_port(app) {
-        let fresh = matches!(win.url(), Ok(u) if u.fragment() == Some("/popup")
-            && u.query().is_some_and(|q| q.contains(&format!("serverPort={port}"))));
+        let fresh = match win.url() {
+            Ok(u) => popup_url_fresh(u.fragment(), u.query(), port),
+            Err(_) => false,
+        };
         if !fresh {
             super::navigate(win, &format!("index.html?serverPort={port}#/popup"));
         }
@@ -321,5 +342,16 @@ mod tests {
             size: Size::Physical(PhysicalSize::new(44, 44)),
         };
         assert_eq!(rect_to_physical(mixed, 2.0), (20.0, 40.0, 44.0, 44.0));
+    }
+
+    #[test]
+    fn popup_url_fresh_requires_exact_kv() {
+        assert!(popup_url_fresh(Some("/popup"), Some("serverPort=47600"), 47600));
+        assert!(popup_url_fresh(Some("/popup"), Some("a=1&serverPort=5&b=2"), 5), "多键精确命中");
+        assert!(!popup_url_fresh(Some("/popup"), Some("serverPort=12"), 123), "前缀误判拒绝");
+        assert!(!popup_url_fresh(Some("/popup"), Some("xserverPort=123"), 123), "伪键拒绝");
+        assert!(!popup_url_fresh(Some("/overview"), Some("serverPort=123"), 123), "fragment 不符");
+        assert!(!popup_url_fresh(None, Some("serverPort=123"), 123));
+        assert!(!popup_url_fresh(Some("/popup"), None, 123));
     }
 }

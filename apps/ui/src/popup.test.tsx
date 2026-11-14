@@ -12,6 +12,7 @@ import type { TauriInvoke } from "./host.tauri.js";
 import { PageCtxProvider, type PageCtx } from "./state.js";
 import PopupPage from "./pages/Popup.js";
 import type { HostAdapter } from "./host.js";
+import { markFeedReadIfVisible } from "./util.js";
 
 /** jsdom window 无 __TAURI_INTERNALS__ 的 DOM 类型：命名常量承载壳注入面（非内联断言） */
 function setTauriInternals(invoke?: TauriInvoke): void {
@@ -124,9 +125,40 @@ describe("Popup 项目概览行", () => {
     el.remove();
   });
 
-  it("空项目表：加载态", () => {
+  it("未连接且无项目：加载态（转圈，不误报空态）", () => {
     render(withCtx(clientWith([])));
     expect(screen.getByText("正在获取项目与渠道状态…")).toBeTruthy();
+  });
+
+  it("已连接仍无项目：空态引导（M5）", async () => {
+    // 假传输：建立即投递一条合法下行消息 → connectionState=connected（REST 失败不影响判定）
+    const client = new UiClient({
+      state: new UiState(),
+      fetchImpl: (() => Promise.reject(new Error("offline"))) as unknown as typeof fetch,
+      socketFactory: (_url, onMessage) => {
+        onMessage('{"t":"tasks","data":[]}');
+        return { send: () => {}, close: () => {} };
+      },
+    });
+    await client.start().catch(() => {});
+    render(withCtx(client));
+    expect(client.connectionState).toBe("connected");
+    expect(screen.getByText(/还没有项目。到主窗口/)).toBeTruthy();
+    expect(screen.queryByText("正在获取项目与渠道状态…")).toBeNull();
+    client.stop();
+  });
+});
+
+describe("在屏已读判定（C1：隐藏存活窗口不清未读）", () => {
+  it("hidden 不写 feedRead；visible 且 overview/popup 才写", () => {
+    localStorage.setItem("applift-ui:feedRead", "100");
+    expect(markFeedReadIfVisible("overview", "hidden")).toBe(false);
+    expect(markFeedReadIfVisible("popup", "hidden")).toBe(false);
+    expect(localStorage.getItem("applift-ui:feedRead")).toBe("100"); // 未写入
+    expect(markFeedReadIfVisible("project", "visible")).toBe(false);
+    expect(markFeedReadIfVisible("overview", "visible")).toBe(true);
+    expect(markFeedReadIfVisible("popup", "visible")).toBe(true);
+    expect(localStorage.getItem("applift-ui:feedRead")).not.toBe("100"); // 已写入
   });
 });
 

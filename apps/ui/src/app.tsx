@@ -7,7 +7,14 @@ import PopupPage from "./pages/Popup.js";
 import ProjectPage from "./pages/Project.js";
 import ReleasePage from "./pages/Release.js";
 import SettingsPage from "./pages/Settings.js";
-import { applyTheme, loadSettings, saveSettings, toast, type Settings } from "./util.js";
+import {
+  applyTheme,
+  loadSettings,
+  markFeedReadIfVisible,
+  saveSettings,
+  toast,
+  type Settings,
+} from "./util.js";
 
 const TITLES: Record<string, string> = {
   overview: "总览",
@@ -153,13 +160,12 @@ export default function App() {
     };
   }, [client]);
 
-  /** 未读角标：渲染期按 feedRead 计算；总览/popup 在屏即标记已读（读到即清） */
+  /** 未读角标：渲染期按 feedRead 计算；总览/popup 在屏且窗口可见才标记已读（读到即清；
+   *  隐藏存活窗口不清——角标与跃迁通知依赖未读存活，见 markFeedReadIfVisible） */
   const lastRead = Number(localStorage.getItem("applift-ui:feedRead") ?? "0");
   const unread = client.state.feed.filter((e) => e.ts > lastRead).length;
   useEffect(() => {
-    if (route.page === "overview" || route.page === "popup") {
-      localStorage.setItem("applift-ui:feedRead", String(Date.now()));
-    }
+    markFeedReadIfVisible(route.page, document.visibilityState);
   });
 
   /** 托盘/宿主角标接线：未读数变化即同步（webui 宿主为 no-op） */

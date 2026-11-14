@@ -77,6 +77,15 @@ export function freshness(iso: string, now = Date.now()): { text: string; warn: 
   return { text, warn: now - ts > 30 * 60_000 };
 }
 
+/** 在屏已读（未读角标/通知链路数据源）：overview/popup 且窗口可见才写 feedRead。
+ *  隐藏存活窗口（关到托盘/后台 webview）不清未读——否则托盘角标自清、跃迁通知永不触发。
+ *  返回是否写入（测试面）。 */
+export function markFeedReadIfVisible(page: string, visibility: string, now = Date.now()): boolean {
+  if ((page !== "overview" && page !== "popup") || visibility !== "visible") return false;
+  localStorage.setItem("applift-ui:feedRead", String(now));
+  return true;
+}
+
 /** 项目图标底色：按名称稳定散列到一组渐变（总览卡与托盘 popup 共用） */
 const GRADIENTS = [
   "linear-gradient(135deg, #5e5ce6, #007aff)",
