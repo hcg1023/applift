@@ -4,12 +4,13 @@
 
 mod bridge;
 mod supervisor;
+mod tray;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::{AppHandle, Manager, WebviewWindow};
-use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_autostart::MacosLauncher;
 use supervisor::{
     detect_node, default_port_file, LocalHttp, NodeServerLauncher, ServerLog, ServerState,
     Supervisor, SupervisorConfig, SysNodeProbe,
@@ -165,12 +166,28 @@ pub fn run() {
             bridge::retry_server_start,
             bridge::set_autostart,
             bridge::set_badge,
+            bridge::open_main,
         ])
+        .on_window_event(|window, event| {
+            // 常驻语义（spec §4）：主窗关=隐藏到托盘（菜单退出才真退）；
+            // popup 失焦即隐藏（点外部关闭的 menubar 面板语义）
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            } else if window.label() == tray::POPUP_LABEL {
+                if let tauri::WindowEvent::Focused(false) = event {
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(move |app| {
             // 登录自启：默认开（首次运行未写设置文件时启用），用户在设置页关闭后持久尊重。
             // debug 构建（tauri dev 高频起停）跳过 reconcile，不反复写 LaunchAgent（M3）
             #[cfg(not(debug_assertions))]
             {
+                use tauri_plugin_autostart::ManagerExt;
                 let settings = bridge::autostart_settings_path(app.handle())?;
                 let enabled = bridge::read_autostart_setting(&settings).unwrap_or(true);
                 let launch = app.autolaunch();
@@ -184,6 +201,10 @@ pub fn run() {
                     _ => {}
                 }
             }
+            // 托盘（spec §4）：图标+角标+左键 popup+右键菜单；失败不阻断壳主链路
+            if let Err(e) = tray::build_tray(app.handle()) {
+                eprintln!("[shell] 托盘初始化失败：{e}");
+            }
             let handle = app.handle().clone();
             std::thread::spawn(move || shell_main(handle));
             // SIGINT/SIGTERM/SIGHUP（dev 终端 Ctrl-C、pkill、nohup 挂断）默认不触发
@@ -195,10 +216,17 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(move |app, event| {
-            if matches!(event, tauri::RunEvent::Exit) {
-                if let Some(sup) = app.state::<ShellState>().supervisor.lock().unwrap().as_mut() {
-                    sup.shutdown();
+            match event {
+                tauri::RunEvent::Exit => {
+                    if let Some(sup) = app.state::<ShellState>().supervisor.lock().unwrap().as_mut() {
+                        sup.shutdown();
+                    }
                 }
+                // macOS：点 Dock 图标/通知激活应用 → 唤起主窗（通知点击的最接近可达语义：
+                // notification 插件不暴露点击回调，激活即 Reopen）
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen { .. } => tray::show_main(app),
+                _ => {}
             }
         });
 }

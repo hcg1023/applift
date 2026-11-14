@@ -2,23 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import AddProjectDialog from "../AddProjectDialog.js";
 import { classify } from "../api.js";
-import { freshness, relTime, toast } from "../util.js";
+import { freshness, iconStyle, relTime, toast } from "../util.js";
 import { usePageCtx, useUiTick } from "../state.js";
-
-/** 项目图标底色：按名称稳定散列到一组渐变 */
-const GRADIENTS = [
-  "linear-gradient(135deg, #5e5ce6, #007aff)",
-  "linear-gradient(135deg, #ff9500, #ff375f)",
-  "linear-gradient(135deg, #30d158, #00c7be)",
-  "linear-gradient(135deg, #bf5af2, #ff375f)",
-  "linear-gradient(135deg, #0a84ff, #5e5ce6)",
-];
-
-function iconStyle(name: string): string {
-  let h = 0;
-  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 997;
-  return GRADIENTS[h % GRADIENTS.length]!;
-}
 
 function latestText(
   feed: Array<{ projectId: string; channel: string; from: string; to: string; ts: number }>,

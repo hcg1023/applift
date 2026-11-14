@@ -81,46 +81,36 @@ describe("createServer 组合层", () => {
 
     // F2：Host 校验——恶意页面 no-cors POST（外域 Host）403 拒绝且不关停
     // （fetch 会按 spec 静默丢弃 Host 禁改头，故走 node:http 原生请求）
-    const evilStatus = await new Promise<number>((resolveStatus, rejectStatus) => {
+    const rawPost = (path: string, host: string): Promise<number> => {
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
       const req = http.request(
         {
           host: "127.0.0.1",
           port: server.port,
-          path: "/api/shutdown",
+          path,
           method: "POST",
-          headers: { Host: "evil.com" },
+          headers: { Host: host },
         },
         (res) => {
           res.resume();
-          res.on("end", () => resolveStatus(res.statusCode ?? 0));
+          res.on("end", () => resolve(res.statusCode ?? 0));
         },
       );
-      req.on("error", rejectStatus);
+      req.on("error", reject);
       req.end();
-    });
-    expect(evilStatus).toBe(403);
+      return promise;
+    };
+    expect(await rawPost("/api/shutdown", "evil.com")).toBe(403);
     const stillAlive = await fetch(`${base}/api/health`);
     expect(stillAlive.status).toBe(200);
 
+    // POST /api/refresh（托盘「立即刷新」）：本机 Host 200 + 外域 403，且不触发关停
+    expect(await rawPost("/api/refresh", "evil.com")).toBe(403);
+    expect(await rawPost("/api/refresh", `localhost:${server.port}`)).toBe(200);
+    expect((await fetch(`${base}/api/health`)).status).toBe(200);
+
     // shutdown：localhost Host 放行，200 响应后端口不可再达（全链路 close）
-    const shutdownStatus = await new Promise<number>((resolveStatus, rejectStatus) => {
-      const req = http.request(
-        {
-          host: "127.0.0.1",
-          port: server.port,
-          path: "/api/shutdown",
-          method: "POST",
-          headers: { Host: `localhost:${server.port}` },
-        },
-        (res) => {
-          res.resume();
-          res.on("end", () => resolveStatus(res.statusCode ?? 0));
-        },
-      );
-      req.on("error", rejectStatus);
-      req.end();
-    });
-    expect(shutdownStatus).toBe(200);
+    expect(await rawPost("/api/shutdown", `localhost:${server.port}`)).toBe(200);
     // 真实时钟轮询（集成测例外：关停由服务端异步完成且经真实 TCP 体现，假 timer 驱动不了 socket 事件）
     const refused = async (): Promise<boolean> =>
       new Promise((r) => {

@@ -3,7 +3,7 @@
  * 壳命令 / 插件命令，不引 @tauri-apps/api（壳 webview 加载 ui-server 静态产物，零 npm 依赖分叉）。
  * - notify：tauri-plugin-notification（先查授权，未授请求，拒绝/失败 → false 走未读列表降级）
  * - pickDirectory：tauri-plugin-dialog 原生目录选择（真对话框语义仅 Tauri；webui 走服务端目录浏览器 UI 层）
- * - setBadge：壳命令 set_badge（托盘角标 T4 接线；本轮为壳侧占位实现）
+ * - setBadge：壳命令 set_badge（托盘未读数字——macOS/Linux 标题形态；Windows 占位 no-op）
  */
 import type { HostAdapter } from "./host.js";
 

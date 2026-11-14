@@ -3,6 +3,7 @@ import { UiClient, classify } from "./api.js";
 import { pickHost } from "./host.js";
 import { PageCtxProvider, type PageCtx } from "./state.js";
 import OverviewPage from "./pages/Overview.js";
+import PopupPage from "./pages/Popup.js";
 import ProjectPage from "./pages/Project.js";
 import ReleasePage from "./pages/Release.js";
 import SettingsPage from "./pages/Settings.js";
@@ -16,7 +17,7 @@ const TITLES: Record<string, string> = {
 };
 
 interface Route {
-  page: "overview" | "project" | "release" | "settings";
+  page: "overview" | "project" | "release" | "settings" | "popup";
   id?: string;
 }
 
@@ -31,6 +32,7 @@ function parseRoute(hash: string): Route {
     }
     if (id !== "") return { page: "project", id };
   }
+  if (hash === "#/popup") return { page: "popup" };
   if (hash === "#/release") return { page: "release" };
   if (hash === "#/settings") return { page: "settings" };
   return { page: "overview" };
@@ -103,9 +105,12 @@ export default function App() {
     return () => mq.removeEventListener("change", onChange);
   }, []);
 
-  /** 未读通知走 HostAdapter：系统通知失败降级未读列表（notifyState 开关控制） */
+  /** 未读通知走 HostAdapter：系统通知失败降级未读列表（notifyState 开关控制）。
+   *  抑制（不重复打扰）：popup 窗口不通知（用户正在看）；本窗可见时 UI 已实时呈现也不通知。 */
   const notifyUnread = (): void => {
     if (!loadSettings().notifyState) return;
+    if (route.page === "popup") return;
+    if (document.visibilityState === "visible") return;
     const lastRead = Number(localStorage.getItem("applift-ui:feedRead") ?? "0");
     const unread = client.state.feed.filter((e) => e.ts > lastRead);
     const ev = unread[0];
@@ -148,12 +153,19 @@ export default function App() {
     };
   }, [client]);
 
-  /** 未读角标：渲染期按 feedRead 计算；总览在屏即标记已读 */
+  /** 未读角标：渲染期按 feedRead 计算；总览/popup 在屏即标记已读（读到即清） */
   const lastRead = Number(localStorage.getItem("applift-ui:feedRead") ?? "0");
   const unread = client.state.feed.filter((e) => e.ts > lastRead).length;
   useEffect(() => {
-    if (route.page === "overview") localStorage.setItem("applift-ui:feedRead", String(Date.now()));
+    if (route.page === "overview" || route.page === "popup") {
+      localStorage.setItem("applift-ui:feedRead", String(Date.now()));
+    }
   });
+
+  /** 托盘/宿主角标接线：未读数变化即同步（webui 宿主为 no-op） */
+  useEffect(() => {
+    void host.setBadge(unread);
+  }, [host, unread]);
 
   /** 断连横幅/顶栏 pill：首连成功前不显示 */
   const off = everConnected.current && client.connectionState !== "connected";
@@ -162,6 +174,15 @@ export default function App() {
     location.hash = h;
   };
   const ctx: PageCtx = { client, navigate, host };
+
+  // 托盘 popup 窗口：无 titlebar/侧栏的极简布局（壳 360×480 无边框窗口）
+  if (route.page === "popup") {
+    return (
+      <PageCtxProvider value={ctx}>
+        <PopupPage />
+      </PageCtxProvider>
+    );
+  }
 
   return (
     <PageCtxProvider value={ctx}>

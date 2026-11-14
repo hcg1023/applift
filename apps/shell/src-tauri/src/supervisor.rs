@@ -61,6 +61,8 @@ pub fn detect_node(probe: &dyn NodeProbe) -> Option<String> {
 pub trait UiHttp: Send {
     fn health_ok(&self, port: u16) -> bool;
     fn post_shutdown(&self, port: u16) -> bool;
+    /// POST /api/refresh：触发服务端立即轮询（托盘菜单「立即刷新」）
+    fn post_refresh(&self, port: u16) -> bool;
 }
 
 /// 极简阻塞 HTTP/1.1 客户端：仅面向 127.0.0.1 的 ui-server，无重定向/分块需求
@@ -97,6 +99,12 @@ impl UiHttp for LocalHttp {
 
     fn post_shutdown(&self, port: u16) -> bool {
         raw_request("POST", port, "/api/shutdown", self.timeout)
+            .map(|r| r.starts_with("HTTP/1.1 200"))
+            .unwrap_or(false)
+    }
+
+    fn post_refresh(&self, port: u16) -> bool {
+        raw_request("POST", port, "/api/refresh", self.timeout)
             .map(|r| r.starts_with("HTTP/1.1 200"))
             .unwrap_or(false)
     }
@@ -310,6 +318,14 @@ impl Supervisor {
         match &self.state {
             ServerState::Ready { port, .. } => Some(*port),
             _ => None,
+        }
+    }
+
+    /// 托盘「立即刷新」：Ready 态 POST /api/refresh（触发服务端立即轮询一轮）
+    pub fn request_refresh(&self) -> bool {
+        match &self.state {
+            ServerState::Ready { port, .. } => self.http.post_refresh(*port),
+            _ => false,
         }
     }
 
@@ -573,6 +589,11 @@ mod tests {
             s.events.push(format!("shutdown:{port}"));
             s.healthy.remove(&port);
             true
+        }
+        fn post_refresh(&self, port: u16) -> bool {
+            let mut s = self.0.lock().unwrap();
+            s.events.push(format!("refresh:{port}"));
+            s.healthy.contains(&port)
         }
     }
 
@@ -905,5 +926,44 @@ mod tests {
     fn pick_free_port_returns_valid() {
         let port = pick_free_port().unwrap();
         assert!(port > 0);
+    }
+
+    #[test]
+    fn request_refresh_only_when_ready() {
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        {
+            let mut s = shared.lock().unwrap();
+            s.auto_healthy_from = 1; // spawn 即就绪
+        }
+        let pf = temp_port_file("refresh");
+        let mut sup = make(shared.clone(), pf);
+        assert!(!sup.request_refresh(), "Starting 态不投递");
+        let port = sup.ensure_started().expect("就绪");
+        assert!(sup.request_refresh(), "Ready 态投递");
+        let events = shared.lock().unwrap().events.clone();
+        assert!(events.contains(&format!("refresh:{port}")));
+    }
+
+    /// LocalHttp::post_refresh 真实回环：POST /api/refresh 命中 200 → true；
+    /// 无人监听端口 → false（连接拒绝路径）
+    #[test]
+    fn local_http_post_refresh_roundtrip() {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 1024];
+            let n = sock.read(&mut buf).unwrap();
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}").unwrap();
+            req
+        });
+        assert!(LocalHttp::default().post_refresh(port));
+        let req = handle.join().unwrap();
+        assert!(req.starts_with("POST /api/refresh HTTP/1.1"), "请求行：{req}");
+
+        let dead = pick_free_port().unwrap(); // 短暂绑定后已释放：连接必拒
+        assert!(!LocalHttp::default().post_refresh(dead));
     }
 }

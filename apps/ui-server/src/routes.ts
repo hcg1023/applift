@@ -93,8 +93,8 @@ export interface ProjectRoutesOptions {
   validate?: (path: string) => Promise<ValidateReport>;
 }
 
-/** Host 校验（与 /api/shutdown 同款）：浏览器页面可对任意地址发 no-cors 写请求（DNS rebinding 同理），仅认本机 Host */
-function isLocalHostHeader(req: IncomingMessage): boolean {
+/** Host 校验（/api/shutdown、/api/refresh 等本机写入口同款）：浏览器页面可对任意地址发 no-cors 写请求（DNS rebinding 同理），仅认本机 Host */
+export function isLocalHostHeader(req: IncomingMessage): boolean {
   const hostname = (req.headers.host ?? "").split(":")[0];
   return hostname === "127.0.0.1" || hostname === "localhost";
 }

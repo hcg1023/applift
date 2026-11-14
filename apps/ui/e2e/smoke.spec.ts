@@ -54,6 +54,28 @@ test("总览 → 详情 → 被拒展开 → 设置 clamp", async ({ page }) => 
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 });
 
+test("托盘 popup 路由（webui 直开形态）：概览行渲染 + 跳转降级", async ({ page }) => {
+  await page.goto("/#/popup");
+
+  // 无壳布局：无侧栏/titlebar，popup 根节点 + 项目行（stub 数据）
+  await expect(page.locator(".pp-root[data-page='popup']")).toBeVisible();
+  await expect(page.locator(".sidebar")).toBeHidden();
+  const row = page.locator(".pp-row[data-id]").first();
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  await expect(row.locator(".pp-name")).toHaveText("stub-project");
+  await expect(row.locator(".pp-counts span").first()).toBeVisible();
+  await expect(row.locator(".pp-latest")).toContainText(/→|暂无动态/);
+
+  // webui 无 __TAURI_INTERNALS__：行点击降级为同窗 hash 跳转到项目详情
+  await row.click();
+  await expect(page).toHaveURL(/#\/project\//);
+
+  // 回到 popup：快捷入口导航（发版 → 主窗 #/release 的降级形态）
+  await page.goto("/#/popup");
+  await page.locator(".pp-act[data-act='release']").click();
+  await expect(page).toHaveURL(/#\/release$/);
+});
+
 test("添加项目：服务端目录浏览器点选可用（webui 路径）", async ({ page }) => {
   await page.goto("/#/overview");
   await page.locator("#addProject").click();

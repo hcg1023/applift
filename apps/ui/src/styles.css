@@ -1337,3 +1337,155 @@ kbd {
   font-size: 12px;
   padding: 4px 12px;
 }
+
+/* ===== 托盘 popup（#/popup 路由：360×480 无边框窗口内的极简布局）===== */
+.pp-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--surface);
+}
+.pp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px 10px;
+  border-bottom: 0.5px solid var(--separator);
+  background: var(--surface-2);
+}
+.pp-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.pp-title .sub {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--label-3);
+  margin-top: 1px;
+}
+.pp-title .sub.err {
+  color: var(--red);
+}
+.pp-conn {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--green);
+}
+.pp-conn.off {
+  color: var(--label-3);
+}
+.pp-rows {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+}
+.pp-loading {
+  flex: 1;
+}
+.pp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  font: inherit;
+  color: var(--label);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.pp-row + .pp-row {
+  margin-top: 1px;
+}
+.pp-row:hover {
+  background: var(--blue-sys);
+}
+.pp-row:hover .pp-name,
+.pp-row:hover .pp-latest,
+.pp-row:hover .pp-state,
+.pp-row:hover .pp-counts span {
+  color: #fff;
+}
+.pp-row:hover .proj-icon {
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.9);
+}
+/* 异常高亮：被拒渠道存在 → 行左侧红色强调条（悬浮仍走蓝底） */
+.pp-row.anomaly {
+  box-shadow: inset 2.5px 0 0 var(--red);
+}
+.pp-row.unavailable {
+  opacity: 0.6;
+}
+.pp-row .proj-icon {
+  width: 28px;
+  height: 28px;
+  font-size: 13px;
+  flex: none;
+}
+.pp-main {
+  flex: 1;
+  min-width: 0;
+}
+.pp-name {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pp-latest {
+  display: block;
+  font-size: 11px;
+  color: var(--label-3);
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pp-counts {
+  display: flex;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  flex: none;
+}
+.pp-counts .c-ok,
+.pp-counts .c-wait,
+.pp-counts .c-err {
+  font-size: 12px;
+}
+.pp-state {
+  font-size: 11.5px;
+  color: var(--label-3);
+  flex: none;
+}
+.pp-state.off {
+  color: var(--label-3);
+}
+.pp-actions {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border-top: 0.5px solid var(--separator);
+}
+.pp-act {
+  flex: 1;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--blue-sys);
+  padding: 7px 8px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.pp-act:hover {
+  background: var(--fill-2);
+}

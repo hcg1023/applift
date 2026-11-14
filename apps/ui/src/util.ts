@@ -77,6 +77,21 @@ export function freshness(iso: string, now = Date.now()): { text: string; warn: 
   return { text, warn: now - ts > 30 * 60_000 };
 }
 
+/** 项目图标底色：按名称稳定散列到一组渐变（总览卡与托盘 popup 共用） */
+const GRADIENTS = [
+  "linear-gradient(135deg, #5e5ce6, #007aff)",
+  "linear-gradient(135deg, #ff9500, #ff375f)",
+  "linear-gradient(135deg, #30d158, #00c7be)",
+  "linear-gradient(135deg, #bf5af2, #ff375f)",
+  "linear-gradient(135deg, #0a84ff, #5e5ce6)",
+];
+
+export function iconStyle(name: string): string {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 997;
+  return GRADIENTS[h % GRADIENTS.length]!;
+}
+
 let toastTimer: number | undefined;
 
 export function toast(msg: string): void {

@@ -116,28 +116,61 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
     Ok(enabled)
 }
 
-// -- 托盘角标（T4 接线；T3 为占位实现——前端 HostAdapter.setBadge 已可用）----------
+// -- 托盘角标 + popup 唤起（T4）------------------------------------------------
 
-/// 角标值落地（纯函数面：T4 接托盘/DocK 角标；当前占位恒 Ok）
-fn apply_badge(n: u32) -> Result<(), String> {
-    // T4：写托盘图标 overlay / macOS dock badge。占位接受任意值（含 0=清角标）。
-    let _ = n;
-    Ok(())
+/// 未读数落地：托盘标题数字（macOS NSStatusButton 标题 / Linux 面板文本；
+/// tray-icon 0.25 无 set_overlay，Windows 标题为 no-op——角标为 macOS/Linux 增强）
+fn apply_badge(app: &AppHandle, n: u32) -> Result<(), String> {
+    let Some(tray) = app.tray_by_id(crate::tray::TRAY_ID) else {
+        return Ok(()); // 托盘缺席（异常构建）静默：未读数仍有前端侧栏兜底
+    };
+    tray.set_title(crate::tray::badge_title(n).as_deref()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn set_badge(n: u32) -> Result<(), String> {
-    apply_badge(n)
+pub fn set_badge(app: AppHandle, n: u32) -> Result<(), String> {
+    apply_badge(&app, n)
+}
+
+/// 路由白名单化：仅接受本应用 "#/..." hash、长度受控、无控制字符（防任意串注入导航）
+pub(crate) fn sanitize_route(route: Option<&str>) -> Option<String> {
+    let r = route?;
+    if r.len() > 512 || !r.starts_with("#/") || r.chars().any(|c| c.is_control()) {
+        return None;
+    }
+    Some(r.to_string())
+}
+
+/// popup 行点击/快捷入口：唤起主窗并导航到对应路由（route None 仅唤起）
+#[tauri::command]
+pub fn open_main(app: AppHandle, route: Option<String>) -> Result<(), String> {
+    crate::tray::show_main(&app);
+    let Some(route) = sanitize_route(route.as_deref()) else {
+        return Ok(());
+    };
+    // 端口缺席（服务未就绪/失败态）：主窗仍在 startup 态展示，跳过导航
+    if let (Some(win), Some(port)) = (
+        app.get_webview_window("main"),
+        with_supervisor(&app, |s| s.port()).flatten(),
+    ) {
+        crate::navigate(&win, &format!("index.html?serverPort={port}{route}"));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
-mod badge_tests {
-    use super::apply_badge;
+mod tests {
+    use super::sanitize_route;
 
     #[test]
-    fn badge_placeholder_accepts_any_value() {
-        assert!(apply_badge(0).is_ok()); // 0 = 清角标
-        assert!(apply_badge(1).is_ok());
-        assert!(apply_badge(u32::MAX).is_ok());
+    fn sanitize_route_accepts_app_hashes_only() {
+        assert_eq!(sanitize_route(None), None);
+        assert_eq!(sanitize_route(Some("#/project/p1")).as_deref(), Some("#/project/p1"));
+        assert_eq!(sanitize_route(Some("#/release")).as_deref(), Some("#/release"));
+        assert_eq!(sanitize_route(Some("")).as_deref(), None, "空串拒绝");
+        assert_eq!(sanitize_route(Some("https://evil.example")).as_deref(), None, "外域拒绝");
+        assert_eq!(sanitize_route(Some("/local/path")).as_deref(), None, "非 hash 拒绝");
+        assert_eq!(sanitize_route(Some("#/x\u{0000}y")).as_deref(), None, "控制字符拒绝");
+        assert_eq!(sanitize_route(Some(&format!("#/{}", "a".repeat(600)))).as_deref(), None, "超长拒绝");
     }
 }

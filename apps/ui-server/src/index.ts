@@ -15,6 +15,7 @@ import {
   createFsRoutes,
   createSettingsRoutes,
   createTaskRoutes,
+  isLocalHostHeader,
   sendJson,
 } from "./routes.js";
 import { createAvailabilityProber } from "./applift-install.js";
@@ -171,19 +172,29 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
             onDone: () => availabilityProber.invalidate(),
           }),
       }),
-      // POST /api/shutdown：仅本机可达（http 层固定监听 127.0.0.1）；`applift ui --stop` 消费
-      (req, res) => {
-        if (req.method !== "POST" || !req.url?.startsWith("/api/shutdown"))
-          return Promise.resolve(false);
-        // Host 校验：浏览器页面可对任意地址发 no-cors POST（DNS rebinding 同理），仅认本机 Host
-        const hostname = (req.headers.host ?? "").split(":")[0];
-        if (hostname !== "127.0.0.1" && hostname !== "localhost") {
+      // POST /api/refresh：托盘「立即刷新」——触发一轮立即轮询（并发安全：refreshNow 合并同轮）；
+      // Host 校验同 shutdown（本机写入口）
+      async (req, res) => {
+        if (req.method !== "POST" || !req.url?.startsWith("/api/refresh")) return false;
+        if (!isLocalHostHeader(req)) {
           sendJson(res, 403, { ok: false, error: "forbidden host" });
-          return Promise.resolve(true);
+          return true;
+        }
+        sendJson(res, 200, { ok: true });
+        // 即刻响应；快照/动态经 WS 广播到达（不等待轮询完成）
+        void aggregator.refreshNow().catch(() => {});
+        return true;
+      },
+      // POST /api/shutdown：仅本机可达（http 层固定监听 127.0.0.1）；`applift ui --stop` 消费
+      async (req, res) => {
+        if (req.method !== "POST" || !req.url?.startsWith("/api/shutdown")) return false;
+        if (!isLocalHostHeader(req)) {
+          sendJson(res, 403, { ok: false, error: "forbidden host" });
+          return true;
         }
         sendJson(res, 200, { ok: true });
         void close();
-        return Promise.resolve(true);
+        return true;
       },
     ],
   });
