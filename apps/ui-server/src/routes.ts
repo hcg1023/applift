@@ -19,10 +19,9 @@ export function sendJson(res: ServerResponse, status: number, body: unknown): vo
 }
 
 /** 本仓库 CLI 入口：apps/ui-server/src → ../../../packages/cli/dist/bin.mjs（构建后 dist 同深度） */
-function cliBinPath(): string {
+export function cliBinPath(): string {
   return fileURLToPath(new URL("../../../packages/cli/dist/bin.mjs", import.meta.url));
 }
-
 const VALIDATE_TIMEOUT_MS = 60_000; // validate 为只读探测（findUp/config 解析），60s 远超正常耗时
 
 export async function validateProject(path: string): Promise<ValidateReport> {

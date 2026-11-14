@@ -2184,6 +2184,8 @@ import { REQUIRED_KEYS_BY_CHANNEL, CHANNEL_HINTS, KNOWN_CREDENTIAL_KEYS } from "
 registerLifecycleCommands(program, { setup: setupChannels, registry });
 import { registerValidateCommand } from "./validate.js";
 registerValidateCommand(program, { setup: setupChannels, registry });
+import { registerUiCommand } from "./ui-command.js";
+registerUiCommand(program);
 
 program
   .command("channels")

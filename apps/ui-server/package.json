@@ -7,11 +7,17 @@
   "type": "module",
   "main": "dist/index.mjs",
   "exports": {
-    "import": "./dist/index.mjs",
-    "types": "./dist/index.d.mts"
+    ".": {
+      "import": "./dist/index.mjs",
+      "types": "./dist/index.d.mts"
+    },
+    "./main": {
+      "import": "./dist/main.mjs",
+      "default": "./dist/main.mjs"
+    }
   },
   "scripts": {
-    "build": "tsdown src/index.ts --format esm --dts --clean",
+    "build": "tsdown src/index.ts src/main.ts --format esm --dts --clean",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

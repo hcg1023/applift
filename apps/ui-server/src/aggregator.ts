@@ -137,6 +137,14 @@ export class StatusAggregator {
     if (this.timerId === undefined || tierChanged) this.restartTimer();
   }
 
+  /** 停止轮询定时器（优雅关闭链路调用；基线已落盘，重启可恢复） */
+  stop(): void {
+    if (this.timerId !== undefined) {
+      this.timers.clearInterval(this.timerId);
+      this.timerId = undefined;
+    }
+  }
+
   setIntervals(foregroundMs: number, backgroundMs: number): void {
     // NaN/Infinity 会被 Math.max 原样放过（NaN 间隔 → setInterval 0ms 背靠背打 API），非有限值回落默认档
     this.fgMs = Number.isFinite(foregroundMs) ? clamp(foregroundMs, FG_MIN_MS) : FG_DEFAULT_MS;

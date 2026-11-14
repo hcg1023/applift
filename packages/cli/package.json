@@ -38,6 +38,7 @@
     "picocolors": "^1.1.1"
   },
   "devDependencies": {
+    "@applift/ui-server": "workspace:*",
     "tsdown": "^0.23.1",
     "tsx": "^4.23.15"
   }
