@@ -1,0 +1,182 @@
+//! applift 桌面壳：薄 Tauri 2 壳（窗口 + ui-server supervisor + 单例 + 自启）。
+//! 主窗口加载内嵌 asset（与 webui 同一份 ui 构建产物），API 由壳经
+//! `index.html?serverPort=<n>` 注入端口，前端 fetch/WS 显式指向 127.0.0.1。
+
+mod bridge;
+mod supervisor;
+
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use supervisor::{
+    detect_node, default_port_file, LocalHttp, NodeServerLauncher, ServerLog, ServerState,
+    Supervisor, SupervisorConfig, SysNodeProbe,
+};
+
+/// 壳侧共享状态：supervisor 单线程持有（monitor 线程），退出时由主事件循环取走清理
+struct ShellState {
+    supervisor: Arc<Mutex<Option<Supervisor>>>,
+}
+
+/// 解析 ui-server 入口（dist/main.mjs）：env 覆盖 > 相对 cwd 候选（dev 与打包后 cwd 不同）
+fn resolve_server_entry() -> String {
+    if let Some(p) = std::env::var_os("APPLIFT_UI_SERVER_ENTRY") {
+        return p.to_string_lossy().into_owned();
+    }
+    const CANDIDATES: [&str; 3] = [
+        "apps/ui-server/dist/main.mjs",     // cwd = 仓库根（打包后 resources 布局同构）
+        "../../ui-server/dist/main.mjs",    // cwd = apps/shell/src-tauri（cargo tauri dev）
+        "../ui-server/dist/main.mjs",       // cwd = apps/shell
+    ];
+    for c in CANDIDATES {
+        if std::path::Path::new(c).exists() {
+            return c.to_string();
+        }
+    }
+    CANDIDATES[1].to_string()
+}
+
+/// 导航到 frontendDist 内的相对路径（保留 asset origin，跨 Windows/macOS 两种协议）
+fn navigate(win: &WebviewWindow, path: &str) {
+    if let Ok(cur) = win.url() {
+        if let Ok(target) = cur.join(path) {
+            let _ = win.navigate(target);
+        }
+    }
+}
+
+
+/// 壳主链路（后台线程）：node 自检 → supervisor 启动/复用 → 导航主窗口 → 运行期守护
+fn shell_main(app: AppHandle) {
+    if detect_node(&SysNodeProbe).is_none() {
+        if let Some(win) = app.get_webview_window("main") {
+            navigate(&win, "node-required.html");
+        }
+        return;
+    }
+    let cfg = SupervisorConfig {
+        port_file: default_port_file(),
+        ..Default::default()
+    };
+    let log = Arc::new(ServerLog::default());
+    let mut sup = Supervisor::new(
+        Box::new(LocalHttp::default()),
+        Box::new(NodeServerLauncher {
+            node_bin: "node".into(),
+            server_entry: resolve_server_entry(),
+            log: log.clone(),
+        }),
+        cfg,
+    );
+    let state = app.state::<ShellState>();
+    let nav = |port: u16| {
+        if let Some(win) = app.get_webview_window("main") {
+            navigate(&win, &format!("index.html?serverPort={port}"));
+        }
+    };
+    match sup.ensure_started() {
+        Ok(port) => nav(port),
+        Err(reason) => {
+            for line in log.tail() {
+                eprintln!("[shell] server: {line}");
+            }
+            eprintln!("[shell] ui-server 启动失败：{reason}");
+            if let Some(win) = app.get_webview_window("main") {
+                navigate(
+                    &win,
+                    &format!("startup.html?reason={}", urlencoding_min(&reason)),
+                );
+            }
+        }
+    }
+    *state.supervisor.lock().unwrap() = Some(sup);
+    // 运行期守护：health 失联 → 同端口重启（≤1 次）；端口变化则重导航
+    loop {
+        std::thread::sleep(Duration::from_secs(2));
+        let mut guard = state.supervisor.lock().unwrap();
+        let Some(sup) = guard.as_mut() else { break };
+        match sup.state() {
+            ServerState::Failed { .. } => break,
+            ServerState::Ready { .. } => {
+                if let Some(new_port) = sup.check_and_restart() {
+                    nav(new_port);
+                }
+            }
+            ServerState::Starting => {}
+        }
+    }
+}
+
+/// 极简百分号编码（仅失败 reason 展示用）
+fn urlencoding_min(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let supervisor: Arc<Mutex<Option<Supervisor>>> = Arc::new(Mutex::new(None));
+
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // 二次启动：唤起既有主窗口
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.show();
+                let _ = win.unminimize();
+                let _ = win.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec![]),
+        ))
+        .manage(ShellState { supervisor })
+        .invoke_handler(tauri::generate_handler![
+            bridge::get_server_port,
+            bridge::server_status,
+            bridge::get_autostart,
+            bridge::set_autostart
+        ])
+        .setup(move |app| {
+            // 登录自启：默认开（首次运行未写设置文件时启用），用户在设置页关闭后持久尊重
+            let settings = bridge::autostart_settings_path(app.handle())?;
+            let enabled = bridge::read_autostart_setting(&settings).unwrap_or(true);
+            let launch = app.autolaunch();
+            match launch.is_enabled() {
+                Ok(true) if !enabled => {
+                    let _ = launch.disable();
+                }
+                Ok(false) if enabled => {
+                    let _ = launch.enable();
+                }
+                _ => {}
+            }
+            let handle = app.handle().clone();
+            std::thread::spawn(move || shell_main(handle));
+            // SIGINT/SIGTERM（dev 终端 Ctrl-C、pkill）默认不触发 RunEvent::Exit——
+            // 转 app.exit(0) 走统一退出清理（带走自己拉起的 ui-server）
+            let sig_handle = app.handle().clone();
+            ctrlc::set_handler(move || sig_handle.exit(0)).ok();
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(move |app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                if let Some(sup) = app.state::<ShellState>().supervisor.lock().unwrap().as_mut() {
+                    sup.shutdown();
+                }
+            }
+        });
+}

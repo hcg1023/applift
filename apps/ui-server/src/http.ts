@@ -85,6 +85,19 @@ async function handle(
   apiHandlers: ApiHandler[],
   healthInfo?: () => Record<string, unknown>,
 ): Promise<void> {
+  // CORS：Tauri 壳以 asset 协议（tauri://localhost 等）加载同一份前端，REST 需跨源
+  // 访问 127.0.0.1——仅 /api/* 放行（静态资源不经此处），预检直接 204 收口。
+  // 写操作另有 Host=本机 校验兜底，来源放宽不放大攻击面。
+  if (req.url?.split("?")[0]?.startsWith("/api/")) {
+    res.setHeader("access-control-allow-origin", "*");
+    res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.setHeader("access-control-allow-headers", "content-type");
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+  }
   if (req.method === "GET" && (req.url === "/api/health" || req.url === "/api/health/")) {
     sendJson(res, 200, { ok: true, version: VERSION, ...(healthInfo?.() ?? {}) });
     return;

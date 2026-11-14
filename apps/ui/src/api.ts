@@ -268,6 +268,16 @@ export class UiState {
   }
 }
 
+/**
+ * Tauri 壳注入的服务端口：壳加载内嵌 asset（非 ui-server 同源），就绪后带
+ * `?serverPort=<n>` 导航回 index；浏览器直访 ui-server 时无此参数=同源不变。
+ */
+export function shellServerPort(search: string): number | null {
+  const raw = new URLSearchParams(search).get("serverPort");
+  const n = raw === null ? NaN : Number(raw);
+  return Number.isInteger(n) && n > 0 && n <= 65535 ? n : null;
+}
+
 export interface Transport {
   send(raw: string): void;
   close(): void;
@@ -321,8 +331,18 @@ export class UiClient {
 
   constructor(opts: UiClientOptions = {}) {
     const loc = typeof location === "object" ? location : undefined;
-    this.httpBase = opts.httpBase ?? loc?.origin ?? "http://127.0.0.1:47600";
-    this.wsUrl = opts.wsUrl ?? (loc ? `ws://${loc.host}/ws` : "ws://127.0.0.1:47600/ws");
+    // Tauri 壳：asset 非同源，端口由壳经 ?serverPort 注入（fetch/WS 显式绝对地址）
+    const port = shellServerPort(loc?.search ?? "");
+    this.httpBase =
+      opts.httpBase ??
+      (port !== null ? `http://127.0.0.1:${port}` : (loc?.origin ?? "http://127.0.0.1:47600"));
+    this.wsUrl =
+      opts.wsUrl ??
+      (port !== null
+        ? `ws://127.0.0.1:${port}/ws`
+        : loc
+          ? `ws://${loc.host}/ws`
+          : "ws://127.0.0.1:47600/ws");
     // 直接传 fetch 会脱离 window 上下文（Illegal invocation）
     this.fetchImpl = opts.fetchImpl ?? fetch.bind(globalThis);
     this.socketFactory = opts.socketFactory ?? browserSocket;

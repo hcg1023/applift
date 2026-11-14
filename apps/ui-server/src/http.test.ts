@@ -41,6 +41,23 @@ describe("startUiServer", () => {
     await srv.close();
   });
 
+  it("CORS：/api/* 放行跨源（Tauri 壳 asset 域），静态资源不带；预检 204", async () => {
+    const dir = await mkdtempStatic("<html>x</html>");
+    const srv = await startUiServer({ staticDir: dir, port: 0 });
+    const base = `http://127.0.0.1:${srv.port}`;
+    const health = await fetch(`${base}/api/health`);
+    expect(health.headers.get("access-control-allow-origin")).toBe("*");
+    const preflight = await fetch(`${base}/api/projects`, {
+      method: "OPTIONS",
+      headers: { "access-control-request-method": "POST" },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-methods")).toContain("POST");
+    const html = await fetch(`${base}/`);
+    expect(html.headers.get("access-control-allow-origin")).toBeNull();
+    await srv.close();
+  });
+
   it("静态文件按扩展名给 MIME；未知路径 404", async () => {
     const dir = await mkdtempStatic("<html>i</html>", { "app.js": "console.log(1)" });
     const srv = await startUiServer({ staticDir: dir, port: 0 });

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
 import {
   UiClient,
@@ -6,6 +7,7 @@ import {
   encodeCancel,
   encodeConfirm,
   parseDown,
+  shellServerPort,
   type ProjectSnapshot,
 } from "./api.js";
 
@@ -73,6 +75,44 @@ describe("上行编码", () => {
       JSON.stringify({ t: "confirm", taskId: "t1", id: "q1", value: "yes" }),
     );
     expect(encodeCancel("t1")).toBe(JSON.stringify({ t: "task.cancel", taskId: "t1" }));
+  });
+});
+
+describe("shellServerPort（Tauri 壳注入）", () => {
+  it("解析合法端口；拒绝缺参/越界/非整数", () => {
+    expect(shellServerPort("?serverPort=47600")).toBe(47600);
+    expect(shellServerPort("?serverPort=65535")).toBe(65535);
+    expect(shellServerPort("")).toBeNull();
+    expect(shellServerPort("?other=1")).toBeNull();
+    expect(shellServerPort("?serverPort=0")).toBeNull();
+    expect(shellServerPort("?serverPort=65536")).toBeNull();
+    expect(shellServerPort("?serverPort=abc")).toBeNull();
+  });
+
+  it("?serverPort 存在时 httpBase/wsUrl 指向 127.0.0.1 绝对地址", async () => {
+    const log: Array<{ url: string; method: string; body?: string }> = [];
+    const urls: string[] = [];
+    const prev = window.location.search;
+    window.history.pushState({}, "", "/?serverPort=47001");
+    try {
+      const fetchImpl = (async (input: string | URL | Request) => {
+        log.push({ url: String(input), method: "GET" });
+        return new Response(JSON.stringify({ ok: true, projects: [] }), { status: 200 });
+      }) as unknown as typeof fetch;
+      const client = new UiClient({
+        fetchImpl,
+        socketFactory: (url) => {
+          urls.push(url);
+          return { send: () => {}, close: () => {} };
+        },
+      });
+      await client.start();
+      expect(log[0]?.url).toBe("http://127.0.0.1:47001/api/projects");
+      expect(urls[0]).toBe("ws://127.0.0.1:47001/ws");
+      client.stop();
+    } finally {
+      window.history.pushState({}, "", prev || "/");
+    }
   });
 });
 
