@@ -73,6 +73,8 @@ interface ExecState {
   logs: Array<{ level: string; msg: string }>;
   confirm: ConfirmRequiredEvent | null;
   confirmAnswered: boolean;
+  /** 用户实际点击的 choice value（已确认态回显用它，而非 recommended） */
+  confirmValue: string | undefined;
   result: { ok: boolean; summary: Record<string, unknown>; error?: string } | null;
 }
 
@@ -155,6 +157,11 @@ function ensureTaskTap(client: UiClient): void {
 
 function detachTaskTap(): void {
   detachTap?.();
+  // 挂起的 runQueue 等待者收口（否则离开向导后 promise 永悬）
+  for (const [id, resolve] of taskWaiters) {
+    taskWaiters.delete(id);
+    resolve({ ok: false, summary: {}, error: "已离开向导" });
+  }
 }
 
 /** 任务终态 waiters（runQueue 挂起处 → task.end 收口） */
@@ -203,6 +210,7 @@ function applyTaskEvent(exec: ExecState, ev: TaskEvent): void {
           ),
         };
         exec.confirmAnswered = false;
+        exec.confirmValue = undefined;
       }
       break;
     case "progress":
@@ -424,7 +432,7 @@ function confirmHtml(exec: ExecState): string {
   const c = exec.confirm;
   if (c === null) return "";
   if (exec.confirmAnswered) {
-    const chosen = c.choices.find((ch) => ch.recommended) ?? c.choices[0];
+    const chosen = c.choices.find((ch) => ch.value === exec.confirmValue) ?? c.choices[0];
     return `
       <div class="confirm-card answered" id="confirmCard">
         <div class="confirm-q">${esc(c.question)} <span style="color:var(--green);font-weight:600">已确认</span></div>
@@ -605,6 +613,8 @@ function bindStep1(el: HTMLElement, ctx: PageCtx): void {
       : [...state.form.platforms, plat];
     saveForm(state.form);
     state.previews = new Map(); // 平台集变了，旧预览作废
+    state.previewing = false; // 在途预览轮次作废（runPreview 按 token 自检）
+    previewGen += 1;
     rerenderAll(ctx);
   });
 
@@ -620,36 +630,44 @@ function bindStep1(el: HTMLElement, ctx: PageCtx): void {
 
 async function runPreview(ctx: PageCtx): Promise<void> {
   if (state.previewing || state.form.projectId === "") return;
+  const gen = ++previewGen;
   state.previewing = true;
   state.previews = new Map();
   rerenderAll(ctx);
   for (const plat of state.form.platforms) {
     try {
       const report = await ctx.client.dryRun(state.form.projectId, plat);
+      if (gen !== previewGen) return; // 平台集已变更：本轮结果丢弃
       state.previews.set(plat, { report });
     } catch (err) {
+      if (gen !== previewGen) return;
       state.previews.set(plat, { error: err instanceof Error ? err.message : String(err) });
     }
-    if (!state.previewing) return; // 平台集被改动作废预览
     rerenderAll(ctx);
   }
+  if (gen !== previewGen) return;
   state.previewing = false;
   rerenderAll(ctx);
 }
 
+/** 预览轮次令牌：平台集变更即作废在途结果 */
+let previewGen = 0;
+
 function toStep2(): void {
-  state.cards = state.form.platforms.map((plat) => {
-    const report = state.previews.get(plat)?.report;
-    return {
-      platform: plat,
-      skipChoice:
-        report === undefined || report.provider === null || report.recommendation === null,
-      recommendation: report?.recommendation ?? null,
-      confidence: report?.confidence ?? null,
-      evidence: report?.evidence ?? [],
-      chosen: null,
-    };
-  });
+  // 预览失败的平台不产卡不执行（错误行留在步骤1，用户可重试或取消选择）
+  state.cards = state.form.platforms
+    .filter((plat) => state.previews.get(plat)?.report !== undefined)
+    .map((plat) => {
+      const report = state.previews.get(plat)!.report!;
+      return {
+        platform: plat,
+        skipChoice: report.provider === null || report.recommendation === null,
+        recommendation: report.recommendation,
+        confidence: report.confidence,
+        evidence: report.evidence,
+        chosen: null,
+      };
+    });
   state.phase = 2;
 }
 
@@ -677,7 +695,7 @@ function bindStep2(el: HTMLElement, ctx: PageCtx): void {
   });
   el.querySelector("#goExec")?.addEventListener("click", () => {
     state.phase = 3;
-    state.queue = [...state.form.platforms];
+    state.queue = state.cards.map((c) => c.platform);
     state.results = new Map();
     state.cancelled = false;
     state.exec = null;
@@ -706,6 +724,7 @@ async function runQueue(ctx: PageCtx): Promise<void> {
       logs: [],
       confirm: null,
       confirmAnswered: false,
+      confirmValue: undefined,
       result: null,
     };
     rerenderAll(ctx);
@@ -721,15 +740,20 @@ async function runQueue(ctx: PageCtx): Promise<void> {
         continue;
       }
       state.exec.taskId = taskId;
+      if (state.cancelled) {
+        // REST 往返期间用户已点取消（当时 taskId 未回走了本地收口）：补杀真实任务
+        ctx.client.cancel(taskId);
+      }
       outcome = await waitTaskEnd(taskId);
     } catch (err) {
       outcome = { ok: false, summary: {}, error: err instanceof Error ? err.message : String(err) };
     }
+    if (state.phase !== 3) return; // 离开向导（等待者已被 detach 收口）——不再写结果
     state.results.set(platform, outcome);
     state.queue = state.queue.slice(1);
     state.exec = null;
-    if (outcome.ok && state.queue.length > 0)
-      toast(`${platLabel(platform)} 已发版，开始下一个平台`);
+    if (!outcome.ok) break; // 失败即停：剩余平台不发起（结果页可重试）
+    if (state.queue.length > 0) toast(`${platLabel(platform)} 已发版，开始下一个平台`);
     rerenderAll(ctx);
   }
   if (state.phase === 3) {
@@ -769,6 +793,7 @@ function bindStep3(el: HTMLElement, ctx: PageCtx): void {
     const value = (btn as HTMLElement).dataset.confirm ?? "";
     ctx.client.confirm(exec.taskId, exec.confirm.id, value);
     exec.confirmAnswered = true;
+    exec.confirmValue = value;
     rerenderAll(ctx);
   });
 }
@@ -807,5 +832,8 @@ function rerenderAll(ctx?: PageCtx): void {
   if (!onReleasePage()) return;
   const content = document.getElementById("content");
   if (content === null) return;
-  content.replaceChildren(renderRelease(active));
+  const next = renderRelease(active);
+  // 同标记不替换（与 main.ts render 同款守卫）：任务事件高频重渲不 detach DOM
+  const current = content.firstElementChild;
+  if (current === null || current.outerHTML !== next.outerHTML) content.replaceChildren(next);
 }

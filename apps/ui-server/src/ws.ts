@@ -20,6 +20,8 @@ export interface ArchivedTask {
 
 /** ring buffer 容量 */
 const ARCHIVE_MAX = 20;
+/** 确认看门狗默认：10 分钟（与 CLI EventChannel confirmTimeoutMs 同款语义） */
+const DEFAULT_CONFIRM_TIMEOUT_MS = 10 * 60_000;
 /** WS 挂载路径：独立于静态路由，升级请求按 path 过滤，不劫持其他升级 */
 const WS_PATH = "/ws";
 
@@ -64,7 +66,10 @@ export class WsChannel {
   private readonly clients = new Set<WebSocket>();
   /** 最近一次各项目快照：新连接立即补发，无需等下一轮轮询 */
   private readonly lastSnapshots = new Map<string, ProjectSnapshot>();
-  private readonly activeTasks = new Map<string, { task: ActiveTask; handle: RunningTask }>();
+  private readonly activeTasks = new Map<
+    string,
+    { task: ActiveTask; handle: RunningTask; clearConfirmTimer: () => void }
+  >();
   private archive: ArchivedTask[] = [];
 
   constructor(deps: {
@@ -109,20 +114,43 @@ export class WsChannel {
    * 启动 beta 发版任务：cwd = 前端选中项目目录（registry 解析；T8 落定，不再用服务进程 cwd）。
    * spawnStream("beta", platform, ...opts.args)，NDJSON 行广播全部连接；
    * result / 退出后归档（ring buffer 最近 20 条）。
+   * confirm_required 起看门狗（默认 10min，注入可缩短）：超时无回写 → 广播 warn log + kill——
+   * CLI 侧同款超时会因 stdin 监听不关而挂死，桥层兜底是正确分层；任一 confirm 上行或进程退出即清。
    */
   startBetaTask(
     projectId: string,
     platform: string,
-    opts: { args?: string[]; cwd: string },
+    opts: { args?: string[]; cwd: string; confirmTimeoutMs?: number },
   ): string {
     const taskId = randomUUID();
     const runner = this.runnerFactory(opts.cwd);
+    const timeoutMs = opts.confirmTimeoutMs ?? DEFAULT_CONFIRM_TIMEOUT_MS;
     const task: ActiveTask = { taskId, projectId, platform, events: [], startedAt: Date.now() };
+    let confirmTimer: NodeJS.Timeout | undefined;
+    const clearConfirmTimer = (): void => {
+      if (confirmTimer !== undefined) {
+        clearTimeout(confirmTimer);
+        confirmTimer = undefined;
+      }
+    };
     const handle = runner.spawnStream(["beta", platform, ...(opts.args ?? [])], {
       onLine: (e) => {
         const ev = e as TaskEvent;
         task.events.push(ev);
         this.broadcast({ t: "task", taskId, data: ev });
+        if (ev.type === "confirm_required") {
+          confirmTimer = setTimeout(() => {
+            const timeoutEv: TaskEvent = {
+              type: "log",
+              level: "warn",
+              msg: `确认超时（${timeoutMs / 1000} 秒无回写）已自动取消任务`,
+            };
+            task.events.push(timeoutEv);
+            this.broadcast({ t: "task", taskId, data: timeoutEv });
+            handle.kill();
+          }, timeoutMs);
+          confirmTimer.unref?.();
+        }
       },
       // stderr / 解析失败：按阶段一 log 事件契约 {type:"log", level, msg} 转发，前端不丢诊断信息
       onError: (s) => {
@@ -131,8 +159,9 @@ export class WsChannel {
         this.broadcast({ t: "task", taskId, data: ev });
       },
     });
-    this.activeTasks.set(taskId, { task, handle });
+    this.activeTasks.set(taskId, { task, handle, clearConfirmTimer });
     handle.done.then(({ code }) => {
+      clearConfirmTimer();
       this.activeTasks.delete(taskId);
       this.archive.push({
         taskId,
@@ -177,7 +206,8 @@ export class WsChannel {
     const entry = this.activeTasks.get(msg.taskId);
     if (entry === undefined) return;
     if (msg.t === "confirm") {
-      // 阶段一 InEvent 原文写 stdin
+      // 任一 confirm 上行即清看门狗（阶段一 InEvent 原文写 stdin）
+      entry.clearConfirmTimer();
       entry.handle.stdinWrite(JSON.stringify({ type: "confirm", id: msg.id, value: msg.value }));
     } else {
       entry.handle.kill();

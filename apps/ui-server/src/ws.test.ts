@@ -208,6 +208,61 @@ setInterval(()=>{},60000);`,
     client.ws.close();
   });
 
+  it("确认看门狗：confirm_required 超时无回写 → warn log 广播 + kill（非零退出）", async () => {
+    const stub = await tmpFile(
+      "pending-stub.cjs",
+      `process.stdout.write(JSON.stringify({type:"hello"})+"\\n");
+process.stdout.write(JSON.stringify({type:"confirm_required",id:"delivery",question:"投递方式",choices:[{value:"ota",label:"热更"}]})+"\\n");
+setInterval(()=>{},60000);`,
+    );
+    const { port, channel } = await setup(`node ${stub}`);
+    const client = connect(port);
+    const taskId = channel.startBetaTask("p1", "android", {
+      cwd: projDir,
+      confirmTimeoutMs: 120,
+    });
+    await client.next((m) => m.t === "task" && m.data.type === "confirm_required");
+    const warn = await client.next(
+      (m) => m.t === "task" && m.data.type === "log" && m.data.level === "warn",
+    );
+    if (warn.t === "task") expect(String(warn.data.msg)).toContain("确认超时");
+    await client.next((m) => m.t === "task.end" && m.taskId === taskId);
+    const archived = channel.archivedTasks().find((a) => a.taskId === taskId);
+    expect(archived?.code).not.toBe(0);
+    client.ws.close();
+  });
+
+  it("确认看门狗：confirm 上行即清（不误杀）——回写后正常走到 result", async () => {
+    const stub = await tmpFile(
+      "confirm-fast-stub.cjs",
+      `process.stdout.write(JSON.stringify({type:"hello"})+"\\n");
+process.stdout.write(JSON.stringify({type:"confirm_required",id:"delivery",question:"投递方式",choices:[{value:"ota",label:"热更"}]})+"\\n");
+let buf="";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data",(d)=>{buf+=d;let i;while((i=buf.indexOf("\\n"))>=0){const l=buf.slice(0,i);buf=buf.slice(i+1);
+  process.stdout.write(JSON.stringify({type:"result",ok:true})+"\\n");
+  process.exit(0);}});
+setInterval(()=>{},60000);`,
+    );
+    const { port, channel } = await setup(`node ${stub}`);
+    const client = connect(port);
+    // 150ms 看门狗：confirm 回写必须在其触发前到达并清除
+    const taskId = channel.startBetaTask("p1", "android", {
+      cwd: projDir,
+      confirmTimeoutMs: 150,
+    });
+    await client.next((m) => m.t === "task" && m.data.type === "confirm_required");
+    client.ws.send(JSON.stringify({ t: "confirm", taskId, id: "delivery", value: "ota" }));
+    const result = await client.next((m) => m.t === "task" && m.data.type === "result");
+    if (result.t === "task") expect(result.data.ok).toBe(true);
+    const end = await client.next((m) => m.t === "task.end" && m.taskId === taskId);
+    if (end.t === "task.end") expect(end.code).toBe(0);
+    // 看门狗已清：不再有 warn log（task 已归档退出）
+    const archived = channel.archivedTasks().find((a) => a.taskId === taskId);
+    expect(archived?.events.some((e) => e.type === "log" && e.level === "warn")).toBe(false);
+    client.ws.close();
+  });
+
   it("任务运行中第二个客户端连接：补发已累积的 task 事件（重连恢复确认 UI）", async () => {
     // 桩 bin：发 hello + confirm_required 后挂住等 stdin
     const stub = await tmpFile(

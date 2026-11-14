@@ -95,6 +95,25 @@ if (interactive) {
   if (mode === "hang") {
     // 取消路径：hello 后挂住等 SIGTERM
     setInterval(() => {}, 60000);
+  } else if (platform === "ios") {
+    // ios：失败路径（不 confirm）——judgement native → 上传失败 result ok:false → exit 1
+    emit({
+      type: "judgement",
+      platform,
+      recommendation: "native",
+      confidence: "high",
+      provider: "stub-update",
+      evidence: [{ path: "ios/Podfile.lock", rule: "原生依赖" }],
+    });
+    emit({ type: "stage", stage: "upload" });
+    emit({ type: "progress", stage: "upload", pct: 30, msg: "上传渠道" });
+    emit({
+      type: "result",
+      ok: false,
+      summary: { channel: "stub-asc", mode: "native" },
+      error: "asc 渠道返回 401：凭据过期，请更新凭据后重试",
+    });
+    process.exit(1);
   } else {
     emit({
       type: "judgement",

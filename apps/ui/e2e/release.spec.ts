@@ -61,28 +61,29 @@ test("四步状态机走完：预览 → 确认方式 → 执行（confirm 回�
   await expect(confirmCard.locator(".confirm-q")).toHaveText("投递方式");
   await expect(confirmCard.locator("button[data-confirm='ota'] .rec-badge")).toBeVisible();
 
-  // 点「热更」→ 回写 {t:confirm,...,value:"ota"} → 进度推进 → 任务收口
+  // 折叠日志先展开断言（judgement 行已到；confirm 后流程立即推进不宜再点）
+  await page.locator("#logToggle").click();
+  await expect(page.locator(".log-body .log-line").first()).toBeVisible();
+
+  // 点「热更」→ 回写 {t:confirm,...,value:"ota"}；已确认态回显用户点击项（F4）
   await confirmCard.locator("button[data-confirm='ota']").click();
   await expect(confirmCard).toContainText("已确认");
+  await expect(confirmCard).toContainText("选择：热更（推荐：是）");
 
   // progress 行存在（事件映射：stage/pct 由桩序列驱动，结果行在步骤4断言）
   await expect(page.locator(".prog-row")).toBeVisible({ timeout: 15_000 });
 
-  // 折叠日志：展开后看到判定/阶段行
-  await page.locator("#logToggle").click();
-  await expect(page.locator(".log-body .log-line").first()).toBeVisible();
+  // ios 顺序自动发起（桩失败路径：judgement native → 上传失败，无 confirm）
+  await expect(page.locator(".prog-row", { hasText: "iOS" })).toBeVisible({ timeout: 30_000 });
 
-  // 多平台顺序发：ios / harmony 各自到达 confirm_required——逐个回写直至步骤4
-  for (let i = 0; i < 2; i++) {
-    const next = page.locator("#confirmCard:not(.answered)");
-    await expect(next).toBeVisible({ timeout: 30_000 });
-    await next.locator("button[data-confirm='ota']").click();
-    await expect(page.locator("#confirmCard")).toContainText("已确认", { timeout: 10_000 });
-  }
+  // 失败即停：ios 失败后 harmony 不发起（F2）——步骤4 部分平台失败，仅两行结果
   await expect(page.locator("#wiz4")).toBeVisible({ timeout: 60_000 });
-  await expect(page.locator("#wiz4", { hasText: "已发版" })).toBeVisible();
-  // 三行平台结果全为「完成」
-  await expect(page.locator("#wiz4 .row .st.c-ok")).toHaveCount(3);
+  await expect(page.locator("#wiz4")).toContainText("部分平台失败");
+  await expect(page.locator("#wiz4 .row .st.c-ok")).toHaveCount(1);
+  await expect(page.locator("#wiz4 .row .st.c-err")).toHaveCount(1);
+  await expect(page.locator("#wiz4 .row-sub", { hasText: "凭据过期" })).toBeVisible();
+  // 鸿蒙未执行：结果页无鸿蒙行
+  await expect(page.locator("#wiz4 .row-title", { hasText: "鸿蒙" })).toHaveCount(0);
 });
 
 test("取消路径：任务挂起 → 取消发版 → task.cancel → 终止收口", async ({ page }) => {

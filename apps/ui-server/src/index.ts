@@ -11,7 +11,13 @@ export { startUiServer } from "./http.js";
 export type { UiServerHandle, UiServerOptions } from "./http.js";
 export { ProjectRegistry, defaultStorePath } from "./registry.js";
 export type { ProjectEntry } from "./registry.js";
-export { createProjectRoutes, createTaskRoutes, validateProject, cliBinPath } from "./routes.js";
+export {
+  createProjectRoutes,
+  createTaskRoutes,
+  sanitizeBetaArgs,
+  validateProject,
+  cliBinPath,
+} from "./routes.js";
 export type {
   ApiHandler,
   BetaDryRunReport,

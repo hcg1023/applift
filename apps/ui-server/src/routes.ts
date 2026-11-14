@@ -145,12 +145,32 @@ export interface TaskRoutesOptions {
 const DRY_RUN_TIMEOUT_MS = 120_000; // 判定含 git diff 采集，大仓冷缓存留余量
 const BETA_PLATFORMS: Record<string, true> = { android: true, ios: true, harmony: true };
 
+/** beta 任务 args 放行表：一期只允许投递方式显式（防 --yes/--cwd/--artifact 等旗标注入绕过交互确认） */
+export function sanitizeBetaArgs(raw: unknown): { ok: true; args: string[] } | { ok: false } {
+  if (raw === undefined) return { ok: true, args: [] };
+  if (
+    Array.isArray(raw) &&
+    raw.length === 2 &&
+    raw[0] === "--delivery" &&
+    (raw[1] === "ota" || raw[1] === "native")
+  ) {
+    return { ok: true, args: raw as string[] };
+  }
+  return { ok: false };
+}
+
 /** POST /api/tasks/beta + POST /api/tasks/dry-run：发版向导的服务端入口（T8） */
 export function createTaskRoutes(opts: TaskRoutesOptions): ApiHandler {
   const { registry, runnerFactory, startBetaTask } = opts;
   return async (req, res) => {
     const url = (req.url ?? "").split("?")[0] ?? "";
     if (url !== "/api/tasks/beta" && url !== "/api/tasks/dry-run") return false;
+    // Host 校验（与 /api/shutdown 同款）：浏览器页面可对任意地址发 no-cors POST，仅认本机 Host
+    const hostname = (req.headers.host ?? "").split(":")[0];
+    if (hostname !== "127.0.0.1" && hostname !== "localhost") {
+      sendJson(res, 403, { ok: false, error: "forbidden host" });
+      return true;
+    }
     if (req.method !== "POST") {
       sendJson(res, 405, { ok: false, error: "method not allowed" });
       return true;
@@ -169,14 +189,14 @@ export function createTaskRoutes(opts: TaskRoutesOptions): ApiHandler {
     }
 
     if (url === "/api/tasks/beta") {
-      const rawArgs: unknown = (body as { args?: unknown } | null)?.args;
-      const userArgs =
-        Array.isArray(rawArgs) && rawArgs.every((a) => typeof a === "string")
-          ? (rawArgs as string[])
-          : [];
-      // UI 任务固定事件流模式（NDJSON + stdin 确认回写）；调用方只补业务参数
+      const sanitized = sanitizeBetaArgs((body as { args?: unknown } | null)?.args);
+      if (!sanitized.ok) {
+        sendJson(res, 400, { ok: false, error: "args 仅支持 [--delivery, ota|native]" });
+        return true;
+      }
+      // UI 任务固定事件流模式（NDJSON + stdin 确认回写）；调用方只补白名单业务参数
       const taskId = startBetaTask(projectId, platform, {
-        args: ["--interactive-events", ...userArgs],
+        args: ["--interactive-events", ...sanitized.args],
         cwd: entry.path,
       });
       sendJson(res, 200, { ok: true, taskId });

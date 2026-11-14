@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { request } from "node:http";
 import { join } from "node:path";
 import { startUiServer } from "./http.js";
 import { createTaskRoutes, type BetaDryRunReport } from "./routes.js";
@@ -78,7 +79,7 @@ describe("任务路由（POST /api/tasks/beta + /api/tasks/dry-run）", () => {
     await srv.close();
   });
 
-  it("beta：registry 解析 cwd → startBetaTask（args 透传校验）；返回 taskId", async () => {
+  it("beta：cwd 解析 + --delivery 白名单透传（旗标自动补）；其余 args 400", async () => {
     const storeDir = await mkdtemp(join(tmpdir(), "tasks-test2-"));
     tmpDirs.push(storeDir);
     const projDir = join(storeDir, "app2");
@@ -100,19 +101,21 @@ describe("任务路由（POST /api/tasks/beta + /api/tasks/dry-run）", () => {
           runnerFactory: (cwd) => new AppliftRunner({ cwd }),
           startBetaTask: (projectId, platform, opts) => {
             started.push({ projectId, platform, ...opts });
-            return "task-1";
+            return `task-${started.length}`;
           },
         }),
       ],
     });
+    const base = `http://127.0.0.1:${srv.port}`;
 
-    const res = await fetch(`http://127.0.0.1:${srv.port}/api/tasks/beta`, {
+    // 白名单内：--delivery native → 旗标前缀拼接透传
+    const res = await fetch(`${base}/api/tasks/beta`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         projectId: entry.id,
         platform: "harmony",
-        args: ["--note", "测试"],
+        args: ["--delivery", "native"],
       }),
     });
     expect(res.status).toBe(200);
@@ -123,18 +126,88 @@ describe("任务路由（POST /api/tasks/beta + /api/tasks/dry-run）", () => {
         projectId: entry.id,
         platform: "harmony",
         cwd: projDir,
-        args: ["--interactive-events", "--note", "测试"],
+        args: ["--interactive-events", "--delivery", "native"],
       },
     ]);
 
-    // 非字符串 args → 丢弃用户参数（旗标仍自动补）
-    const res2 = await fetch(`http://127.0.0.1:${srv.port}/api/tasks/beta`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ projectId: entry.id, platform: "android", args: ["--note", 42] }),
+    // 白名单外（--yes / --note / 未知旗标）→ 400，任务不发起
+    for (const bad of [
+      ["--yes"],
+      ["--note", "x"],
+      ["--delivery", "uncertain"],
+      ["--cwd", "/etc"],
+    ]) {
+      const r = await fetch(`${base}/api/tasks/beta`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectId: entry.id, platform: "android", args: bad }),
+      });
+      expect(r.status, `args=${bad.join(",")}`).toBe(400);
+    }
+    expect(started).toHaveLength(1);
+    await srv.close();
+  });
+
+  it("Host 校验：非本机 Host → 403 不发起（与 shutdown 同款）", async () => {
+    const storeDir = await mkdtemp(join(tmpdir(), "tasks-test5-"));
+    tmpDirs.push(storeDir);
+    const registry = new ProjectRegistry(join(storeDir, "projects.json"));
+    const entry = await registry.add(join(storeDir, "app5"));
+    const started: string[] = [];
+    const staticDir = await mkdtemp(join(tmpdir(), "tasks-static5-"));
+    tmpDirs.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<html>t</html>", "utf8");
+    const srv = await startUiServer({
+      staticDir,
+      registry,
+      extraApiHandlers: [
+        createTaskRoutes({
+          registry,
+          runnerFactory: (cwd) => new AppliftRunner({ cwd }),
+          startBetaTask: (_p, plat) => {
+            started.push(plat);
+            return "t";
+          },
+        }),
+      ],
     });
-    expect(res2.status).toBe(200);
-    expect(started[1]).toMatchObject({ args: ["--interactive-events"] });
+
+    // fetch 按 spec 静默丢弃 Host 禁改头——用 node:http 原生请求带伪造 Host
+    const evil = await new Promise<{ status: number; body: { ok: boolean } }>((resolve) => {
+      const req = request(
+        {
+          host: "127.0.0.1",
+          port: srv.port,
+          path: "/api/tasks/beta",
+          method: "POST",
+          headers: { host: "evil.com", "content-type": "application/json" },
+        },
+        (r) => {
+          let d = "";
+          r.on("data", (c) => (d += c));
+          r.on("end", () => resolve({ status: r.statusCode ?? 0, body: JSON.parse(d) }));
+        },
+      );
+      req.end(JSON.stringify({ projectId: entry.id, platform: "android" }));
+    });
+    expect(evil.status).toBe(403);
+    expect(evil.body.ok).toBe(false);
+    // dry-run 同款防护
+    const evil2 = await new Promise<number>((resolve) => {
+      const req = request(
+        {
+          host: "127.0.0.1",
+          port: srv.port,
+          path: "/api/tasks/dry-run",
+          method: "POST",
+          headers: { host: "evil.example", "content-type": "application/json" },
+        },
+        (r) => resolve(r.statusCode ?? 0),
+      );
+      req.end(JSON.stringify({ projectId: entry.id, platform: "android" }));
+    });
+    expect(evil2).toBe(403);
+    expect(started).toHaveLength(0);
     await srv.close();
   });
 

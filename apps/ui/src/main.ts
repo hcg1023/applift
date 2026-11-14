@@ -89,15 +89,17 @@ async function main(): Promise<void> {
     if (route.page !== "project") resetProjectPageState();
     if (route.page !== "overview" && route.page !== "project") resetOverviewPageState();
     if (route.page !== "release") resetReleasePageState();
-    content.replaceChildren(
+    const next =
       route.page === "project"
         ? renderProject(ctx, route.id ?? "")
         : route.page === "release"
           ? renderRelease(ctx)
           : route.page === "settings"
             ? renderSettings(ctx)
-            : renderOverview(ctx),
-    );
+            : renderOverview(ctx);
+    // 同标记不替换：WS 事件高频重渲会不断 detach DOM，点击类交互落空
+    const current = content.firstElementChild;
+    if (current === null || current.outerHTML !== next.outerHTML) content.replaceChildren(next);
     updateBadge();
   };
 
