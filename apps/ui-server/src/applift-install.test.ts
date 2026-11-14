@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { request } from "node:http";
 import { startUiServer } from "./http.js";
 import { WsChannel } from "./ws.js";
-import { createAppliftRoutes } from "./routes.js";
+import { createAppliftRoutes, cliBinPath } from "./routes.js";
 import { createAvailabilityProber, type Availability } from "./applift-install.js";
 import WebSocket from "ws";
 
@@ -287,6 +287,54 @@ describe("WsChannel.startInstallTask", () => {
     await promise;
     await channel.close();
     await server.close();
+  });
+
+  it("R2-F1 confirm 上行不解除 install 看门狗（仍按时触发 kill）", async () => {
+    const root = await tmpDir("install5-");
+    const stub = join(root, "hang5.cjs");
+    await writeFile(stub, `setInterval(()=>{},60000);`, "utf8");
+    const server = await startUiServer({ port: 0, staticDir: await tmpDir("static5-") });
+    const channel = new WsChannel({ runnerFactory: () => new AppliftRunner() });
+    channel.attach(server.httpServer);
+
+    type Down = { t: string; taskId?: string; data?: Record<string, unknown> };
+    const events: Down[] = [];
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+    const { promise: opened, resolve: openedResolve } = Promise.withResolvers<void>();
+    ws.once("open", () => openedResolve());
+    ws.on("message", (raw) => events.push(JSON.parse(String(raw)) as Down));
+    await opened;
+
+    const taskId = channel.startInstallTask({
+      runner: new AppliftRunner({ bin: `node ${stub}` }),
+      timeoutMs: 300,
+    });
+    // 恶意/误发 confirm 上行：不得清掉 install 看门狗
+    ws.send(JSON.stringify({ t: "confirm", taskId, id: "chk1", value: "ota" }));
+    await vi.waitFor(() => {
+      const warn = events.find(
+        (e) => e.t === "task" && e.data?.type === "install.log" && e.data?.level === "warn",
+      );
+      const end = events.find((e) => e.t === "task.end" && e.taskId === taskId);
+      expect(warn).toBeDefined();
+      expect(end).toBeDefined();
+    });
+    ws.close();
+    await channel.close();
+    await server.close();
+  });
+});
+
+describe("R2-F3 cliBinPath env trim", () => {
+  it("带空白的 APPLIFT_CLI_BIN 返回 trim 后路径", () => {
+    const saved = process.env.APPLIFT_CLI_BIN;
+    process.env.APPLIFT_CLI_BIN = "  /opt/applift/bin.mjs\n";
+    try {
+      expect(cliBinPath()).toBe("/opt/applift/bin.mjs");
+    } finally {
+      if (saved === undefined) delete process.env.APPLIFT_CLI_BIN;
+      else process.env.APPLIFT_CLI_BIN = saved;
+    }
   });
 });
 

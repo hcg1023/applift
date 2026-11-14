@@ -341,6 +341,8 @@ export class WsChannel {
     const entry = this.activeTasks.get(msg.taskId);
     if (entry === undefined) return;
     if (msg.t === "confirm") {
+      // confirm 仅 beta 语义：install 任务共用槽位，误清会拆掉其任务级看门狗（install 无确认交互）
+      if (entry.task.kind !== "beta") return;
       // 任一 confirm 上行即清看门狗（阶段一 InEvent 原文写 stdin）
       entry.clearConfirmTimer();
       entry.handle.stdinWrite(JSON.stringify({ type: "confirm", id: msg.id, value: msg.value }));

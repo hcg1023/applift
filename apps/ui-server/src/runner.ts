@@ -18,9 +18,6 @@ export interface ResolvedBin {
   source: "env" | "project" | "global" | null;
 }
 
-/** 工程内 applift bin 相对位置（npm/pnpm 安装布局一致） */
-const PROJECT_BIN_RELPATH = "node_modules/.bin/applift";
-
 /** Windows 可执行扩展（POSIX 无扩展名在前） */
 const EXE_EXTS = process.platform === "win32" ? ["", ".cmd", ".exe"] : [""];
 
@@ -189,6 +186,7 @@ export class AppliftRunner {
       cwd: this.cwd,
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
+      windowsHide: true, // win32 下 cmd.exe /c 包装命令不弹控制台窗口 [未实机]
     });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
@@ -248,6 +246,7 @@ export class AppliftRunner {
       cwd: this.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       detached: true,
+      windowsHide: true, // win32 下 cmd.exe /c 包装命令不弹控制台窗口 [未实机]
     });
     const { promise, resolve } = Promise.withResolvers<{ code: number }>();
     let settled = false;

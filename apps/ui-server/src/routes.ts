@@ -1,4 +1,4 @@
-import { AppliftRunner, resolveAppliftBin } from "./runner.js";
+import { AppliftRunner } from "./runner.js";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { ProjectRegistry, atomicWriteFile, type ProjectEntry } from "./registry.js";
@@ -24,7 +24,7 @@ export function sendJson(res: ServerResponse, status: number, body: unknown): vo
  *  env 短路直读（不走检索链 PATH 扫描——内部 validate/轮询不依赖用户全局安装）；env 缺席（开发直跑）回落本仓库 dist */
 export function cliBinPath(): string {
   const fromEnv = process.env.APPLIFT_CLI_BIN;
-  if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv;
+  if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv.trim();
   return fileURLToPath(new URL("../../../packages/cli/dist/bin.mjs", import.meta.url));
 }
 const VALIDATE_TIMEOUT_MS = 60_000; // validate 为只读探测（findUp/config 解析），60s 远超正常耗时
