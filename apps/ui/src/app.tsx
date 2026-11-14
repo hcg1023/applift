@@ -196,7 +196,7 @@ export default function App() {
 
   return (
     <PageCtxProvider value={ctx}>
-      <div className="window">
+      <div className="app-root">
         <div className="conn-banner" id="connBanner" hidden={!off}>
           <span className="dot d-wait" />
           与本地服务的连接已断开，正在重连（服务重启或休眠后自动恢复；长时间未恢复可运行{" "}
@@ -225,17 +225,17 @@ export default function App() {
                 ) : null}
               </button>
             ))}
-          <button
-            className="icon-btn sidebar-foot"
-            id="themeBtn"
-            title="切换外观"
-            aria-label="切换深浅外观"
-            onClick={() =>
-              setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark")
-            }
-          >
-            <SunIcon />
-          </button>
+            <button
+              className="icon-btn sidebar-foot"
+              id="themeBtn"
+              title="切换外观"
+              aria-label="切换深浅外观"
+              onClick={() =>
+                setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark")
+              }
+            >
+              <SunIcon />
+            </button>
           </nav>
           <main className="content" id="content">
             {route.page === "project" ? (

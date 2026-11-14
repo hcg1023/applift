@@ -47,18 +47,15 @@ html {
   font-size: 16px;
 }
 body {
-  font-family:
-    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", sans-serif;
-  background: linear-gradient(160deg, #e8e8ed 0%, #d8d8de 100%);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", sans-serif;
+  background: var(--bg);
   color: var(--label);
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
+  margin: 0;
+  height: 100dvh;
+  overflow: hidden;
 }
 [data-theme="dark"] body {
-  background: linear-gradient(160deg, #151517, #0b0b0c);
+  background: var(--bg);
 }
 .mono {
   font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
@@ -66,17 +63,11 @@ body {
   letter-spacing: -0.01em;
 }
 
-/* ---------- 窗口 ---------- */
-.window {
-  width: min(1180px, 100%);
-  height: min(760px, calc(100vh - 48px));
-  background: var(--surface-2);
-  border-radius: 12px;
-  overflow: hidden;
+/* ---------- 应用根布局 ---------- */
+.app-root {
+  height: 100dvh;
   display: flex;
   flex-direction: column;
-  box-shadow: var(--window-shadow);
-  border: 1px solid rgba(0, 0, 0, 0.06);
 }
 .icon-btn {
   width: 30px;
