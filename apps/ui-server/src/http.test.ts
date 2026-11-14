@@ -375,6 +375,81 @@ describe("validateBin（T5 打包壳：validate 走检索链）", () => {
   });
 });
 
+describe("validateProject 旧版 CLI 降级（F6：工程内 <0.13 无 validate / shim 挂起）", () => {
+  const prev = process.env.APPLIFT_CLI_BIN;
+  const restore = (): void => {
+    if (prev === undefined) delete process.env.APPLIFT_CLI_BIN;
+    else process.env.APPLIFT_CLI_BIN = prev;
+  };
+  afterAll(restore);
+
+  /** 旧版 CLI 桩：exit 1 + commander unknown command 文案 */
+  async function writeOldCliStub(dir: string): Promise<string> {
+    const stub = join(dir, "old-cli.mjs");
+    await writeFile(
+      stub,
+      "process.stderr.write(\"error: unknown command 'validate'\\n\"); process.exit(1);\n",
+      "utf8",
+    );
+    return stub;
+  }
+
+  it("unknown command 'validate' → 配置探测降级：有 config 认工程 ok:true", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ui-server-old-cli-"));
+    tmpDirs.push(dir);
+    await writeFile(join(dir, "applift.config.ts"), "export default {}", "utf8");
+    process.env.APPLIFT_CLI_BIN = await writeOldCliStub(dir);
+    const report = await validateProject(dir);
+    expect(report.ok).toBe(true);
+  });
+
+  it("降级后无配置文件 → ok:false（不无条件放行）", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ui-server-no-config-"));
+    tmpDirs.push(dir);
+    process.env.APPLIFT_CLI_BIN = await writeOldCliStub(dir);
+    const report = await validateProject(dir);
+    expect(report.ok).toBe(false);
+  });
+
+  it("命令挂起超时（GUI 子进程环境 shim 形态）→ 同样降级 config 探测", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ui-server-hang-cli-"));
+    tmpDirs.push(dir);
+    await writeFile(join(dir, "applift.config.ts"), "export default {}", "utf8");
+    const stub = join(dir, "hang-cli.mjs");
+    await writeFile(stub, "setInterval(() => {}, 1000);\n", "utf8");
+    process.env.APPLIFT_CLI_BIN = stub;
+    const t0 = Date.now();
+    // 注入 3s 短超时：确定性触发降级分支（免真实 20s 等待；窗口留足高负载下 stub 冷启）
+    const report = await validateProject(dir, { timeoutMs: 3000 });
+    expect(report.ok).toBe(true); // 超时 → config 探测命中
+    expect(Date.now() - t0).toBeLessThan(10_000); // 未走满默认 20s 窗口
+  }, 15_000);
+
+  it("CLI 存在但执行崩溃（exit 3 非 unknown command）→ 不降级，ok:false", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ui-server-crash-cli-"));
+    tmpDirs.push(dir);
+    await writeFile(join(dir, "applift.config.ts"), "export default {}", "utf8");
+    const stub = join(dir, "crash-cli.mjs");
+    await writeFile(stub, 'process.stderr.write("boom\\n"); process.exit(3);\n', "utf8");
+    process.env.APPLIFT_CLI_BIN = stub;
+    const report = await validateProject(dir);
+    expect(report.ok).toBe(false);
+    expect(report.error).toContain("boom");
+  });
+
+  it("exit 0 但输出畸形（非 JSON）→ 不降级，ok:false", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ui-server-badout-"));
+    tmpDirs.push(dir);
+    await writeFile(join(dir, "applift.config.ts"), "export default {}", "utf8");
+    const stub = join(dir, "garbage-cli.mjs");
+    await writeFile(stub, "console.log('not json');\n", "utf8");
+    process.env.APPLIFT_CLI_BIN = stub;
+    const report = await validateProject(dir);
+    expect(report.ok).toBe(false);
+    expect(report.error).toContain("无法解析");
+  });
+});
+
 describe("/api/projects Host 校验（I-3）", () => {
   it("非 GET 方法外域 Host → 403；GET 不受影响", async () => {
     const staticDir = await mkdtempStatic("<html>h</html>");

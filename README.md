@@ -181,8 +181,8 @@ cd apps/shell && npm run dev
 
 - **形态**：Tauri 2 薄壳（托盘常驻 + 主窗口 + 左键弹窗 + 原生通知/目录选择对话框），界面与 webui 同一份前端（壳内走 HostAdapter 原生实现）。壳不发布 npm——产物只有安装包（CI artifact 分发）。
 - **前置**：本机 Node ≥ 20（壳不捆绑 Node：缺失时首屏引导页给下载链接）；applift 检索链 = 工程内 `node_modules/.bin` > 全局 PATH > 页内引导 `npm install -g @applift/cli`。
-- **打包内容**：壳二进制 + ui-server 运行时（dist + 前端 + 生产依赖 node_modules）随 resources 捆绑；关窗=隐藏到托盘，菜单退出才真退（退出前优雅停 ui-server）。macOS GUI 启动的 PATH 缺 Homebrew 目录时壳会自动增补（`/opt/homebrew/bin` 等）再探测 node。
-- **卸载**：macOS 拖废纸篓 / Windows 控制面板。若开启过「登录自启」，macOS 需手动删 `~/Library/LaunchAgents/com.applift.shell.plist`（Windows 卸载器自动清注册表 Run 项）。
+- **卸载**：macOS 拖废纸篓 / Windows 控制面板。若开启过「登录自启」，macOS 需手动删 `~/Library/LaunchAgents/applift.plist`（插件按应用名生成该文件；Windows 卸载器自动清注册表 Run 项）。
+
 - **CI**：`shell` job（macos-latest 出 universal dmg、windows-latest 出 NSIS exe，artifact 上传）；cargo test 全桩、无真网络交互。
 
 ## AI / CI
@@ -201,6 +201,8 @@ cd apps/shell && npm run dev
 | `applift status --stores a,b --json`           | 各渠道审核状态矩阵                              | `{fetchedAt, results[]}`（每项含 `platform`/`fetchedAt`） |
 
 `validate` 报告要点：`ok`/`configFound`/`framework`（声明或 null）/`suggestedFramework`/`bundleIds`/`platforms`/`appliftAvailable`（工程依赖是否可执行 applift）；config 缺失或解析失败产出 `ok:false` 报告而非中断。`doctor --json` 与人读路径同源同链，profile 缺失时降级为 `ok:false` 仍出完整报告（`stores[].missing` 清单照常送达，UI 据此引导补凭据）。
+
+`validate` 服务端降级（ui-server 添加项目路径）：CLI 定位走检索链（工程内 > 全局 > 服务内兜底）；命中工程内旧版（<0.13 无 `validate` 命令，判据 `unknown command 'validate'`）或子进程超时（20s，判据「命令超时」文案）时，降级为目录内配置文件探测（存在 `applift.config.{ts,mts,js,mjs,cjs,json}` 即 `ok:true`，`appliftAvailable` 按工程 `.bin` 实测不伪造）——添加项目不被工程锁定的 CLI 版本阻塞，状态/发版仍用工程版本。
 
 `beta --dry-run` 守卫：`--dry-run` 仅支持单平台（无 platform 拒绝）；`--json` 仅支持 `--dry-run` 判定预览（完整机读输出走 `--interactive-events`）。报告含 `provider`/`recommendation`（ota|native|uncertain，可为 null=未接入热更）/`confidence`/`evidence`/`note`（人读摘要）。
 

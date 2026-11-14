@@ -28,12 +28,21 @@ mkdirSync(staging, { recursive: true });
 cpSync(distDir, join(staging, "dist"), { recursive: true });
 // package.json：npm install 依它解析生产依赖
 cpSync(join(serverDir, "package.json"), join(staging, "package.json"));
-
 // 精简 node_modules：仅生产依赖（当前= ws，无传递必需依赖；optional peer 不装）
-const npmBin = process.platform === "win32" ? "npm.cmd" : "npm";
+// win32 的 npm.cmd 经 cmd.exe /c 包装直 spawn（无 shell 会 EINVAL——与 ui-server runner toSpawnCommand 同款策略）
+const npmRun = process.platform === "win32" ? ["cmd.exe", "/c", "npm"] : ["npm"];
 execFileSync(
-  npmBin,
-  ["install", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel", "error"],
+  npmRun[0],
+  [
+    ...npmRun.slice(1),
+    "install",
+    "--omit=dev",
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund",
+    "--loglevel",
+    "error",
+  ],
   { cwd: staging, stdio: "inherit" },
 );
 

@@ -1,4 +1,4 @@
-import { AppliftRunner, resolveAppliftBin } from "./runner.js";
+import { AppliftRunner, findProjectApplift, resolveAppliftBin } from "./runner.js";
 import { fileURLToPath } from "node:url";
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -58,21 +58,30 @@ const CONFIG_FILE_NAMES = [
 ] as const;
 
 /** 旧版 CLI（<0.13 无 validate 命令）降级：目录内存在 applift 配置文件即认工程。
- *  检索链命中工程内旧版时 validate 不可用——添加项目不应被工程锁定的 CLI 版本阻塞（状态/发版仍用工程版本）。 */
+ *  检索链命中工程内旧版时 validate 不可用——添加项目不应被工程锁定的 CLI 版本阻塞（状态/发版仍用工程版本）。
+ *  appliftAvailable 按工程内 node_modules/.bin/applift 实测（降级路径不伪造 CLI 能力）。 */
 export async function validateByConfigProbe(path: string): Promise<ValidateReport> {
   for (const name of CONFIG_FILE_NAMES) {
     if (await fileExists(join(path, name))) {
-      return { ok: true, configFound: true, framework: null, appliftAvailable: true };
+      return {
+        ok: true,
+        configFound: true,
+        framework: null,
+        appliftAvailable: findProjectApplift(path) !== null,
+      };
     }
   }
   return { ok: false, error: "目录内无 applift 配置文件（applift.config.ts 等）" };
 }
 
-export async function validateProject(path: string): Promise<ValidateReport> {
+export async function validateProject(
+  path: string,
+  opts: { timeoutMs?: number } = {},
+): Promise<ValidateReport> {
   // CLI 定位走检索链（工程 > 全局；env 短路）：bin 数组直接执行（不经 npx）——路径含空格不被切分
   const runner = new AppliftRunner({ bin: validateBin(path) });
   const { code, stdout, stderr } = await runner.run(["validate", path, "--json"], {
-    timeoutMs: VALIDATE_TIMEOUT_MS,
+    timeoutMs: opts.timeoutMs ?? VALIDATE_TIMEOUT_MS,
   });
   try {
     return JSON.parse(stdout) as ValidateReport;
