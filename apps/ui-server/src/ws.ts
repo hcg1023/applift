@@ -3,6 +3,7 @@ import type { Server, IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { AppliftRunner, RunningTask } from "./runner.js";
+import { SHELL_ASSET_ORIGINS } from "./http.js";
 import type { FeedEvent, ProjectSnapshot } from "./aggregator.js";
 /** 任务事件 = 阶段一 OutEvent 原样转发（packages/cli/src/events.ts 契约） */
 export type TaskEvent = { type?: string } & Record<string, unknown>;
@@ -34,9 +35,11 @@ const MAX_PAYLOAD_BYTES = 1024 * 1024;
 /**
  * Origin 校验（I-2）：浏览器必须来自本机页面，否则任意网页可读全量广播 + 代确认发版。
  * 允许 http://127.0.0.1[:port] 与 http://localhost[:port]（port 缺省或与服务端口一致）；
+ * Tauri 壳 asset 域（tauri://localhost、http(s)://tauri.localhost）放行；
  * 无 Origin 的非浏览器客户端（node:ws / curl 等）放行。
  */
 export function isAllowedOrigin(origin: string, serverPort: number): boolean {
+  if (SHELL_ASSET_ORIGINS.includes(origin)) return true; // Tauri 壳 asset 域（I1）
   let u: URL;
   try {
     u = new URL(origin);

@@ -30,8 +30,17 @@ export interface UiServerOptions {
   healthInfo?: () => Record<string, unknown>;
 }
 
+/**
+ * Tauri 壳 asset origin 白名单（跨平台 webview 域）：macOS/iOS `tauri://localhost`、
+ * Windows/Android/Linux `http(s)://tauri.localhost`。CORS 与 WS Origin 校验共用。
+ */
+export const SHELL_ASSET_ORIGINS: readonly string[] = [
+  "tauri://localhost",
+  "http://tauri.localhost",
+  "https://tauri.localhost",
+];
+
 const MIME: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".mjs": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -85,14 +94,22 @@ async function handle(
   apiHandlers: ApiHandler[],
   healthInfo?: () => Record<string, unknown>,
 ): Promise<void> {
-  // CORS：Tauri 壳以 asset 协议（tauri://localhost 等）加载同一份前端，REST 需跨源
-  // 访问 127.0.0.1——仅 /api/* 放行（静态资源不经此处），预检直接 204 收口。
-  // 写操作另有 Host=本机 校验兜底，来源放宽不放大攻击面。
+  // CORS：Tauri 壳以 asset 域加载同一份前端，REST 需跨源访问 127.0.0.1。
+  // 仅 /api/* 处理（静态资源不经此处）；ACAO 只回显白名单壳 origin（Host 校验防的是
+  // DNS rebinding 而非来源——恶意网页直连本机时 Host 必过，来源收敛靠这里），
+  // 非白名单 Origin 不下发任何 CORS 头（浏览器默认拦截），预检 204 收口。
   if (req.url?.split("?")[0]?.startsWith("/api/")) {
-    res.setHeader("access-control-allow-origin", "*");
-    res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS");
-    res.setHeader("access-control-allow-headers", "content-type");
+    const origin = req.headers.origin;
+    const fromShell = origin !== undefined && SHELL_ASSET_ORIGINS.includes(origin);
+    if (fromShell) {
+      res.setHeader("access-control-allow-origin", origin);
+      res.setHeader("vary", "Origin");
+    }
     if (req.method === "OPTIONS") {
+      if (fromShell) {
+        res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS");
+        res.setHeader("access-control-allow-headers", "content-type");
+      }
       res.writeHead(204);
       res.end();
       return;

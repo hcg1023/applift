@@ -41,20 +41,66 @@ describe("startUiServer", () => {
     await srv.close();
   });
 
-  it("CORS：/api/* 放行跨源（Tauri 壳 asset 域），静态资源不带；预检 204", async () => {
+  it("CORS：ACAO 仅回显壳 origin 白名单；恶意 Origin 无任何 CORS 头；静态资源不带", async () => {
     const dir = await mkdtempStatic("<html>x</html>");
     const srv = await startUiServer({ staticDir: dir, port: 0 });
-    const base = `http://127.0.0.1:${srv.port}`;
-    const health = await fetch(`${base}/api/health`);
-    expect(health.headers.get("access-control-allow-origin")).toBe("*");
-    const preflight = await fetch(`${base}/api/projects`, {
-      method: "OPTIONS",
-      headers: { "access-control-request-method": "POST" },
+    type Res = {
+      status: number;
+      acao?: string;
+      vary?: string;
+      methods?: string;
+    };
+    const request = (path: string, method: string, headers: Record<string, string>) => {
+      const { promise, resolve } = Promise.withResolvers<Res>();
+      const req = httpRequest(
+        { host: "127.0.0.1", port: srv.port, path, method, headers },
+        (res) => {
+          resolve({
+            status: res.statusCode ?? 0,
+            acao: res.headers["access-control-allow-origin"],
+            vary: res.headers.vary,
+            methods: res.headers["access-control-allow-methods"],
+          });
+          res.resume();
+        },
+      );
+      req.end();
+      return promise;
+    };
+    // 壳 origin：ACAO 回显 + Vary: Origin + 预检放行
+    for (const shellOrigin of [
+      "tauri://localhost",
+      "http://tauri.localhost",
+      "https://tauri.localhost",
+    ]) {
+      const r = await request("/api/health", "GET", { origin: shellOrigin });
+      expect(r.acao).toBe(shellOrigin);
+      expect(r.vary).toBe("Origin");
+      const p = await request("/api/projects", "OPTIONS", {
+        origin: shellOrigin,
+        "access-control-request-method": "POST",
+      });
+      expect(p.status).toBe(204);
+      expect(p.acao).toBe(shellOrigin);
+      expect(p.methods).toContain("POST");
+    }
+    // 恶意 origin：无 ACAO（浏览器默认拦截），预检仍 204 但不带放行头
+    const evil = await request("/api/health", "GET", { origin: "https://evil.example" });
+    expect(evil.acao).toBeUndefined();
+    const evilPreflight = await request("/api/projects", "OPTIONS", {
+      origin: "https://evil.example",
+      "access-control-request-method": "POST",
     });
-    expect(preflight.status).toBe(204);
-    expect(preflight.headers.get("access-control-allow-methods")).toContain("POST");
-    const html = await fetch(`${base}/`);
-    expect(html.headers.get("access-control-allow-origin")).toBeNull();
+    expect(evilPreflight.status).toBe(204);
+    expect(evilPreflight.acao).toBeUndefined();
+    expect(evilPreflight.methods).toBeUndefined();
+    // 无 Origin（同源/Rust 客户端）：无 CORS 头，正常 200
+    const plain = await request("/api/health", "GET", {});
+    expect(plain.status).toBe(200);
+    expect(plain.acao).toBeUndefined();
+    // 静态资源：永不带 CORS 头
+    const html = await request("/", "GET", { origin: "tauri://localhost" });
+    expect(html.acao).toBeUndefined();
     await srv.close();
   });
 

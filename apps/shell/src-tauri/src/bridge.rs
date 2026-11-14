@@ -59,8 +59,26 @@ fn with_supervisor<T>(
     guard.as_ref().map(f)
 }
 
-// -- 登录自启（默认开；用户设置持久化在 app_config_dir/shell-settings.json）-----------
 
+/// 手动重试（startup.html 重试按钮）：Failed → 重走启动链；成功后重导航主窗并重启守护线程
+#[tauri::command]
+pub fn retry_server_start(app: AppHandle) -> Result<u16, String> {
+    let state = app.state::<ShellState>();
+    let result = {
+        let mut guard = state.supervisor.lock().unwrap();
+        match guard.as_mut() {
+            Some(sup) => sup.retry(),
+            None => Err("node 缺失（壳未初始化 supervisor）".into()),
+        }
+    };
+    if let Ok(port) = result {
+        crate::nav_port(&app, port);
+        crate::spawn_monitor(app);
+    }
+    result
+}
+
+// -- 登录自启（默认开；用户设置持久化在 app_config_dir/shell-settings.json）-----------
 pub fn autostart_settings_path(app: &AppHandle) -> std::io::Result<std::path::PathBuf> {
     let dir = app
         .path()

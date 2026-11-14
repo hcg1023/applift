@@ -387,6 +387,12 @@ process.stdout.write(JSON.stringify({type:"result",ok:true})+"\\n");`,
     expect(isAllowedOrigin("http://evil.example", 47600)).toBe(false);
     expect(isAllowedOrigin("https://127.0.0.1:47600", 47600)).toBe(false); // 非本机页面协议
     expect(isAllowedOrigin("not a url", 47600)).toBe(false);
+    // Tauri 壳 asset 域放行（I1：Windows 壳 WS 否则必断）
+    expect(isAllowedOrigin("tauri://localhost", 47600)).toBe(true);
+    expect(isAllowedOrigin("http://tauri.localhost", 47600)).toBe(true);
+    expect(isAllowedOrigin("https://tauri.localhost", 47600)).toBe(true);
+    expect(isAllowedOrigin("http://tauri.attacker", 47600)).toBe(false);
+    expect(isAllowedOrigin("tauri://evil.example", 47600)).toBe(false);
   });
 
   it("任务去重：同 projectId+platform 已有活跃任务 → 拒绝且错误带既有 taskId", async () => {

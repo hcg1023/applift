@@ -39,7 +39,7 @@ fn resolve_server_entry() -> String {
 }
 
 /// 导航到 frontendDist 内的相对路径（保留 asset origin，跨 Windows/macOS 两种协议）
-fn navigate(win: &WebviewWindow, path: &str) {
+pub(crate) fn navigate(win: &WebviewWindow, path: &str) {
     if let Ok(cur) = win.url() {
         if let Ok(target) = cur.join(path) {
             let _ = win.navigate(target);
@@ -47,8 +47,36 @@ fn navigate(win: &WebviewWindow, path: &str) {
     }
 }
 
+fn nav_port(app: &AppHandle, port: u16) {
+    if let Some(win) = app.get_webview_window("main") {
+        navigate(&win, &format!("index.html?serverPort={port}"));
+    }
+}
 
-/// 壳主链路（后台线程）：node 自检 → supervisor 启动/复用 → 导航主窗口 → 运行期守护
+/// 运行期守护线程：Ready 态 health 连续失联 → 重启（额度内）；端口变化则重导航。
+/// Failed 退出线程——后续由 retry_server_start（手动重试）重新拉起。
+pub(crate) fn spawn_monitor(app: AppHandle) {
+    std::thread::spawn(move || {
+        let state = app.state::<ShellState>();
+        loop {
+            std::thread::sleep(Duration::from_secs(2));
+            let mut guard = state.supervisor.lock().unwrap();
+            let Some(sup) = guard.as_mut() else { break };
+            match sup.state() {
+                ServerState::Failed { .. } => break,
+                ServerState::Ready { .. } => {
+                    if let Some(new_port) = sup.check_and_restart() {
+                        nav_port(&app, new_port);
+                    }
+                }
+                ServerState::Starting => {}
+            }
+        }
+    });
+}
+
+/// 壳主链路（后台线程）：node 自检 → supervisor 启动/复用 → 导航主窗口 → 运行期守护。
+/// supervisor 先入共享状态再 ensure_started（I3）：启动窗口期退出时清理链也能拿到它兜底 kill。
 fn shell_main(app: AppHandle) {
     if detect_node(&SysNodeProbe).is_none() {
         if let Some(win) = app.get_webview_window("main") {
@@ -61,7 +89,7 @@ fn shell_main(app: AppHandle) {
         ..Default::default()
     };
     let log = Arc::new(ServerLog::default());
-    let mut sup = Supervisor::new(
+    let sup = Supervisor::new(
         Box::new(LocalHttp::default()),
         Box::new(NodeServerLauncher {
             node_bin: "node".into(),
@@ -71,13 +99,14 @@ fn shell_main(app: AppHandle) {
         cfg,
     );
     let state = app.state::<ShellState>();
-    let nav = |port: u16| {
-        if let Some(win) = app.get_webview_window("main") {
-            navigate(&win, &format!("index.html?serverPort={port}"));
-        }
+    // 先占位再启动：Exit 清理锁到的是 Some（哪怕 ensure_started 还在等就绪）
+    let result = {
+        let mut guard = state.supervisor.lock().unwrap();
+        let sup_entry = guard.insert(sup);
+        sup_entry.ensure_started()
     };
-    match sup.ensure_started() {
-        Ok(port) => nav(port),
+    match result {
+        Ok(port) => nav_port(&app, port),
         Err(reason) => {
             for line in log.tail() {
                 eprintln!("[shell] server: {line}");
@@ -91,22 +120,7 @@ fn shell_main(app: AppHandle) {
             }
         }
     }
-    *state.supervisor.lock().unwrap() = Some(sup);
-    // 运行期守护：health 失联 → 同端口重启（≤1 次）；端口变化则重导航
-    loop {
-        std::thread::sleep(Duration::from_secs(2));
-        let mut guard = state.supervisor.lock().unwrap();
-        let Some(sup) = guard.as_mut() else { break };
-        match sup.state() {
-            ServerState::Failed { .. } => break,
-            ServerState::Ready { .. } => {
-                if let Some(new_port) = sup.check_and_restart() {
-                    nav(new_port);
-                }
-            }
-            ServerState::Starting => {}
-        }
-    }
+    spawn_monitor(app);
 }
 
 /// 极简百分号编码（仅失败 reason 展示用）
@@ -146,26 +160,31 @@ pub fn run() {
             bridge::get_server_port,
             bridge::server_status,
             bridge::get_autostart,
-            bridge::set_autostart
+            bridge::retry_server_start,
+            bridge::set_autostart,
         ])
         .setup(move |app| {
-            // 登录自启：默认开（首次运行未写设置文件时启用），用户在设置页关闭后持久尊重
-            let settings = bridge::autostart_settings_path(app.handle())?;
-            let enabled = bridge::read_autostart_setting(&settings).unwrap_or(true);
-            let launch = app.autolaunch();
-            match launch.is_enabled() {
-                Ok(true) if !enabled => {
-                    let _ = launch.disable();
+            // 登录自启：默认开（首次运行未写设置文件时启用），用户在设置页关闭后持久尊重。
+            // debug 构建（tauri dev 高频起停）跳过 reconcile，不反复写 LaunchAgent（M3）
+            #[cfg(not(debug_assertions))]
+            {
+                let settings = bridge::autostart_settings_path(app.handle())?;
+                let enabled = bridge::read_autostart_setting(&settings).unwrap_or(true);
+                let launch = app.autolaunch();
+                match launch.is_enabled() {
+                    Ok(true) if !enabled => {
+                        let _ = launch.disable();
+                    }
+                    Ok(false) if enabled => {
+                        let _ = launch.enable();
+                    }
+                    _ => {}
                 }
-                Ok(false) if enabled => {
-                    let _ = launch.enable();
-                }
-                _ => {}
             }
             let handle = app.handle().clone();
             std::thread::spawn(move || shell_main(handle));
-            // SIGINT/SIGTERM（dev 终端 Ctrl-C、pkill）默认不触发 RunEvent::Exit——
-            // 转 app.exit(0) 走统一退出清理（带走自己拉起的 ui-server）
+            // SIGINT/SIGTERM/SIGHUP（dev 终端 Ctrl-C、pkill、nohup 挂断）默认不触发
+            // RunEvent::Exit——转 app.exit(0) 走统一退出清理（带走自己拉起的 ui-server）
             let sig_handle = app.handle().clone();
             ctrlc::set_handler(move || sig_handle.exit(0)).ok();
             Ok(())

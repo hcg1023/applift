@@ -232,6 +232,8 @@ pub struct SupervisorConfig {
     pub poll_interval: Duration,
     /// POST /api/shutdown 后等待进程自然退出的时长（超时 kill 兜底）
     pub shutdown_grace: Duration,
+    /// Ready 后稳定运行该时长即重置重启额度（运行期慢性崩溃不至于永久失去守护）
+    pub stable_reset: Duration,
 }
 
 impl Default for SupervisorConfig {
@@ -241,9 +243,11 @@ impl Default for SupervisorConfig {
             ready_timeout: Duration::from_secs(10),
             poll_interval: Duration::from_millis(200),
             shutdown_grace: Duration::from_secs(3),
+            stable_reset: Duration::from_secs(60),
         }
     }
 }
+
 
 /// ~/.applift/ui.port（APPLIFT_HOME 可覆盖——与 CLI ui-command 同一约定）
 pub fn default_port_file() -> PathBuf {
@@ -266,10 +270,20 @@ pub struct Supervisor {
     child: Option<Box<dyn ServerProcess>>,
     restarts: u32,
     owns_server: bool,
+    /// 端口文件是否由本 supervisor 写入（复用实例的文件不归我们删）
+    own_port_file: bool,
+    /// 连续 health 失联计数（≥2 才判死——单次抖动不触发重启）
+    health_misses: u32,
+    /// 进入 Ready 的时刻（稳定运行 stable_reset 后重置重启额度）
+    ready_since: Option<Instant>,
 }
 
 impl Supervisor {
-    pub fn new(http: Box<dyn UiHttp>, launcher: Box<dyn ServerLauncher>, cfg: SupervisorConfig) -> Self {
+    pub fn new(
+        http: Box<dyn UiHttp>,
+        launcher: Box<dyn ServerLauncher>,
+        cfg: SupervisorConfig,
+    ) -> Self {
         Self {
             http,
             launcher,
@@ -278,6 +292,9 @@ impl Supervisor {
             child: None,
             restarts: 0,
             owns_server: false,
+            own_port_file: false,
+            health_misses: 0,
+            ready_since: None,
         }
     }
 
@@ -302,11 +319,23 @@ impl Supervisor {
         (n > 0).then_some(n)
     }
 
-    fn write_port_file(&self, port: u16) {
+    fn write_port_file(&mut self, port: u16) {
         if let Some(dir) = self.cfg.port_file.parent() {
             let _ = fs::create_dir_all(dir);
         }
         let _ = fs::write(&self.cfg.port_file, port.to_string());
+        self.own_port_file = true;
+    }
+
+    /// 进入 Ready：统一落状态/计时/端口文件（复用与 spawn 两条路共用）
+    fn enter_ready(&mut self, port: u16, reused_existing: bool) {
+        self.owns_server = !reused_existing;
+        self.state = ServerState::Ready { port, reused_existing };
+        self.health_misses = 0;
+        self.ready_since = Some(Instant::now());
+        if !reused_existing {
+            self.write_port_file(port);
+        }
     }
 
     fn remove_port_file(&self) {
@@ -322,8 +351,7 @@ impl Supervisor {
     /// 启动主链路：探测复用 → 否则 spawn + 等就绪（就绪前崩溃/超时重启 ≤ MAX_RESTARTS）
     pub fn ensure_started(&mut self) -> Result<u16, String> {
         if let Some(port) = self.probe_existing() {
-            self.owns_server = false;
-            self.state = ServerState::Ready { port, reused_existing: true };
+            self.enter_ready(port, true);
             return Ok(port);
         }
         let mut port = pick_free_port().ok_or_else(|| "无法分配空闲端口".to_string())?;
@@ -343,10 +371,7 @@ impl Supervisor {
                     self.child = Some(child);
                     match self.wait_ready(port) {
                         Some(ready_port) => {
-                            self.owns_server = true;
-                            self.state =
-                                ServerState::Ready { port: ready_port, reused_existing: false };
-                            self.write_port_file(ready_port);
+                            self.enter_ready(ready_port, false);
                             return Ok(ready_port);
                         }
                         None => {
@@ -388,81 +413,122 @@ impl Supervisor {
         }
     }
 
-    /// 运行期守护（monitor 线程周期调用）：Ready 态 health 失联 → 重启（累计 ≤ MAX_RESTARTS，
-    /// 优先原端口——webview URL 不变免二次导航）；Some(port) 表示已恢复（端口可能变化）
+    /// 运行期守护（monitor 线程周期调用）：
+    /// - health 通 → 清失联计数；稳定运行 ≥ stable_reset 后重置重启额度（I2）
+    /// - 连续 2 次失联才判死（M2：单次抖动不触发）
+    /// - 重启优先原端口（URL 不变免二次导航）；未就绪则换新端口再试一次（M1：
+    ///   Some(new_port) 由调用方重导航兜底）
     pub fn check_and_restart(&mut self) -> Option<u16> {
         let port = match &self.state {
             ServerState::Ready { port, .. } => *port,
             _ => return None,
         };
         if self.http.health_ok(port) {
+            self.health_misses = 0;
+            if let Some(since) = self.ready_since {
+                if since.elapsed() >= self.cfg.stable_reset && self.restarts > 0 {
+                    self.restarts = 0;
+                    self.ready_since = Some(Instant::now());
+                }
+            }
             return None;
+        }
+        self.health_misses += 1;
+        if self.health_misses < 2 {
+            return None; // 首次失联：下一 tick 复核（M2）
         }
         if self.restarts >= MAX_RESTARTS {
             self.state = ServerState::Failed { reason: "ui-server 崩溃且重启次数用尽".into() };
             return None;
         }
         self.restarts += 1;
+        self.health_misses = 0;
         if let Some(mut child) = self.child.take() {
             child.kill();
         }
-        loop {
-            match self.launcher.launch(port) {
+        let mut ports = [Some(port), pick_free_port()];
+        for next in ports.iter_mut().flatten() {
+            match self.launcher.launch(*next) {
                 Err(_) => {
-                    // 启动器报错也计入已用重启额度：直接判失败
                     self.state = ServerState::Failed { reason: "ui-server 重启失败".into() };
                     return None;
                 }
                 Ok(child) => {
                     self.child = Some(child);
-                    match self.wait_ready(port) {
-                        Some(ready) => {
-                            self.owns_server = true;
-                            self.state = ServerState::Ready { port: ready, reused_existing: false };
-                            self.write_port_file(ready);
-                            return Some(ready);
-                        }
-                        None => {
-                            self.state = ServerState::Failed {
-                                reason: "ui-server 重启后未就绪".into(),
-                            };
-                            return None;
-                        }
+                    if let Some(ready) = self.wait_ready(*next) {
+                        self.enter_ready(ready, false);
+                        return Some(ready);
                     }
                 }
             }
         }
+        self.state = ServerState::Failed { reason: "ui-server 重启后未就绪".into() };
+        None
+    }
+
+    /// 手动重试（startup.html 重试按钮 → bridge invoke）：Ready 幂等返回；否则清零计数重走启动链
+    pub fn retry(&mut self) -> Result<u16, String> {
+        if let ServerState::Ready { port, .. } = self.state {
+            return Ok(port);
+        }
+        self.restarts = 0;
+        self.health_misses = 0;
+        self.own_port_file = false; // Failed 期间残留的端口文件若是我们写的，重试成功后会覆盖
+        self.ensure_started()
     }
 
     /// 退出清理：自己拉起的实例 POST /api/shutdown → 等待自然退出 → kill 兜底 + 清端口文件；
-    /// 复用的既有实例不杀（属用户 `applift ui` 的进程）
+    /// 复用的既有实例不杀（属用户 `applift ui` 的进程）。
+    /// Starting/Failed 态仍有活 child 时（启动窗口期退出，I3）同样 kill 兜底。
     pub fn shutdown(&mut self) {
-        let port = match self.state {
-            ServerState::Ready { port, .. } => port,
-            _ => return,
-        };
-        if !self.owns_server {
-            return;
-        }
-        self.http.post_shutdown(port);
-        if let Some(child) = self.child.as_mut() {
-            // 优雅等待：在 grace 内轮询退出，超时强杀
-            let deadline = Instant::now() + self.cfg.shutdown_grace;
-            loop {
-                if child.poll_exit().is_some() {
-                    break;
+        match self.state {
+            ServerState::Ready { port, .. } if self.owns_server => {
+                self.http.post_shutdown(port);
+                if let Some(child) = self.child.as_mut() {
+                    // 优雅等待：在 grace 内轮询退出，超时强杀
+                    let deadline = Instant::now() + self.cfg.shutdown_grace;
+                    loop {
+                        if child.poll_exit().is_some() {
+                            break;
+                        }
+                        if Instant::now() >= deadline {
+                            child.kill();
+                            child.wait();
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
                 }
-                if Instant::now() >= deadline {
+            }
+            _ => {
+                // 非 Ready（复用/启动窗口期/失败）：只处理自己 spawn 的 child
+                if let Some(mut child) = self.child.take() {
                     child.kill();
                     child.wait();
-                    break;
                 }
-                std::thread::sleep(Duration::from_millis(100));
+                self.state = ServerState::Starting;
+                if self.own_port_file {
+                    self.remove_port_file();
+                }
+                return;
             }
         }
         self.child = None;
         self.state = ServerState::Starting;
-        self.remove_port_file();
+        if self.own_port_file {
+            self.remove_port_file();
+        }
+    }
+
+    /// 测试专用：直接置 Starting 态活 child（模拟 ensure_started 进行中被退出打断）
+    #[cfg(test)]
+    pub(crate) fn inject_child_for_test(&mut self, child: Box<dyn ServerProcess>) {
+        self.child = Some(child);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mark_own_port_file_for_test(&mut self) {
+        self.own_port_file = true;
     }
 }
 
@@ -487,7 +553,11 @@ mod tests {
     struct Shared {
         events: Vec<String>,
         healthy: HashSet<u16>,
+        /// 这些端口即使 spawn 也不会变健康（模拟端口被占/起不来）
+        never_healthy: HashSet<u16>,
         fail_launches: u32,
+        /// 第 N 次 launch 起 spawn 即就绪（0 = 永不）
+        auto_healthy_from: u32,
         /// 前 N 次拉起的进程在首次 poll_exit 即视为已退出（模拟就绪前崩溃）
         exit_before_ready: u32,
         launches: u32,
@@ -506,10 +576,9 @@ mod tests {
         }
     }
 
-    /// launches >= auto_healthy_from 后，spawn 即把端口置为健康（模拟 server 起来就绪）
+    /// launches 达到 Shared.auto_healthy_from 后，spawn 即把端口置为健康（模拟 server 就绪）
     struct StubLauncher {
         shared: Arc<Mutex<Shared>>,
-        auto_healthy_from: u32,
     }
 
     struct StubProcess {
@@ -542,7 +611,10 @@ mod tests {
                 s.fail_launches -= 1;
                 return Err(io::Error::other("spawn boom"));
             }
-            if self.auto_healthy_from > 0 && n >= self.auto_healthy_from {
+            if s.auto_healthy_from > 0
+                && n >= s.auto_healthy_from
+                && !s.never_healthy.contains(&port)
+            {
                 s.healthy.insert(port);
             }
             let exit_code = if s.exit_before_ready > 0 {
@@ -569,22 +641,26 @@ mod tests {
     fn fast_cfg(port_file: PathBuf) -> SupervisorConfig {
         SupervisorConfig {
             port_file,
-            ready_timeout: Duration::from_millis(600),
-            poll_interval: Duration::from_millis(20),
+            ready_timeout: Duration::from_millis(200),
+            poll_interval: Duration::from_millis(10),
             shutdown_grace: Duration::from_millis(100),
+            stable_reset: Duration::from_secs(60),
         }
     }
 
-    fn make(
-        shared: Arc<Mutex<Shared>>,
-        auto_healthy_from: u32,
-        port_file: PathBuf,
-    ) -> Supervisor {
+    fn make(shared: Arc<Mutex<Shared>>, port_file: PathBuf) -> Supervisor {
         Supervisor::new(
             Box::new(StubHttp(shared.clone())),
-            Box::new(StubLauncher { shared, auto_healthy_from }),
+            Box::new(StubLauncher { shared }),
             fast_cfg(port_file),
         )
+    }
+
+    /// 两次失联 tick（M2：连续 2 次才判死）——重启动作发生在第二次
+    fn two_miss_ticks(sup: &mut Supervisor) -> Option<u16> {
+        let first = sup.check_and_restart();
+        assert_eq!(first, None, "首次失联只计数不重启");
+        sup.check_and_restart()
     }
 
     // -- node 自检矩阵 ------------------------------------------------------
@@ -619,7 +695,7 @@ mod tests {
         shared.lock().unwrap().healthy.insert(47999);
         let pf = temp_port_file("reuse");
         fs::write(&pf, "47999").unwrap();
-        let mut sup = make(shared.clone(), 0, pf.clone());
+        let mut sup = make(shared.clone(), pf.clone());
         let port = sup.ensure_started().unwrap();
         assert_eq!(port, 47999);
         assert_eq!(shared.lock().unwrap().launches, 0, "复用不 spawn");
@@ -636,8 +712,9 @@ mod tests {
     #[test]
     fn spawns_and_becomes_ready() {
         let shared = Arc::new(Mutex::new(Shared::default()));
+        shared.lock().unwrap().auto_healthy_from = 1;
         let pf = temp_port_file("spawn");
-        let mut sup = make(shared.clone(), 1, pf.clone());
+        let mut sup = make(shared.clone(), pf.clone());
         let port = sup.ensure_started().unwrap();
         assert!(port > 0);
         assert_eq!(shared.lock().unwrap().launches, 1);
@@ -648,9 +725,13 @@ mod tests {
     #[test]
     fn restarts_once_when_child_dies_before_ready() {
         let shared = Arc::new(Mutex::new(Shared::default()));
-        shared.lock().unwrap().exit_before_ready = 1;
+        {
+            let mut s = shared.lock().unwrap();
+            s.exit_before_ready = 1;
+            s.auto_healthy_from = 2;
+        }
         let pf = temp_port_file("restart1");
-        let mut sup = make(shared.clone(), 2, pf);
+        let mut sup = make(shared.clone(), pf);
         let port = sup.ensure_started().unwrap();
         assert!(port > 0);
         assert_eq!(shared.lock().unwrap().launches, 2, "崩溃后重启 1 次");
@@ -660,9 +741,13 @@ mod tests {
     #[test]
     fn fails_after_exhausting_restarts() {
         let shared = Arc::new(Mutex::new(Shared::default()));
-        shared.lock().unwrap().exit_before_ready = 10; // 每次都崩
+        {
+            let mut s = shared.lock().unwrap();
+            s.exit_before_ready = 10; // 每次都崩
+            s.auto_healthy_from = 99;
+        }
         let pf = temp_port_file("fail");
-        let mut sup = make(shared.clone(), 99, pf);
+        let mut sup = make(shared.clone(), pf);
         let err = sup.ensure_started().unwrap_err();
         assert!(err.contains("not ready"), "err={err}");
         assert!(matches!(sup.state(), ServerState::Failed { .. }));
@@ -672,8 +757,9 @@ mod tests {
     #[test]
     fn shutdown_posts_then_kills_in_order() {
         let shared = Arc::new(Mutex::new(Shared::default()));
+        shared.lock().unwrap().auto_healthy_from = 1;
         let pf = temp_port_file("order");
-        let mut sup = make(shared.clone(), 1, pf.clone());
+        let mut sup = make(shared.clone(), pf.clone());
         let port = sup.ensure_started().unwrap();
         sup.shutdown();
         let events = shared.lock().unwrap().events.clone();
@@ -689,22 +775,130 @@ mod tests {
     #[test]
     fn monitor_restarts_crashed_server_then_gives_up() {
         let shared = Arc::new(Mutex::new(Shared::default()));
+        shared.lock().unwrap().auto_healthy_from = 1;
         let pf = temp_port_file("monitor");
-        let mut sup = make(shared.clone(), 1, pf);
+        let mut sup = make(shared.clone(), pf);
         let port = sup.ensure_started().unwrap();
 
         // 正常运行：tick 无动作
         assert_eq!(sup.check_and_restart(), None);
 
-        // 模拟进程被杀：端口失联 → 同端口重启恢复
+        // 模拟进程被杀：连续 2 次失联（M2）→ 同端口重启恢复
         shared.lock().unwrap().healthy.remove(&port);
-        assert_eq!(sup.check_and_restart(), Some(port), "同端口恢复，URL 不变免再导航");
+        assert_eq!(two_miss_ticks(&mut sup), Some(port), "同端口恢复，URL 不变免再导航");
         assert_eq!(sup.restarts(), 1);
 
         // 再次崩溃：额度用尽 → Failed
         shared.lock().unwrap().healthy.remove(&port);
-        assert_eq!(sup.check_and_restart(), None);
+        assert_eq!(two_miss_ticks(&mut sup), None);
         assert!(matches!(sup.state(), ServerState::Failed { .. }));
+    }
+
+    #[test]
+    fn single_health_blip_does_not_restart() {
+        // M2：单次失联（下一 tick 已恢复）不触发重启
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        shared.lock().unwrap().auto_healthy_from = 1;
+        let pf = temp_port_file("blip");
+        let mut sup = make(shared.clone(), pf);
+        let port = sup.ensure_started().unwrap();
+
+        shared.lock().unwrap().healthy.remove(&port);
+        assert_eq!(sup.check_and_restart(), None, "首次失联只计数");
+        shared.lock().unwrap().healthy.insert(port);
+        assert_eq!(sup.check_and_restart(), None, "恢复即清零");
+        assert_eq!(shared.lock().unwrap().launches, 1, "没有多余 spawn");
+    }
+
+    #[test]
+    fn stable_run_resets_restart_budget() {
+        // I2：重启恢复后稳定运行 ≥ stable_reset → 额度重置，可再次守护
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        shared.lock().unwrap().auto_healthy_from = 1;
+        let pf = temp_port_file("stable");
+        let mut sup = Supervisor::new(
+            Box::new(StubHttp(shared.clone())),
+            Box::new(StubLauncher { shared: shared.clone() }),
+            SupervisorConfig {
+                stable_reset: Duration::from_millis(20),
+                ..fast_cfg(pf)
+            },
+        );
+        let port = sup.ensure_started().unwrap();
+
+        shared.lock().unwrap().healthy.remove(&port);
+        assert_eq!(two_miss_ticks(&mut sup), Some(port));
+        assert_eq!(sup.restarts(), 1);
+
+        std::thread::sleep(Duration::from_millis(40)); // 稳定期 > stable_reset
+        assert_eq!(sup.check_and_restart(), None);
+        assert_eq!(sup.restarts(), 0, "稳定运行后额度重置");
+
+        // 再崩：有新额度，仍能恢复
+        shared.lock().unwrap().healthy.remove(&port);
+        assert_eq!(two_miss_ticks(&mut sup), Some(port));
+    }
+
+    #[test]
+    fn monitor_restart_falls_back_to_fresh_port() {
+        // M1：原端口起不来（never_healthy）→ 换新端口恢复，Some(new) 触发壳重导航
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        shared.lock().unwrap().auto_healthy_from = 1;
+        let pf = temp_port_file("freshport");
+        let mut sup = make(shared.clone(), pf);
+        let port = sup.ensure_started().unwrap();
+
+        shared.lock().unwrap().healthy.remove(&port);
+        shared.lock().unwrap().never_healthy.insert(port);
+        let new_port = two_miss_ticks(&mut sup).expect("换端口兜底恢复");
+        assert_ne!(new_port, port);
+        let events = shared.lock().unwrap().events.clone();
+        assert!(events.contains(&format!("launch:{port}")), "先试原端口");
+        assert!(events.contains(&format!("launch:{new_port}")), "再换新端口");
+    }
+
+    #[test]
+    fn shutdown_during_startup_kills_orphan_child() {
+        // I3：启动窗口期（Starting、child 已 spawn 未就绪）退出 → kill 兜底 + 清端口文件
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        let pf = temp_port_file("orphan");
+        let mut sup = make(shared.clone(), pf.clone());
+        sup.inject_child_for_test(Box::new(StubProcess {
+            shared: shared.clone(),
+            exit_code: None,
+            polled: AtomicU32::new(0),
+        }));
+        sup.mark_own_port_file_for_test();
+        fs::write(&pf, "1").unwrap();
+        sup.shutdown();
+        let events = shared.lock().unwrap().events.clone();
+        assert!(events.iter().any(|e| e == "kill"), "启动窗口期退出 kill 兜底");
+        assert!(!pf.exists(), "自己写的端口文件被清理");
+    }
+
+    #[test]
+    fn retry_recovers_from_failed_state() {
+        // I4：Failed → retry 重走启动链恢复；Ready 态 retry 幂等
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        {
+            let mut s = shared.lock().unwrap();
+            s.exit_before_ready = 10;
+            s.auto_healthy_from = 99;
+        }
+        let pf = temp_port_file("retry");
+        let mut sup = make(shared.clone(), pf);
+        assert!(sup.ensure_started().is_err());
+        assert!(matches!(sup.state(), ServerState::Failed { .. }));
+
+        // 环境修复：下一次（第 3 次）launch 起正常就绪
+        {
+            let mut s = shared.lock().unwrap();
+            s.exit_before_ready = 0;
+            s.auto_healthy_from = 3;
+        }
+        let port = sup.retry().expect("retry 恢复");
+        assert!(matches!(sup.state(), ServerState::Ready { .. }));
+        assert_eq!(sup.retry(), Ok(port), "Ready 态幂等返回");
     }
 
     #[test]
