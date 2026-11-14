@@ -211,16 +211,22 @@ export class StatusAggregator {
           { timeoutMs: STATUS_TIMEOUT_MS },
         );
         report = this.parseReport(res);
-        const ok = res.code === 0 && report !== null;
-        const channels = (report?.results ?? []).map((r) => ({
-          channel: r.channel ?? "unknown",
-          platform: r.platform ?? "unknown",
-          state: r.state ?? "unknown",
-          live: r.live,
-          reason: r.reason,
-          error: r.error,
-          fetchedAt: r.fetchedAt ?? new Date().toISOString(),
-        }));
+        // exit 1 只是 CI 信号：错误渠道以 error 条目进 results，stdout 合法即采用（ok=true）；
+        // 仅 stdout 不可解析（report=null）才降级
+        const ok = report !== null;
+        const channels = (report?.results ?? [])
+          .map((r) => ({
+            channel: r.channel ?? "unknown",
+            platform: r.platform ?? "unknown",
+            state: r.state ?? "unknown",
+            live: r.live,
+            reason: r.reason,
+            error: r.error,
+            fetchedAt: r.fetchedAt ?? new Date().toISOString(),
+          }))
+          // 未知渠道（如 beta 段 testflight 无 Channel 实现，doctor 无法在发现侧过滤）：
+          // 不进 channels、不算失败——消费侧按 error 文案剔除
+          .filter((c) => !(c.error ?? "").includes("未知渠道"));
         const snapshot: ProjectSnapshot = {
           projectId: entry.id,
           channels,

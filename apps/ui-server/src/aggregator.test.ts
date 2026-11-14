@@ -585,6 +585,78 @@ describe("StatusAggregator", () => {
     expect(statusArgs).toEqual([["status", "--json"]]);
     expect(snapshots[0]!.ok).toBe(true);
   });
+
+  it("status exit 1 + 合法 stdout → ok=true 采用报告；stdout 不可解析 → 仍降级", async () => {
+    const { dir, registry } = await setup("exit-adopt", ["/tmp/exit1", "/tmp/noparse"]);
+    const responses = new Map<string, () => RunResult>([
+      // exit 1 仅为 CI 信号：错误渠道以 error 条目进 results，报告照常采用
+      [
+        "/tmp/exit1",
+        () => ({
+          code: 1,
+          stdout: statusJson([
+            {
+              channel: "pgyer",
+              platform: "android",
+              state: "unknown",
+              error: "状态查询暂未接入",
+              fetchedAt: new Date().toISOString(),
+            },
+          ]),
+          stderr: "",
+        }),
+      ],
+      ["/tmp/noparse", () => ({ code: 1, stdout: "", stderr: "boom" })],
+    ]);
+    const agg = makeAggregator(registry, join(dir, "state-history.jsonl"), responses);
+    await agg.refreshNow();
+    expect(snapshots).toHaveLength(2);
+    const idOf = (p: string) => registry.list().find((e) => e.path === p)!.id;
+    expect(snapshots.find((s) => s.projectId === idOf("/tmp/exit1"))).toMatchObject({
+      ok: true,
+      channels: [{ channel: "pgyer", error: "状态查询暂未接入" }],
+    });
+    expect(snapshots.find((s) => s.projectId === idOf("/tmp/noparse"))).toMatchObject({
+      ok: false,
+      channels: [],
+    });
+  });
+
+  it("未知渠道条目（error 含「未知渠道」）被过滤：不进 channels、不算失败", async () => {
+    const { dir, registry } = await setup("unknown-chan", ["/tmp/unk"]);
+    const responses = new Map<string, () => RunResult>([
+      [
+        "/tmp/unk",
+        () => ({
+          code: 1,
+          stdout: statusJson([
+            {
+              channel: "agc",
+              platform: "harmony",
+              state: "unknown",
+              error: "渠道状态未知",
+              fetchedAt: new Date().toISOString(),
+            },
+            {
+              channel: "testflight",
+              platform: "ios",
+              state: "unknown",
+              error: "未知渠道: testflight",
+              fetchedAt: new Date().toISOString(),
+            },
+          ]),
+          stderr: "",
+        }),
+      ],
+    ]);
+    const agg = makeAggregator(registry, join(dir, "state-history.jsonl"), responses);
+    await agg.refreshNow();
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toMatchObject({
+      ok: true,
+      channels: [{ channel: "agc" }],
+    });
+  });
 });
 
 /** 真 CLI dist 是否已构建（裸仓/未 build 时跳过冒烟，与 runner.test 同款护栏） */
