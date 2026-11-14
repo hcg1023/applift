@@ -24,23 +24,23 @@ applift-ui 的桌面宿主（macOS dmg / Windows exe）：**薄壳（目标 ≤1
 
 优先级：**工程内 > 全局 > 引导安装**。
 
-| 层 | 检测方式 | UI 呈现 |
-|---|---|---|
-| 工程内 | 项目卡数据带 `node_modules/.bin/applift` 存在性与 `--version` | 「applift：工程 0.14.x」 |
-| 全局 | `applift --version`（PATH 可达）或 `npm ls -g @applift/cli --json` | 「applift：全局 0.14.x」 |
-| 都没有 | — | 项目卡顶部「安装 applift」按钮 → 壳代跑 `npm install -g @applift/cli`（进度条 + 失败重试），完成后自动重检 |
+| 层     | 检测方式                                                           | UI 呈现                                                                                                    |
+| ------ | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| 工程内 | 项目卡数据带 `node_modules/.bin/applift` 存在性与 `--version`      | 「applift：工程 0.14.x」                                                                                   |
+| 全局   | `applift --version`（PATH 可达）或 `npm ls -g @applift/cli --json` | 「applift：全局 0.14.x」                                                                                   |
+| 都没有 | —                                                                  | 项目卡顶部「安装 applift」按钮 → 壳代跑 `npm install -g @applift/cli`（进度条 + 失败重试），完成后自动重检 |
 
 - **版本与更新**：启动与手动刷新时对已装来源跑 `--version`；`npm view @applift/cli version` 比对，有新版 → 设置页与项目卡提示「可更新 0.15.0」；全局来源一键更新（`npm i -g @applift/cli@latest`，需确认）；工程内来源仅提示不代改（版本属工程依赖）。
-- **实现落点**：ui-server AppliftRunner 的 bin 解析函数扩展为三级链（现已有工程/内置两级语义，去掉内置、加全局与安装引导状态机）；检索与安装走新 REST `GET /api/applift/availability`、`POST /api/applift/install`（Host 校验同现有矩阵），安装用独立任务事件流（复用 WS task 通道，事件类型 `install.log/install.progress/install.result`）。
+- 事件降级：安装流不产出 `install.progress` 独立事件——npm 输出（stderr/stdout 文本行）聚合为 `install.log`（error/info），结束以 `install.result` 收口；进度百分比展示由前端按 log 行自行估算。
 - **Node 前置**：壳启动 `node --version`，缺失→首屏引导页（下载链接，不做自动安装）。Node ≥20 校验，低于 20 提示升级。
 
 ## 3. 壳能力（HostAdapter 的 Tauri 实现）
 
-| 能力 | webui 现状 | Tauri 实现 |
-|---|---|---|
-| notify | Notification API（授权失败降级未读列表） | tauri-plugin-notification（原生，授权一次） |
-| pickDirectory | null（手输路径） | tauri-plugin-dialog 原生目录选择 |
-| setBadge | no-op | 托盘角标数字（未读动态数） |
+| 能力          | webui 现状                               | Tauri 实现                                  |
+| ------------- | ---------------------------------------- | ------------------------------------------- |
+| notify        | Notification API（授权失败降级未读列表） | tauri-plugin-notification（原生，授权一次） |
+| pickDirectory | null（手输路径）                         | tauri-plugin-dialog 原生目录选择            |
+| setBadge      | no-op                                    | 托盘角标数字（未读动态数）                  |
 
 前端探测 `window.__TAURI_INTERNALS__` 选择实现；不可用回落 webuiHost。接口签名沿用一期 HostAdapter（零改动）。
 

@@ -60,6 +60,7 @@ export interface AvailabilityProberOptions {
 }
 export function createAvailabilityProber(opts: AvailabilityProberOptions = {}): {
   get(cwd?: string): Promise<Availability>;
+  invalidate(): void;
 } {
   const probeVersion = opts.probeVersion ?? probeVersionDefault;
   const fetchLatest = opts.fetchLatest ?? (() => fetchLatestDefault());
@@ -77,7 +78,6 @@ export function createAvailabilityProber(opts: AvailabilityProberOptions = {}): 
 
   return {
     async get(cwd?: string): Promise<Availability> {
-      const sources: AppliftSource[] = [];
       const found: Array<{ kind: "project" | "global"; path: string; bin: string[] }> = [];
       if (cwd !== undefined) {
         const project = findProjectApplift(cwd);
@@ -85,17 +85,25 @@ export function createAvailabilityProber(opts: AvailabilityProberOptions = {}): 
       }
       const global = findGlobalApplift(opts.pathEnv);
       if (global !== null) found.push({ kind: "global", path: global, bin: [global] });
-      for (const f of found) {
-        sources.push({ kind: f.kind, path: f.path, version: await cachedVersion(f.bin) });
-      }
-      // npm view 与版本探测并行；任一失败都不拖垮整体（latest null = 离线降级）
-      const [latest] = await Promise.all([fetchLatest().catch(() => null)]);
+      // 各源版本探测与 npm view 全并行（互不阻塞；任一失败不拖垮整体，latest null = 离线降级）
+      const [latest, ...versions] = await Promise.all([
+        fetchLatest().catch(() => null),
+        ...found.map((f) => cachedVersion(f.bin).catch(() => null)),
+      ]);
       return {
         nodeVersion: process.version,
         nodeOk: nodeMajor(process.version) >= NODE_MIN_MAJOR,
-        sources,
+        sources: found.map((f, i) => ({
+          kind: f.kind,
+          path: f.path,
+          version: versions[i] ?? null,
+        })),
         latest,
       };
+    },
+    /** 失效版本缓存（安装/更新任务结束后调用，立即重探测拿新版本） */
+    invalidate(): void {
+      cache.clear();
     },
   };
 }

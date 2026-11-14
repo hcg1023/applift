@@ -20,11 +20,11 @@ export function sendJson(res: ServerResponse, status: number, body: unknown): vo
   res.end(JSON.stringify(body));
 }
 
-/** CLI bin 定位：收敛到检索链 resolveAppliftBin 的 env 层（`applift ui` spawn server 时经 APPLIFT_CLI_BIN 传入真实 bin 绝对路径）；
- *  env 缺席（开发直跑）回落本仓库 dist——server 与 CLI 同仓发布，内部 validate/轮询不依赖用户全局安装 */
+/** CLI bin 定位：`applift ui` spawn server 时经 APPLIFT_CLI_BIN 传入真实 bin 绝对路径（发布安装布局下仓库相对路径不存在）；
+ *  env 短路直读（不走检索链 PATH 扫描——内部 validate/轮询不依赖用户全局安装）；env 缺席（开发直跑）回落本仓库 dist */
 export function cliBinPath(): string {
-  const resolved = resolveAppliftBin();
-  if (resolved.source === "env" && resolved.bin !== null) return resolved.bin[1] ?? "";
+  const fromEnv = process.env.APPLIFT_CLI_BIN;
+  if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv;
   return fileURLToPath(new URL("../../../packages/cli/dist/bin.mjs", import.meta.url));
 }
 const VALIDATE_TIMEOUT_MS = 60_000; // validate 为只读探测（findUp/config 解析），60s 远超正常耗时

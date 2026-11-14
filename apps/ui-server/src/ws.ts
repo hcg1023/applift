@@ -10,6 +10,8 @@ export type TaskEvent = { type?: string } & Record<string, unknown>;
 /** 已归档任务（result / 退出后入 ring buffer，重连回看用） */
 export interface ArchivedTask {
   taskId: string;
+  /** 任务类别（与 taskId 前缀同源；前缀仅展示用，判别以本字段为准）。可选：旧归档/前端兼容 */
+  kind?: "beta" | "install";
   projectId: string;
   platform: string;
   events: TaskEvent[];
@@ -20,6 +22,8 @@ export interface ArchivedTask {
 
 /** ring buffer 容量 */
 const ARCHIVE_MAX = 20;
+/** 安装任务看门狗默认：10 分钟（npm -g 安装慢网兜底；挂死即杀释放去重位） */
+const DEFAULT_INSTALL_TIMEOUT_MS = 10 * 60_000;
 /** 确认看门狗默认：10 分钟（与 CLI EventChannel confirmTimeoutMs 同款语义） */
 const DEFAULT_CONFIRM_TIMEOUT_MS = 10 * 60_000;
 /** WS 挂载路径：独立于静态路由，升级请求按 path 过滤，不劫持其他升级 */
@@ -217,6 +221,7 @@ export class WsChannel {
       this.activeTasks.delete(taskId);
       this.archive.push({
         taskId,
+        kind: "beta",
         projectId,
         platform,
         events: task.events,
@@ -234,7 +239,12 @@ export class WsChannel {
    * 走通用 spawnStream 任务通道（taskId 前缀 install:），stderr/纯文本 stdout → install.log，结束广播 install.result。
    * 去重：同 kind 进行中再发起 → 抛错（路由层转 409）。
    */
-  startInstallTask(opts: { runner: AppliftRunner; update?: boolean }): string {
+  startInstallTask(opts: {
+    runner: AppliftRunner;
+    update?: boolean;
+    timeoutMs?: number;
+    onDone?: () => void;
+  }): string {
     for (const { task } of this.activeTasks.values()) {
       if (task.kind === "install") {
         throw new Error(`已有进行中的安装任务（taskId: ${task.taskId}）`);
@@ -263,12 +273,32 @@ export class WsChannel {
       onError: (msg) => emit({ type: "install.log", level: "error", msg }),
       onStdoutText: (msg) => emit({ type: "install.log", level: "info", msg }),
     });
-    this.activeTasks.set(taskId, { task, handle, clearConfirmTimer: () => {} });
+    // 看门狗：任务级超时（挂死 npm 永占去重位 → kill 释放）；任何退出即清
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS;
+    let watchdog: NodeJS.Timeout | undefined;
+    const clearWatchdog = (): void => {
+      if (watchdog !== undefined) {
+        clearTimeout(watchdog);
+        watchdog = undefined;
+      }
+    };
+    watchdog = setTimeout(() => {
+      emit({
+        type: "install.log",
+        level: "warn",
+        msg: `安装任务超时（${timeoutMs / 1000} 秒无退出）已自动终止`,
+      });
+      handle.kill();
+    }, timeoutMs);
+    watchdog.unref?.();
+    this.activeTasks.set(taskId, { task, handle, clearConfirmTimer: clearWatchdog });
     handle.done.then(({ code }) => {
+      clearWatchdog();
       this.activeTasks.delete(taskId);
       emit({ type: "install.result", ok: code === 0, code });
       this.archive.push({
         taskId,
+        kind: "install",
         projectId: task.projectId,
         platform: task.platform,
         events: task.events,
@@ -278,6 +308,7 @@ export class WsChannel {
       });
       if (this.archive.length > ARCHIVE_MAX) this.archive = this.archive.slice(-ARCHIVE_MAX);
       this.broadcast({ t: "task.end", taskId, code });
+      opts.onDone?.();
     });
     return taskId;
   }

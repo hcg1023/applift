@@ -1,10 +1,10 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { AppliftRunner, findGlobalApplift, resolveAppliftBin, toSpawnCommand } from "./runner.js";
 import { join } from "node:path";
 import { request } from "node:http";
 import { startUiServer } from "./http.js";
-import { AppliftRunner, findGlobalApplift, resolveAppliftBin } from "./runner.js";
 import { WsChannel } from "./ws.js";
 import { createAppliftRoutes } from "./routes.js";
 import { createAvailabilityProber, type Availability } from "./applift-install.js";
@@ -72,6 +72,28 @@ describe("resolveAppliftBin 检索链", () => {
   it("findGlobalApplift：PATH 无 applift 时 null；可注入 pathEnv", async () => {
     expect(findGlobalApplift(await tmpDir("empty-path-"))).toBeNull();
   });
+
+  it("F2 toSpawnCommand：win32 下 .cmd/.bat 与裸 npm/npx 经 cmd.exe /c；其余平台原样 [未实机]", () => {
+    // win32：批处理 shim / npm / npx → cmd.exe /c 形态（Node 无 shell 直 spawn EINVAL/ENOENT）
+    expect(toSpawnCommand(["C:\\x\\applift.cmd", "--version"], "win32")).toEqual([
+      "cmd.exe",
+      "/c",
+      "C:\\x\\applift.cmd",
+      "--version",
+    ]);
+    expect(toSpawnCommand(["npm", "install", "-g", "@applift/cli"], "win32")).toEqual([
+      "cmd.exe",
+      "/c",
+      "npm",
+      "install",
+      "-g",
+      "@applift/cli",
+    ]);
+    // 可执行文件（.exe）与非 win32 平台原样
+    expect(toSpawnCommand(["C:\\x\\applift.exe"], "win32")).toEqual(["C:\\x\\applift.exe"]);
+    expect(toSpawnCommand(["npm", "install"], "darwin")).toEqual(["npm", "install"]);
+    expect(toSpawnCommand([], "win32")).toEqual([]);
+  });
 });
 
 describe("createAvailabilityProber", () => {
@@ -114,6 +136,26 @@ describe("createAvailabilityProber", () => {
     const a = await prober.get();
     expect(a.sources).toEqual([]);
     expect(a.latest).toBeNull();
+  });
+
+  it("F1 invalidate：安装结束失效缓存，立即重探测拿新版本", async () => {
+    const root = await tmpDir("avail-inv-");
+    const proj = join(root, "proj");
+    await mkdir(join(proj, "node_modules", ".bin"), { recursive: true });
+    await exeStub(join(proj, "node_modules", ".bin"), "applift", "0.1.0");
+
+    let version = "0.1.0";
+    const prober = createAvailabilityProber({
+      probeVersion: async () => version,
+      fetchLatest: async () => "0.14.2",
+    });
+    expect((await prober.get(proj)).sources[0]?.version).toBe("0.1.0");
+    // 缓存生效：探测源已升级也拿旧值
+    version = "0.15.0";
+    expect((await prober.get(proj)).sources[0]?.version).toBe("0.1.0");
+    // invalidate 后重探测拿新值
+    prober.invalidate();
+    expect((await prober.get(proj)).sources[0]?.version).toBe("0.15.0");
   });
 });
 
@@ -178,6 +220,71 @@ describe("WsChannel.startInstallTask", () => {
       new RegExp(taskId.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")),
     );
     // 清理：杀掉挂起任务
+    await channel.close();
+    await server.close();
+  });
+
+  it("F3 看门狗：短超时注入 → warn log + kill + result(ok:false) + onDone；去重位释放", async () => {
+    const root = await tmpDir("install3-");
+    const stub = join(root, "hang2.cjs");
+    await writeFile(stub, `setInterval(()=>{},60000);`, "utf8");
+    const server = await startUiServer({ port: 0, staticDir: await tmpDir("static3-") });
+    const channel = new WsChannel({ runnerFactory: () => new AppliftRunner() });
+    channel.attach(server.httpServer);
+
+    type Down = { t: string; taskId?: string; data?: Record<string, unknown> };
+    const events: Down[] = [];
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+    const { promise: opened, resolve: openedResolve } = Promise.withResolvers<void>();
+    ws.once("open", () => openedResolve());
+    ws.on("message", (raw) => events.push(JSON.parse(String(raw)) as Down));
+    await opened;
+
+    let onDoneCalls = 0;
+    const taskId = channel.startInstallTask({
+      runner: new AppliftRunner({ bin: `node ${stub}` }),
+      timeoutMs: 150,
+      onDone: () => {
+        onDoneCalls += 1;
+      },
+    });
+
+    await vi.waitFor(() => {
+      const warn = events.find(
+        (e) => e.t === "task" && e.data?.type === "install.log" && e.data?.level === "warn",
+      );
+      const result = events.find(
+        (e) => e.t === "task" && e.taskId === taskId && e.data?.type === "install.result",
+      );
+      expect(warn).toBeDefined();
+      expect(result?.data?.ok).toBe(false);
+      expect(events.find((e) => e.t === "task.end" && e.taskId === taskId)).toBeDefined();
+      expect(onDoneCalls).toBe(1);
+    });
+    // 去重位已释放：可再次发起
+    const second = channel.startInstallTask({
+      runner: new AppliftRunner({ bin: `node ${stub}` }),
+      timeoutMs: 150,
+    });
+    expect(second).not.toBe(taskId);
+    ws.close();
+    await channel.close();
+    await server.close();
+  });
+
+  it("F3 onDone：任务正常成功结束也触发（缓存失效接线语义）", async () => {
+    const root = await tmpDir("install4-");
+    const stub = join(root, "ok.cjs");
+    await writeFile(stub, `process.exit(0);`, "utf8");
+    const server = await startUiServer({ port: 0, staticDir: await tmpDir("static4-") });
+    const channel = new WsChannel({ runnerFactory: () => new AppliftRunner() });
+    channel.attach(server.httpServer);
+    const { promise, resolve } = Promise.withResolvers<void>();
+    channel.startInstallTask({
+      runner: new AppliftRunner({ bin: `node ${stub}` }),
+      onDone: resolve,
+    });
+    await promise;
     await channel.close();
     await server.close();
   });

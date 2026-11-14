@@ -159,7 +159,12 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
       createAppliftRoutes({
         availability: (cwd) => availabilityProber.get(cwd),
         startInstallTask: (o) =>
-          ws.startInstallTask({ runner: new AppliftRunner({ bin: "npm" }), ...o }),
+          ws.startInstallTask({
+            runner: new AppliftRunner({ bin: "npm" }),
+            ...o,
+            // 任务结束（无论成败）失效版本缓存：前端立即重拉 availability 拿新版本
+            onDone: () => availabilityProber.invalidate(),
+          }),
       }),
       // POST /api/shutdown：仅本机可达（http 层固定监听 127.0.0.1）；`applift ui --stop` 消费
       (req, res) => {

@@ -135,6 +135,28 @@ function killProcessGroup(child: ChildProcess, signal: NodeJS.Signals = "SIGTERM
   child.kill(signal); // 回退杀单进程
 }
 
+/** Windows 批处理扩展：Node 无 shell 直 spawn 会 EINVAL，须经 cmd.exe /c 间接执行 */
+const WIN_BATCH_EXTS = [".cmd", ".bat"] as const;
+
+/**
+ * spawn 命令归一化：win32 下命令本身是 .cmd/.bat（npm shim、检索链解出的 applift.cmd）
+ * 或裸 npm/npx 时，改经 `cmd.exe /c <cmd>` 形态执行（Node spawn 无 shell 时这些形态直跑必失败）。
+ * 纯函数便于平台注入测试（无真 Windows 环境）。[未实机] 分支仅静态覆盖。
+ */
+export function toSpawnCommand(
+  bin: string[],
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  if (platform !== "win32" || bin.length === 0) return bin;
+  const [cmd, ...rest] = bin;
+  if (cmd === undefined) return bin;
+  const lower = cmd.toLowerCase();
+  const isBatch = WIN_BATCH_EXTS.some((e) => lower.endsWith(e));
+  const isNpmShim = cmd === "npm" || cmd === "npx";
+  if (isBatch || isNpmShim) return ["cmd.exe", "/c", cmd, ...rest];
+  return bin;
+}
+
 /**
  * ui-server 与 applift CLI 的统一子进程层：一次性 run（validate/status 轮询）
  * 与流式 spawnStream（发版任务 NDJSON 事件流）共用一套定位/kill/退出码兜底语义。
@@ -153,8 +175,10 @@ export class AppliftRunner {
   constructor(opts: { cwd?: string; bin?: string | string[] } = {}) {
     const bin = opts.bin ?? "npx applift";
     const parts = typeof bin === "string" ? bin.trim().split(/\s+/) : bin;
-    this.command = parts[0] ?? "";
-    this.prefixArgs = parts.slice(1);
+    // win32 归一化：.cmd/.bat 与裸 npm/npx 经 cmd.exe /c（无 shell 直 spawn EINVAL/ENOENT）
+    const normalized = toSpawnCommand(parts.length > 0 ? parts : [""]);
+    this.command = normalized[0] ?? "";
+    this.prefixArgs = normalized.slice(1);
     this.cwd = opts.cwd;
   }
 
