@@ -24,13 +24,25 @@ async function tempDir(prefix: string): Promise<string> {
   return dir;
 }
 
-/** 假 runner：按 cwd 返回可编程的 StatusReport */
+/** 假 runner：按 cwd 返回可编程的 StatusReport；doctor 调用默认回一份带 pgyer 的体检报告
+ *  （走发现路径→status 带 --stores；需要空渠道/失败/旧版场景时传 doctorResponses 覆盖） */
 function fakeRunnerFactory(
   responses: Map<string, () => RunResult>,
+  doctorResponses?: Map<string, () => RunResult>,
 ): (cwd: string) => AppliftRunner {
   return (cwd: string) =>
     ({
-      run: async () => {
+      run: async (args: string[] = []) => {
+        if (args[0] === "doctor") {
+          const fn = doctorResponses?.get(cwd);
+          return fn
+            ? fn()
+            : {
+                code: 0,
+                stdout: JSON.stringify({ ok: true, stores: [{ id: "pgyer" }], channels: [] }),
+                stderr: "",
+              };
+        }
         const fn = responses.get(cwd);
         if (!fn) return { code: 1, stdout: "", stderr: `no fake for ${cwd}` };
         return fn();
@@ -99,12 +111,13 @@ function makeAggregator(
   baselinePath: string,
   responses: Map<string, () => RunResult>,
   timers = clock.timers,
+  doctorResponses?: Map<string, () => RunResult>,
 ) {
   snapshots.length = 0;
   feed.length = 0;
   return new StatusAggregator({
     registry,
-    runnerFactory: fakeRunnerFactory(responses),
+    runnerFactory: fakeRunnerFactory(responses, doctorResponses),
     onSnapshot: (s) => snapshots.push(s),
     onFeed: (e) => feed.push(e),
     baselinePath,
@@ -430,6 +443,147 @@ describe("StatusAggregator", () => {
     const [a, b] = [agg.refreshNow(), agg.refreshNow()];
     await Promise.all([a, b]);
     expect(calls).toBe(1);
+  });
+
+  it("doctor 渠道发现：stores+beta 渠道合并去重传给 status --stores", async () => {
+    const { dir, registry } = await setup("discover", ["/tmp/disc"]);
+    snapshots.length = 0;
+    const statusArgs: string[][] = [];
+    const responses = new Map<string, () => RunResult>([
+      [
+        "/tmp/disc",
+        () => ({
+          code: 0,
+          stdout: statusJson([
+            {
+              channel: "pgyer",
+              platform: "android",
+              state: "reviewing",
+              fetchedAt: new Date().toISOString(),
+            },
+          ]),
+          stderr: "",
+        }),
+      ],
+    ]);
+    const doctor = new Map<string, () => RunResult>([
+      // exit 1（凭据缺失）不影响发现；stores 与 channels 重叠项去重
+      [
+        "/tmp/disc",
+        () => ({
+          code: 1,
+          stdout: JSON.stringify({
+            ok: false,
+            stores: [{ id: "pgyer", credentialsOk: false, missing: ["PGYER_API_KEY"] }],
+            channels: ["agc", "pgyer", "testflight"],
+          }),
+          stderr: "",
+        }),
+      ],
+    ]);
+    const base = fakeRunnerFactory(responses, doctor);
+    const agg = new StatusAggregator({
+      registry,
+      runnerFactory: (cwd) => {
+        const r = base(cwd);
+        return {
+          run: async (args: string[] = []) => {
+            if (args[0] === "status") statusArgs.push(args);
+            return r.run(args);
+          },
+        } as unknown as AppliftRunner;
+      },
+      onSnapshot: (s) => snapshots.push(s),
+      onFeed: () => {},
+      baselinePath: join(dir, "state-history.jsonl"),
+      timers: clock.timers,
+    });
+    await agg.refreshNow();
+    expect(statusArgs).toEqual([["status", "--json", "--stores", "pgyer,agc,testflight"]]);
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]!.ok).toBe(true);
+  });
+
+  it("doctor 渠道集为空 → ok=true 空 channels（纯无渠道工程不是错误）", async () => {
+    const { dir, registry } = await setup("empty-chans", ["/tmp/none"]);
+    let statusCalls = 0;
+    const responses = new Map<string, () => RunResult>([
+      [
+        "/tmp/none",
+        () => {
+          statusCalls++;
+          return { code: 0, stdout: statusJson([]), stderr: "" };
+        },
+      ],
+    ]);
+    const doctor = new Map<string, () => RunResult>([
+      [
+        "/tmp/none",
+        () => ({
+          code: 0,
+          stdout: JSON.stringify({ ok: true, stores: [], channels: [] }),
+          stderr: "",
+        }),
+      ],
+    ]);
+    const agg = makeAggregator(
+      registry,
+      join(dir, "state-history.jsonl"),
+      responses,
+      undefined,
+      doctor,
+    );
+    await agg.refreshNow();
+    expect(statusCalls).toBe(0); // 空渠道集短路：不跑 status
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toMatchObject({ ok: true, channels: [] });
+  });
+
+  it("doctor 失败/旧版 CLI → 退回不传 --stores 的现状行为", async () => {
+    const { dir, registry } = await setup("doctor-fail", ["/tmp/legacy"]);
+    snapshots.length = 0;
+    const statusArgs: string[][] = [];
+    const responses = new Map<string, () => RunResult>([
+      [
+        "/tmp/legacy",
+        () => ({
+          code: 0,
+          stdout: statusJson([
+            {
+              channel: "pgyer",
+              platform: "android",
+              state: "reviewing",
+              fetchedAt: new Date().toISOString(),
+            },
+          ]),
+          stderr: "",
+        }),
+      ],
+    ]);
+    const doctor = new Map<string, () => RunResult>([
+      // 旧版 CLI：unknown option 报错走 stderr，stdout 无 JSON
+      ["/tmp/legacy", () => ({ code: 1, stdout: "", stderr: "error: unknown option '--json'" })],
+    ]);
+    const base = fakeRunnerFactory(responses, doctor);
+    const agg = new StatusAggregator({
+      registry,
+      runnerFactory: (cwd) => {
+        const r = base(cwd);
+        return {
+          run: async (args: string[] = []) => {
+            if (args[0] === "status") statusArgs.push(args);
+            return r.run(args);
+          },
+        } as unknown as AppliftRunner;
+      },
+      onSnapshot: (s) => snapshots.push(s),
+      onFeed: () => {},
+      baselinePath: join(dir, "state-history.jsonl"),
+      timers: clock.timers,
+    });
+    await agg.refreshNow();
+    expect(statusArgs).toEqual([["status", "--json"]]);
+    expect(snapshots[0]!.ok).toBe(true);
   });
 });
 

@@ -191,9 +191,25 @@ export class StatusAggregator {
       try {
         // 工厂在 try 内：同步抛错同样降级为 ok=false 快照，不打断后续项目
         const runner = this.runnerFactory(entry.path);
-        const res = await runner.run(["status", "--json"], {
-          timeoutMs: STATUS_TIMEOUT_MS,
-        });
+        // 渠道发现：doctor --json 拿 stores+beta 渠道（qy-driver 等渠道全在 beta 段的工程，
+        // status 缺省回落 config.android.stores 为空会 exit 1）；失败/旧版 CLI → null 退回现状
+        const discovered = await this.discoverChannels(runner);
+        if (discovered !== null && discovered.length === 0) {
+          // 纯无渠道工程：ok=true 空 channels（不是错误）
+          this.emitSnapshot({
+            projectId: entry.id,
+            channels: [],
+            fetchedAt: new Date().toISOString(),
+            ok: true,
+          });
+          continue;
+        }
+        const res = await runner.run(
+          discovered === null
+            ? ["status", "--json"]
+            : ["status", "--json", "--stores", discovered.join(",")],
+          { timeoutMs: STATUS_TIMEOUT_MS },
+        );
         report = this.parseReport(res);
         const ok = res.code === 0 && report !== null;
         const channels = (report?.results ?? []).map((r) => ({
@@ -231,6 +247,35 @@ export class StatusAggregator {
       this.onSnapshot(s);
     } catch {
       // 吞掉：ui-server 主进程存活优先于单个订阅者
+    }
+  }
+
+  /** doctor --json 渠道发现：stores[].id（android.stores 段）+ channels（beta 段）合并去重。
+   *  doctor exit 1（凭据缺失）不影响发现——stdout 合法 JSON 即采信；
+   *  spawn 失败 / 无 --json 的旧版 CLI / stdout 不可解析 → null（退回不传 --stores 的现状行为） */
+  private async discoverChannels(runner: AppliftRunner): Promise<string[] | null> {
+    let res: { code: number; stdout: string; stderr: string };
+    try {
+      res = await runner.run(["doctor", "--json"], { timeoutMs: STATUS_TIMEOUT_MS });
+    } catch {
+      return null;
+    }
+    const text = res.stdout.trim();
+    if (!text.startsWith("{")) return null; // 旧版 CLI：unknown option 报错走 stderr，stdout 无 JSON
+    try {
+      const report = JSON.parse(text) as {
+        stores?: Array<{ id?: string }>;
+        channels?: unknown;
+      };
+      const ids = [
+        ...(report.stores ?? []).flatMap((s) => (typeof s?.id === "string" ? [s.id] : [])),
+        ...(Array.isArray(report.channels)
+          ? report.channels.filter((c): c is string => typeof c === "string")
+          : []),
+      ];
+      return [...new Set(ids)];
+    } catch {
+      return null;
     }
   }
 

@@ -76,7 +76,7 @@ const NAV_ICONS: Record<string, React.ReactNode> = {
 /** 宿主实现一次性选择：Tauri 壳 → native（通知/目录对话框/角标）；浏览器 → webui 降级 */
 const host = pickHost();
 
-/** applift 窗口根组件：hash 路由 + 布局（titlebar/connBanner/sidebar）+ UiClient 生命周期 */
+/** applift 窗口根组件：hash 路由 + 布局（connBanner/sidebar）+ UiClient 生命周期 */
 export default function App() {
   const [client] = useState(() => new UiClient());
   const [, tick] = useReducer((n: number) => n + 1, 0);
@@ -180,6 +180,10 @@ export default function App() {
     location.hash = h;
   };
   const ctx: PageCtx = { client, navigate, host };
+  /** 窗口标题：浏览器标签/Tauri 原生标题栏（原型 titlebar 已删，页面名同步到 document.title） */
+  useEffect(() => {
+    document.title = `${TITLES[route.page] ?? "applift"} · applift`;
+  }, [route.page]);
 
   // 托盘 popup 窗口：无 titlebar/侧栏的极简布局（壳 360×480 无边框窗口）
   if (route.page === "popup") {
@@ -193,30 +197,6 @@ export default function App() {
   return (
     <PageCtxProvider value={ctx}>
       <div className="window">
-        <div className="titlebar">
-          <div className="traffic">
-            <span className="r" />
-            <span className="y" />
-            <span className="g" />
-          </div>
-          <div className="title" id="winTitle">
-            {TITLES[route.page] ?? "applift"}
-          </div>
-          <span className="conn-pill" id="connPill" hidden={!off}>
-            重连中…
-          </span>
-          <button
-            className="icon-btn"
-            id="themeBtn"
-            title="切换外观"
-            aria-label="切换深浅外观"
-            onClick={() =>
-              setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark")
-            }
-          >
-            <SunIcon />
-          </button>
-        </div>
         <div className="conn-banner" id="connBanner" hidden={!off}>
           <span className="dot d-wait" />
           与本地服务的连接已断开，正在重连（服务重启或休眠后自动恢复；长时间未恢复可运行{" "}
@@ -224,6 +204,9 @@ export default function App() {
         </div>
         <div className="body">
           <nav className="sidebar" aria-label="主导航">
+            <span className="conn-pill" id="connPill" hidden={!off}>
+              重连中…
+            </span>
             {(["overview", "release", "settings"] as const).map((nav) => (
               <button
                 key={nav}
@@ -242,6 +225,17 @@ export default function App() {
                 ) : null}
               </button>
             ))}
+          <button
+            className="icon-btn sidebar-foot"
+            id="themeBtn"
+            title="切换外观"
+            aria-label="切换深浅外观"
+            onClick={() =>
+              setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark")
+            }
+          >
+            <SunIcon />
+          </button>
           </nav>
           <main className="content" id="content">
             {route.page === "project" ? (
