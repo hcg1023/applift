@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
@@ -85,6 +85,20 @@ describe("路径穿越守卫（原始 path）", () => {
     const dir = await mkdtempStatic("<html>m</html>");
     const srv = await startUiServer({ staticDir: dir, port: 0 });
     expect(await rawGet(srv.port, "/%zz")).toBe(404);
+    await srv.close();
+  });
+
+  // 哨兵文件回归：staticRoot 外层放 secret.txt，反斜杠逃逸必须被 `..` 守卫拦下。
+  // 若移除守卫，resolve 会把 /..\secret.txt 归一化到父目录 → 200 泄漏（实证会变红）。
+  it("哨兵文件：/..%5csecret.txt 逃逸 staticRoot → 404", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "ui-server-sentinel-"));
+    tmpDirs.push(parent);
+    await writeFile(join(parent, "secret.txt"), "top-secret", "utf8");
+    const dir = join(parent, "static");
+    await mkdir(dir);
+    await writeFile(join(dir, "index.html"), "<html>s</html>", "utf8");
+    const srv = await startUiServer({ staticDir: dir, port: 0 });
+    expect(await rawGet(srv.port, "/..%5csecret.txt")).toBe(404);
     await srv.close();
   });
 });
