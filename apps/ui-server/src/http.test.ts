@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { request as httpRequest } from "node:http";
 import { startUiServer } from "./http.js";
 
 const tmpDirs: string[] = [];
@@ -54,5 +55,36 @@ describe("startUiServer", () => {
     const { port } = srv;
     await srv.close();
     await expect(fetch(`http://127.0.0.1:${port}/api/health`)).rejects.toThrow();
+  });
+});
+
+// fetch 会先归一化点段，测不到服务端守卫——用 http.request 发原始 path
+async function rawGet(port: number, path: string): Promise<number> {
+  return new Promise((resolveGet, rejectGet) => {
+    const req = httpRequest({ host: "127.0.0.1", port, path }, (res) => {
+      res.resume();
+      res.on("end", () => resolveGet(res.statusCode ?? 0));
+    });
+    req.on("error", rejectGet);
+    req.end();
+  });
+}
+
+describe("路径穿越守卫（原始 path）", () => {
+  it.each([["/%2e%2e/%2e%2e/etc/passwd"], ["/foo/..%5c..%5c/etc/passwd"], ["//etc/passwd"]])(
+    "%s → 404",
+    async (path) => {
+      const dir = await mkdtempStatic("<html>t</html>");
+      const srv = await startUiServer({ staticDir: dir, port: 0 });
+      expect(await rawGet(srv.port, path)).toBe(404);
+      await srv.close();
+    },
+  );
+
+  it("畸形百分号序列 /%zz → 404（非 500）", async () => {
+    const dir = await mkdtempStatic("<html>m</html>");
+    const srv = await startUiServer({ staticDir: dir, port: 0 });
+    expect(await rawGet(srv.port, "/%zz")).toBe(404);
+    await srv.close();
   });
 });

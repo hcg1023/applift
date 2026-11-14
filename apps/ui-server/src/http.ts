@@ -46,7 +46,12 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 
 /** 解析静态路径：拒绝越界（..），目录落 index.html；返回 null 表示 404 */
 async function resolveStatic(staticRoot: string, urlPath: string): Promise<string | null> {
-  const clean = decodeURIComponent(urlPath.split("?")[0] ?? "/");
+  let clean: string;
+  try {
+    clean = decodeURIComponent(urlPath.split("?")[0] ?? "/");
+  } catch {
+    return null; // 畸形百分号序列（如 /%zz）按 404 处理，不冒泡成 500
+  }
   const safe = normalize(clean).replaceAll("\\", "/");
   if (safe.includes("..")) return null;
   const abs = resolve(staticRoot, `.${sep}${safe}`);
