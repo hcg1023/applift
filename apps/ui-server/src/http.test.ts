@@ -72,6 +72,17 @@ async function rawGet(port: number, path: string): Promise<number> {
   });
 }
 
+async function rawDelete(port: number, path: string): Promise<number> {
+  return new Promise((resolveDelete, rejectDelete) => {
+    const req = httpRequest({ host: "127.0.0.1", port, path, method: "DELETE" }, (res) => {
+      res.resume();
+      res.on("end", () => resolveDelete(res.statusCode ?? 0));
+    });
+    req.on("error", rejectDelete);
+    req.end();
+  });
+}
+
 describe("路径穿越守卫（原始 path）", () => {
   it.each([["/%2e%2e/%2e%2e/etc/passwd"], ["/foo/..%5c..%5c/etc/passwd"], ["//etc/passwd"]])(
     "%s → 404",
@@ -179,6 +190,27 @@ describe("/api/projects REST 路由", () => {
     expect(bad.status).toBe(400);
     const miss = await fetch(`${base}/api/projects/none`, { method: "DELETE" });
     expect(miss.status).toBe(404);
+    await srv.close();
+  });
+
+  it("POST 非字符串 path → 400（非 500）；DELETE 畸形百分号编码 → 404（非 500）", async () => {
+    const staticDir = await mkdtempStatic("<html>x</html>");
+    const storeDir = await mkdtemp(join(tmpdir(), "ui-server-store3-"));
+    tmpDirs.push(storeDir);
+    const srv = await startUiServer({
+      staticDir,
+      registry: new ProjectRegistry(join(storeDir, "projects.json")),
+    });
+    const base = `http://127.0.0.1:${srv.port}`;
+
+    const badType = await fetch(`${base}/api/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: 123 }),
+    });
+    expect(badType.status).toBe(400);
+
+    expect(await rawDelete(srv.port, "/api/projects/%zz")).toBe(404);
     await srv.close();
   });
 });

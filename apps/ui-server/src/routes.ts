@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { AppliftRunner } from "./runner.js";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { ProjectRegistry, type ProjectEntry } from "./registry.js";
@@ -23,29 +23,22 @@ function cliBinPath(): string {
   return fileURLToPath(new URL("../../../packages/cli/dist/bin.mjs", import.meta.url));
 }
 
-export function validateProject(path: string): Promise<ValidateReport> {
-  const { promise, resolve: resolveValidate } = Promise.withResolvers<ValidateReport>();
-  const child = spawn(process.execPath, [cliBinPath(), "validate", path, "--json"], {
-    stdio: ["ignore", "pipe", "pipe"],
+const VALIDATE_TIMEOUT_MS = 60_000; // validate 为只读探测（findUp/config 解析），60s 远超正常耗时
+
+export async function validateProject(path: string): Promise<ValidateReport> {
+  // 本仓库 CLI 入口直连（不经 npx）：ui-server 与 CLI 同仓发布，避免 npx 解析不确定性
+  const runner = new AppliftRunner({ bin: `${process.execPath} ${cliBinPath()}` });
+  const { code, stdout, stderr } = await runner.run(["validate", path, "--json"], {
+    timeoutMs: VALIDATE_TIMEOUT_MS,
   });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
-  child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
-  child.on("error", (err) =>
-    resolveValidate({ ok: false, error: `无法启动 applift validate：${String(err)}` }),
-  );
-  child.on("close", (code) => {
-    try {
-      resolveValidate(JSON.parse(stdout) as ValidateReport);
-    } catch {
-      resolveValidate({
-        ok: false,
-        error: `applift validate 输出无法解析（exit=${code}）${stderr.trim()}`,
-      });
-    }
-  });
-  return promise;
+  try {
+    return JSON.parse(stdout) as ValidateReport;
+  } catch {
+    return {
+      ok: false,
+      error: `applift validate 输出无法解析（exit=${code}）${stderr.trim()}`,
+    };
+  }
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<{ path?: string } | null> {
@@ -80,7 +73,8 @@ export function createProjectRoutes(opts: ProjectRoutesOptions): ApiHandler {
       }
       if (method === "POST") {
         const body = await readJsonBody(req);
-        const path = body?.path?.trim();
+        const rawPath: unknown = body?.path;
+        const path = typeof rawPath === "string" ? rawPath.trim() : "";
         if (!path) {
           sendJson(res, 400, { ok: false, error: "path is required" });
           return true;
@@ -100,7 +94,14 @@ export function createProjectRoutes(opts: ProjectRoutesOptions): ApiHandler {
 
     const deleteMatch = /^\/api\/projects\/([^/]+)$/.exec(url);
     if (deleteMatch && method === "DELETE") {
-      const removed = registry.remove(decodeURIComponent(deleteMatch[1] ?? ""));
+      // 畸形百分号编码（如 /%zz）按未命中处理 → 404，不冒泡 500
+      let id = "";
+      try {
+        id = decodeURIComponent(deleteMatch[1] ?? "");
+      } catch {
+        // 保持 removed=false 语义
+      }
+      const removed = id !== "" && registry.remove(id);
       sendJson(
         res,
         removed ? 200 : 404,
