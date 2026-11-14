@@ -142,6 +142,46 @@ describe("AppliftRunner.run", () => {
     expect(r.code).not.toBe(0);
     expect(r.stderr).toContain("无法启动");
   });
+
+  it("输出累积上限：stdout/stderr 各 10MiB 截断并带标记", async () => {
+    const dir = await newTmpDir("huge");
+    const script = join(dir, "huge.mjs");
+    await writeFile(
+      script,
+      "process.stdout.write(Buffer.alloc(11 * 1024 * 1024, 0x61));" +
+        "process.stderr.write(Buffer.alloc(11 * 1024 * 1024, 0x62));\n",
+      "utf8",
+    );
+    const r = await new AppliftRunner({ bin: nodeBin(script) }).run([]);
+    expect(r.code).toBe(0);
+    expect(r.stdout.length).toBeLessThanOrEqual(10 * 1024 * 1024 + 200);
+    expect(r.stdout).toContain("[applift-runner] 输出超过");
+    expect(r.stderr.length).toBeLessThanOrEqual(10 * 1024 * 1024 + 200);
+    expect(r.stderr).toContain("[applift-runner] 输出超过");
+  }, 30_000);
+
+  it("kill 升级：SIGTERM 被吞时 5s 后 SIGKILL 组杀带走孙进程", async () => {
+    const dir = await newTmpDir("sigkill");
+    const script = join(dir, "sigterm-tree.mjs");
+    await writeFile(
+      script,
+      [
+        'import { spawn } from "node:child_process";',
+        'process.on("SIGTERM", () => {});',
+        'const gc = spawn(process.execPath, ["-e", "process.on(\'SIGTERM\', () => {}); setInterval(() => {}, 1000);"], { stdio: "inherit" });',
+        "console.log(JSON.stringify({ grandchild: gc.pid }));",
+        "setInterval(() => {}, 1000);",
+      ].join("\n"),
+      "utf8",
+    );
+    const runner = new AppliftRunner({ bin: nodeBin(script) });
+    const r = await runner.run([], { timeoutMs: 2000 });
+    expect(r.code).not.toBe(0);
+    expect(r.stdout.trim(), "桩在超时前未完成启动上报（冷启动被负载拖垮）").toBeTruthy();
+    const { grandchild } = JSON.parse(r.stdout.trim()) as { grandchild: number };
+    // SIGTERM 被吞 → 等 SIGKILL 升级（预算 10s > 5s 升级窗口）
+    await waitProcessGone(grandchild, 10_000);
+  }, 30_000);
 });
 
 describe("AppliftRunner.spawnStream", () => {

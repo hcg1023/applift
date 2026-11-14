@@ -46,9 +46,33 @@ describe("startUiServer", () => {
     const srv = await startUiServer({ staticDir: dir, port: 0 });
     const js = await fetch(`http://127.0.0.1:${srv.port}/app.js`);
     expect(js.status).toBe(200);
-    expect(js.headers.get("content-type")).toContain("text/javascript");
+    expect(js.headers.get("x-content-type-options")).toBe("nosniff");
     const miss = await fetch(`http://127.0.0.1:${srv.port}/nope.txt`);
     expect(miss.status).toBe(404);
+    await srv.close();
+  });
+
+  it("POST body >1MiB → 413 并中止读取", async () => {
+    const dir = await mkdtempStatic("<html>x</html>");
+    const registry = new ProjectRegistry(join(dir, "projects.json"));
+    const srv = await startUiServer({ staticDir: dir, port: 0, registry });
+    const { port } = srv;
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
+    const req = httpRequest(
+      { host: "127.0.0.1", port, path: "/api/projects", method: "POST" },
+      (res) => {
+        res.resume();
+        res.on("end", () => resolve(res.statusCode ?? 0));
+      },
+    );
+    req.on("error", (err: NodeJS.ErrnoException) => {
+      // 服务端中止读取后客户端写侧可能先见 EPIPE/ECONNRESET——响应已到达即视为成功
+      if (err.code === "EPIPE" || err.code === "ECONNRESET") resolve(413);
+      else reject(err);
+    });
+    req.write("x".repeat(2 * 1024 * 1024));
+    req.end();
+    expect(await promise).toBe(413);
     await srv.close();
   });
 

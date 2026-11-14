@@ -4,14 +4,13 @@
  * - huawei 组 ⊇ 渠道元数据 REQUIRED_KEYS_BY_CHANNEL 的 huawei+agc 键（安卓 HW_* 与鸿蒙 AGC_* 一组配齐）
  */
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { CREDENTIAL_FIELDS, CREDENTIAL_GROUPS } from "./lifecycle.js";
+import { CREDENTIAL_FIELDS, CREDENTIAL_GROUPS, platformForChannel } from "./lifecycle.js";
 import { REQUIRED_KEYS_BY_CHANNEL } from "./channel-meta.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { platformForChannel } from "./lifecycle.js";
 
 const BIN = fileURLToPath(new URL("../dist/bin.mjs", import.meta.url));
 
@@ -117,8 +116,8 @@ describe("status --json 契约（StatusReport 包装）", () => {
         "nope",
       ]
     `);
-    expect(report.results.every((x) => x.platform === "android")).toBe(true); // 一期：storeIds 全来自 config.android.stores
-    expect(report.results.every((x) => !("version" in x) || x.version === undefined)).toBe(true); // 一期不造 version 数据
+    expect(report.results.every((x) => x.platform === "android")).toBe(true); // storeIds 全来自 config.android.stores（status 仅读安卓配置段）
+    expect(report.results.every((x) => !("version" in x) || x.version === undefined)).toBe(true); // ReviewStatus 无线上版本，CLI 置 undefined 不造数据
     // 成功分支（stub，status:true 桩）：state 透传 + CLI 的 platform 不被渠道返回值 bogus 覆盖
     const stub = report.results.find((x) => x.channel === "stub")!;
     expect(stub.state).toBe("reviewing");

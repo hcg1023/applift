@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { appendFile, mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
+import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { AppliftRunner } from "./runner.js";
-import type { ProjectRegistry } from "./registry.js";
+import { atomicWriteFile, uiDataHome, type ProjectRegistry } from "./registry.js";
 
 export interface ChannelSnapshot {
   channel: string;
@@ -55,8 +54,11 @@ const STATUS_TIMEOUT_MS = 120_000;
 
 const clamp = (v: number, min: number) => Math.max(v, min);
 
-function defaultBaselinePath(): string {
-  return join(homedir(), "Library", "Application Support", "applift-ui", "state-history.jsonl");
+/** baseline 轮转阈值：追加前超 1MiB 则保留后半写回 */
+const BASELINE_ROTATE_BYTES = 1024 * 1024;
+
+export function defaultBaselinePath(): string {
+  return join(uiDataHome(), "state-history.jsonl");
 }
 
 export class StatusAggregator {
@@ -258,6 +260,15 @@ export class StatusAggregator {
     }
     if (lines.length === 0) return;
     await mkdir(dirname(this.baselinePath), { recursive: true });
+    // 轮转：追加前超阈值 → 保留后半行原子写回（内存基线 lastState 不受影响，事件不重发）
+    const st = await stat(this.baselinePath).catch(() => null);
+    if (st !== null && st.size > BASELINE_ROTATE_BYTES) {
+      const all = (await readFile(this.baselinePath, "utf8"))
+        .split("\n")
+        .filter((l) => l.trim() !== "");
+      const kept = all.slice(Math.floor(all.length / 2));
+      await atomicWriteFile(this.baselinePath, kept.join("\n") + "\n");
+    }
     await appendFile(this.baselinePath, lines.join("\n") + "\n", "utf8");
     for (const e of entries) this.lastState.set(e.key, e.state);
     for (const e of events) {

@@ -4,12 +4,18 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import type * as cp from "node:child_process";
 
-import { startUi, stopUi, DEFAULT_UI_PORT, validatePortArg } from "./ui-command.js";
+import {
+  startUi,
+  stopUi,
+  DEFAULT_UI_PORT,
+  defaultPortFile,
+  validatePortArg,
+} from "./ui-command.js";
 type SpawnCall = { cmd: string; args: string[]; opts: SpawnOptions; child: ChildProcess };
 
 /** spawn 桩：记录每次调用并回填可断言的 fake child（含 unref 桩） */
@@ -166,5 +172,20 @@ describe("validatePortArg（F1：非法端口 spawn 前拒绝）", () => {
     expect(validatePortArg(1)).toBe(1);
     expect(validatePortArg(47600)).toBe(47600);
     expect(validatePortArg(65535)).toBe(65535);
+  });
+});
+
+describe("defaultPortFile", () => {
+  it("认 APPLIFT_HOME（临时目录注入）；未设回落 ~/.applift", () => {
+    const prev = process.env.APPLIFT_HOME;
+    const injected = join(tmpdir(), "applift-home-a1");
+    process.env.APPLIFT_HOME = injected;
+    try {
+      expect(defaultPortFile()).toBe(join(injected, "ui.port"));
+    } finally {
+      if (prev === undefined) delete process.env.APPLIFT_HOME;
+      else process.env.APPLIFT_HOME = prev;
+    }
+    expect(defaultPortFile()).toBe(join(homedir(), ".applift", "ui.port"));
   });
 });

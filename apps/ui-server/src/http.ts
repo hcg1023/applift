@@ -103,7 +103,7 @@ async function handle(
   }
   const mime = MIME[extname(file).toLowerCase()] ?? "application/octet-stream";
   const data = await readFile(file);
-  res.writeHead(200, { "content-type": mime });
+  res.writeHead(200, { "content-type": mime, "x-content-type-options": "nosniff" });
   res.end(req.method === "HEAD" ? undefined : data);
 }
 

@@ -22,18 +22,53 @@ const EXIT_TIMEOUT = 124;
 const EXIT_SPAWN_ERROR = 127;
 /** 其余兜底：被信号杀死等 exitCode 为 null 时保证非零 */
 const EXIT_SIGNAL_FALLBACK = 1;
+/** run() 单流（stdout/stderr 各自）累积上限：防失控子进程把内存吃爆 */
+const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
+/** kill 升级窗口：SIGTERM 后仍存活则 SIGKILL */
+const KILL_ESCALATE_MS = 5_000;
+
+/** 累积带截断：超上限保留前缀 + 截断标记，其后丢弃 */
+function capSink(chunks: Buffer[]): (chunk: Buffer) => void {
+  let total = 0;
+  let capped = false;
+  return (chunk: Buffer) => {
+    if (capped) return;
+    if (total + chunk.length > MAX_OUTPUT_BYTES) {
+      chunks.push(chunk.subarray(0, MAX_OUTPUT_BYTES - total));
+      chunks.push(
+        Buffer.from(`\n[applift-runner] 输出超过 ${MAX_OUTPUT_BYTES} 字节已截断\n`, "utf8"),
+      );
+      capped = true;
+      return;
+    }
+    total += chunk.length;
+    chunks.push(chunk);
+  };
+}
 
 /** 杀整棵子树：spawn detached 已把子树放进以 pid 为 pgid 的新进程组，负 pid 即组内全体（组杀仅 POSIX；win32 降级单进程杀） */
 function killProcessGroup(child: ChildProcess, signal: NodeJS.Signals = "SIGTERM"): void {
-  if (child.pid !== undefined) {
+  const groupKill = (sig: NodeJS.Signals): boolean => {
+    if (child.pid === undefined) return false;
     try {
-      process.kill(-child.pid, signal);
-      return;
+      process.kill(-child.pid, sig);
+      return true;
     } catch {
-      // 组已消亡（ESRCH）或平台不支持组杀 → 回退杀单进程
+      return false; // 组已消亡（ESRCH）或平台不支持组杀
     }
+  };
+  if (groupKill(signal)) {
+    if (signal === "SIGTERM") {
+      // 升级：SIGTERM 后 5s 仍存活（吞信号/不可中断 sleep）→ SIGKILL 组杀；close 到达即清，unref 不阻进程退出
+      const escalate = setTimeout(() => {
+        if (!groupKill("SIGKILL")) child.kill("SIGKILL");
+      }, KILL_ESCALATE_MS);
+      escalate.unref();
+      child.once("close", () => clearTimeout(escalate));
+    }
+    return;
   }
-  child.kill(signal);
+  child.kill(signal); // 回退杀单进程
 }
 
 /**
@@ -69,8 +104,10 @@ export class AppliftRunner {
     });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
-    child.stdout?.on("data", (chunk: Buffer) => out.push(chunk));
-    child.stderr?.on("data", (chunk: Buffer) => err.push(chunk));
+    const onOut = capSink(out);
+    const onErr = capSink(err);
+    child.stdout?.on("data", (chunk: Buffer) => onOut(chunk));
+    child.stderr?.on("data", (chunk: Buffer) => onErr(chunk));
     let timedOut = false;
     const timer =
       opts.timeoutMs !== undefined

@@ -56,6 +56,14 @@ export class EventChannel {
     this.emit({ type: "hello", protocol: 1, cli: pkg.version });
     this.#rl = readline.createInterface({ input: opts.input ?? process.stdin });
     this.#rl.on("line", (line) => this.#onLine(line));
+    this.#rl.on("close", () => {
+      // stdin EOF（父进程断开/误关）：pending 确认永远等不到回写，全部 reject 而非悬挂到超时
+      for (const p of this.#pending.values()) {
+        clearTimeout(p.timer);
+        p.reject(new Error("stdin 已关闭"));
+      }
+      this.#pending.clear();
+    });
   }
 
   /** 关闭 stdin 监听：readline 持有 stdin 引用会阻止进程自然退出（子进程模式发完 result 后调用） */

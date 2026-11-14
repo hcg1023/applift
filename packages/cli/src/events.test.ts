@@ -80,6 +80,18 @@ describe("EventChannel", () => {
     await expect(p).rejects.toThrow(/确认超时/);
   });
 
+  it("stdin EOF（readline close）→ reject 全部 pending（stdin 已关闭）", async () => {
+    const inputs = new PassThrough();
+    const ch = new EventChannel(() => {}, { input: inputs, confirmTimeoutMs: 60_000 });
+    const p1 = ch.confirm("a", "一", [{ value: "y", label: "Y" }]);
+    const p2 = ch.confirm("b", "二", [{ value: "n", label: "N" }]);
+    const e1 = p1.catch((e: unknown) => e);
+    const e2 = p2.catch((e: unknown) => e);
+    inputs.end(); // stdin EOF → readline close
+    await expect(e1).resolves.toMatchObject({ message: "stdin 已关闭" });
+    await expect(e2).resolves.toMatchObject({ message: "stdin 已关闭" });
+  });
+
   it("confirm 默认超时 10 分钟", async () => {
     vi.useFakeTimers();
     const ch = new EventChannel(() => {}, { input: new PassThrough() });

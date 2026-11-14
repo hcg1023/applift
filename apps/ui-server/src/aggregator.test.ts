@@ -6,7 +6,12 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { AppliftRunner, type RunResult } from "./runner.js";
 import { ProjectRegistry } from "./registry.js";
-import { type FeedEvent, type ProjectSnapshot, StatusAggregator } from "./aggregator.js";
+import {
+  defaultBaselinePath,
+  type FeedEvent,
+  type ProjectSnapshot,
+  StatusAggregator,
+} from "./aggregator.js";
 
 const tmpDirs: string[] = [];
 afterAll(async () => {
@@ -461,5 +466,56 @@ describe.skipIf(!existsCliDist())("真 CLI 桩工程冒烟（dist 未构建则�
     expect(shots[0]!.ok === false || shots[0]!.channels.every((c) => c.state === "unknown")).toBe(
       true,
     );
+  });
+});
+
+describe("baseline 轮转与默认路径（A1）", () => {
+  it("追加前 >1MiB → 保留后半原子写回，旧前半被丢弃、新行仍在", async () => {
+    const { dir, registry } = await setup("rotate", ["/tmp/rot"]);
+    const baselinePath = join(dir, "state-history.jsonl");
+    // 每行 ~63B，1.9 万行 ≈ 1.2MiB > 1MiB 阈值
+    const seed = Array.from({ length: 19_000 }, (_, i) =>
+      JSON.stringify({ ts: i, projectId: `seed-${i}`, channel: "c", from: "a", to: "b" }),
+    );
+    await writeFile(baselinePath, seed.join("\n") + "\n", "utf8");
+    const agg = makeAggregator(
+      registry,
+      baselinePath,
+      new Map<string, () => RunResult>([
+        [
+          "/tmp/rot",
+          () => ({
+            code: 0,
+            stdout: statusJson([
+              {
+                channel: "pgyer",
+                platform: "android",
+                state: "reviewing",
+                fetchedAt: new Date().toISOString(),
+              },
+            ]),
+            stderr: "",
+          }),
+        ],
+      ]),
+    );
+    await agg.refreshNow();
+    const after = await readFile(baselinePath, "utf8");
+    expect(after.length).toBeLessThan(1024 * 1024);
+    expect(after).not.toContain(seed[0]!); // 最旧行已轮转丢弃
+    expect(after).toContain(`"projectId":"seed-18999"`); // 后半保留
+    expect(after).toContain('"channel":"pgyer"'); // 本轮新行照常追加
+  });
+
+  it("defaultBaselinePath 认 APPLIFT_HOME；未设回落原默认", () => {
+    const prev = process.env.APPLIFT_HOME;
+    process.env.APPLIFT_HOME = join(tmpdir(), "applift-home-a1");
+    try {
+      expect(defaultBaselinePath()).toBe(join(process.env.APPLIFT_HOME, "state-history.jsonl"));
+    } finally {
+      if (prev === undefined) delete process.env.APPLIFT_HOME;
+      else process.env.APPLIFT_HOME = prev;
+    }
+    expect(defaultBaselinePath()).toContain("applift-ui");
   });
 });

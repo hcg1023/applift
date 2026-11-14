@@ -42,19 +42,30 @@ export async function validateProject(path: string): Promise<ValidateReport> {
   }
 }
 
+/** 请求体大小上限：超限 413 并中止读取（防滥用 body 占内存） */
+const MAX_BODY_BYTES = 1024 * 1024;
+
+type JsonBody = { path?: string; projectId?: string; platform?: string; args?: unknown };
+
 async function readJsonBody(
   req: IncomingMessage,
-): Promise<{ path?: string; projectId?: string; platform?: string; args?: unknown } | null> {
+  res: ServerResponse,
+): Promise<JsonBody | { tooLarge: true } | null> {
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
+  let total = 0;
+  for await (const chunk of req) {
+    total += (chunk as Buffer).length;
+    if (total > MAX_BODY_BYTES) {
+      res.setHeader("connection", "close"); // 响应后由 server 关连接（keep-alive 会挂着连接不放）
+      sendJson(res, 413, { ok: false, error: `request body exceeds ${MAX_BODY_BYTES} bytes` });
+      req.destroy(); // 中止剩余读取
+      return { tooLarge: true };
+    }
+    chunks.push(chunk as Buffer);
+  }
   if (chunks.length === 0) return null;
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
-      path?: string;
-      projectId?: string;
-      platform?: string;
-      args?: unknown;
-    };
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as JsonBody;
   } catch {
     return null;
   }
@@ -94,7 +105,8 @@ export function createProjectRoutes(opts: ProjectRoutesOptions): ApiHandler {
         return true;
       }
       if (method === "POST") {
-        const body = await readJsonBody(req);
+        const body = await readJsonBody(req, res);
+        if (body !== null && "tooLarge" in body) return true; // 已回 413
         const rawPath: unknown = body?.path;
         const path = typeof rawPath === "string" ? rawPath.trim() : "";
         if (!path) {
@@ -190,7 +202,8 @@ export function createTaskRoutes(opts: TaskRoutesOptions): ApiHandler {
       sendJson(res, 405, { ok: false, error: "method not allowed" });
       return true;
     }
-    const body = await readJsonBody(req);
+    const body = await readJsonBody(req, res);
+    if (body !== null && "tooLarge" in body) return true; // 已回 413
     const projectId = typeof body?.projectId === "string" ? body.projectId : "";
     const platform = typeof body?.platform === "string" ? body.platform : "";
     const entry = registry.get(projectId);

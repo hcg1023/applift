@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -11,9 +11,24 @@ export interface ProjectEntry {
   addedAt: number;
 }
 
+/** ui-server 数据根目录：优先 APPLIFT_HOME（与 CLI HISTORY_PATH/credentials 同源），未设回落原默认 */
+export function uiDataHome(): string {
+  const env = process.env.APPLIFT_HOME;
+  return env && env.trim() !== ""
+    ? resolve(env)
+    : join(homedir(), "Library", "Application Support", "applift-ui");
+}
+
 /** 默认持久化路径（计划 Global Constraints；测试注入临时路径覆盖） */
 export function defaultStorePath(): string {
-  return join(homedir(), "Library", "Application Support", "applift-ui", "projects.json");
+  return join(uiDataHome(), "projects.json");
+}
+
+/** 原子写：同目录 .tmp 落盘后 rename（同文件系统内原子，读者不会看到半截文件） */
+export async function atomicWriteFile(path: string, data: string): Promise<void> {
+  const tmp = `${path}.tmp`;
+  await writeFile(tmp, data, { encoding: "utf8", mode: 0o600 });
+  await rename(tmp, path);
 }
 
 export class ProjectRegistry {
@@ -32,10 +47,18 @@ export class ProjectRegistry {
 
   private async persist(): Promise<void> {
     await mkdir(dirname(this.storePath), { recursive: true });
-    await writeFile(this.storePath, JSON.stringify(this.entries, null, 2), {
+    await atomicWriteFile(this.storePath, JSON.stringify(this.entries, null, 2));
+  }
+
+  /** 同步原子写（remove 布尔签名要求返回时已落盘） */
+  private persistSync(): void {
+    mkdirSync(dirname(this.storePath), { recursive: true });
+    const tmp = `${this.storePath}.tmp`;
+    writeFileSync(tmp, JSON.stringify(this.entries, null, 2), {
       encoding: "utf8",
       mode: 0o600,
     });
+    renameSync(tmp, this.storePath);
   }
 
   list(): ProjectEntry[] {
@@ -66,7 +89,7 @@ export class ProjectRegistry {
     const next = this.entries.filter((e) => e.id !== id);
     if (next.length === this.entries.length) return false;
     this.entries = next;
-    void this.persist();
+    this.persistSync();
     return true;
   }
 }
