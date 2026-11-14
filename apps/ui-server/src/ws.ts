@@ -32,7 +32,7 @@ interface ActiveTask {
 }
 
 type UpMessage =
-  | { t: "confirm"; taskId: string; id: string; value: boolean }
+  | { t: "confirm"; taskId: string; id: string; value: string }
   | { t: "task.cancel"; taskId: string };
 
 function parseUp(raw: unknown): UpMessage | undefined {
@@ -42,7 +42,8 @@ function parseUp(raw: unknown): UpMessage | undefined {
     m.t === "confirm" &&
     typeof m.taskId === "string" &&
     typeof m.id === "string" &&
-    typeof m.value === "boolean"
+    // 阶段一 InEvent 契约 value:string（events.ts 按非 string 丢弃）；布尔→choice 映射归前端 UI
+    typeof m.value === "string"
   ) {
     return { t: "confirm", taskId: m.taskId, id: m.id, value: m.value };
   }
@@ -79,8 +80,11 @@ export class WsChannel {
     this.wss.on("connection", (ws) => {
       this.clients.add(ws);
       this.onConnectionsChange?.(this.clients.size);
-      // 补发缓存快照 + 归档任务（重连回看）
+      // 补发缓存快照 + 运行中任务累积事件（重连恢复确认 UI）+ 归档任务
       for (const s of this.lastSnapshots.values()) this.send(ws, { t: "snapshot", data: s });
+      for (const { task } of this.activeTasks.values()) {
+        for (const ev of task.events) this.send(ws, { t: "task", taskId: task.taskId, data: ev });
+      }
       this.send(ws, { t: "tasks", data: this.archive });
       ws.on("message", (raw) => this.onMessage(String(raw)));
       ws.on("close", () => {
@@ -115,9 +119,9 @@ export class WsChannel {
         task.events.push(ev);
         this.broadcast({ t: "task", taskId, data: ev });
       },
-      // stderr / 解析失败：按阶段一 log 事件形态转发，前端不丢诊断信息
+      // stderr / 解析失败：按阶段一 log 事件契约 {type:"log", level, msg} 转发，前端不丢诊断信息
       onError: (s) => {
-        const ev: TaskEvent = { type: "log", message: s };
+        const ev: TaskEvent = { type: "log", level: "error", msg: s };
         task.events.push(ev);
         this.broadcast({ t: "task", taskId, data: ev });
       },
@@ -145,10 +149,11 @@ export class WsChannel {
     return [...this.archive];
   }
 
-  /** 优雅关闭：断开全部客户端并停升级服务 */
+  /** 优雅关闭：杀运行中任务、断开全部客户端、停升级服务 */
   async close(): Promise<void> {
     const wss = this.wss;
     if (!wss) return;
+    for (const { handle } of this.activeTasks.values()) handle.kill();
     for (const ws of this.clients) ws.close();
     await new Promise<void>((resolve) => wss.close(() => resolve()));
     this.clients.clear();

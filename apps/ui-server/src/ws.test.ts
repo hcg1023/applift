@@ -18,7 +18,7 @@ type Down =
 
 /** ws 上行消息（客户端 → 服务端协议） */
 type Up =
-  | { t: "confirm"; taskId: string; id: string; value: boolean }
+  | { t: "confirm"; taskId: string; id: string; value: string }
   | { t: "task.cancel"; taskId: string };
 
 const tmpDirs: string[] = [];
@@ -172,12 +172,12 @@ setInterval(()=>{},60000);`,
     if (hello.t === "task") expect(hello.taskId).toBe(taskId);
 
     // 客户端回 confirm → 桩进程 stdin 收到阶段一 InEvent 原文
-    const up: Up = { t: "confirm", taskId, id: "chk1", value: true };
+    const up: Up = { t: "confirm", taskId, id: "chk1", value: "ota" };
     client.ws.send(JSON.stringify(up));
     await client.next((m) => m.t === "task" && m.data.type === "result");
     await vi.waitFor(async () => {
       const text = await readFile(stdinLog, "utf8");
-      expect(text.trim()).toBe(JSON.stringify({ type: "confirm", id: "chk1", value: true }));
+      expect(text.trim()).toBe(JSON.stringify({ type: "confirm", id: "chk1", value: "ota" }));
     });
     client.ws.close();
   });
@@ -198,6 +198,32 @@ setInterval(()=>{},60000);`,
     const archived = channel.archivedTasks().find((a) => a.taskId === taskId);
     expect(archived?.code).not.toBe(0);
     client.ws.close();
+  });
+
+  it("任务运行中第二个客户端连接：补发已累积的 task 事件（重连恢复确认 UI）", async () => {
+    // 桩 bin：发 hello + confirm_required 后挂住等 stdin
+    const stub = await tmpFile(
+      "pending-stub.cjs",
+      `process.stdout.write(JSON.stringify({type:"hello"})+"\\n");
+process.stdout.write(JSON.stringify({type:"confirm_required",id:"chk1",prompt:"渠道?",values:["ota","skip"]})+"\\n");
+setInterval(()=>{},60000);`,
+    );
+    const { port, channel } = await setup(`node ${stub}`);
+    const c1 = connect(port);
+    const taskId = channel.startBetaTask("p1", "android", {});
+    await c1.next((m) => m.t === "task" && m.data.type === "confirm_required");
+
+    // 重连客户端：补发范围内必须含运行中任务的累积事件（hello + confirm_required，带 taskId）
+    const c2 = connect(port);
+    const replayed = await c2.next((m) => m.t === "task" && m.data.type === "confirm_required");
+    if (replayed.t === "task") expect(replayed.taskId).toBe(taskId);
+    const hello = await c2.next((m) => m.t === "task" && m.data.type === "hello");
+    if (hello.t === "task") expect(hello.taskId).toBe(taskId);
+    const up: Up = { t: "task.cancel", taskId };
+    c2.ws.send(JSON.stringify(up));
+    await c2.next((m) => m.t === "task.end" && m.taskId === taskId);
+    c1.ws.close();
+    c2.ws.close();
   });
 
   it("result 后归档 ring buffer，重连回看最近任务", async () => {
