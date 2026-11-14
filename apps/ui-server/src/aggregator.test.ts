@@ -71,6 +71,10 @@ function fakeTimers() {
     activeDelay(): number | undefined {
       return [...intervals.values()][0]?.delay;
     },
+    /** 当前唯一 interval 的句柄 id（区分"幂等保留"与"重建后恰好剩 1 个"） */
+    activeId(): number | undefined {
+      return [...intervals.keys()][0];
+    },
   };
 }
 
@@ -214,6 +218,98 @@ describe("StatusAggregator", () => {
     const lines = (await readFile(baselinePath, "utf8")).trim().split("\n");
     expect(lines.length).toBeGreaterThanOrEqual(2);
     for (const l of lines) expect(() => JSON.parse(l)).not.toThrow();
+  });
+
+  it("onSnapshot 抛错不炸进程：refreshNow 照常 resolve、轮次不降级、下一轮照常", async () => {
+    const { dir, registry } = await setup("cb-throw", ["/tmp/cb"]);
+    const baselinePath = join(dir, "state-history.jsonl");
+    const responses = new Map<string, () => RunResult>([
+      [
+        "/tmp/cb",
+        () => ({
+          code: 0,
+          stdout: statusJson([
+            {
+              channel: "pgyer",
+              platform: "android",
+              state: "reviewing",
+              fetchedAt: new Date().toISOString(),
+            },
+          ]),
+          stderr: "",
+        }),
+      ],
+    ]);
+    const calls: string[] = [];
+    const agg = new StatusAggregator({
+      registry,
+      runnerFactory: fakeRunnerFactory(responses),
+      onSnapshot: (s) => {
+        calls.push(s.projectId);
+        throw new Error("subscriber boom");
+      },
+      onFeed: () => {},
+      baselinePath,
+    });
+    await expect(agg.refreshNow()).resolves.toBeUndefined();
+    await expect(agg.refreshNow()).resolves.toBeUndefined();
+    expect(calls.length).toBeGreaterThanOrEqual(2); // 回调每轮都被调用（抛错被隔离而非跳过）
+    // 轮次本身不降级：baseline 已落盘说明走的是 ok=true 成功路径
+    const lines = (await readFile(baselinePath, "utf8")).trim().split("\n");
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("runnerFactory 同步抛错 → 降级 ok=false 快照不 throw", async () => {
+    const { dir, registry } = await setup("factory-throw", ["/tmp/factory"]);
+    const shots: ProjectSnapshot[] = [];
+    const agg = new StatusAggregator({
+      registry,
+      runnerFactory: () => {
+        throw new Error("factory boom");
+      },
+      onSnapshot: (s) => shots.push(s),
+      onFeed: () => {},
+      baselinePath: join(dir, "state-history.jsonl"),
+    });
+    await expect(agg.refreshNow()).resolves.toBeUndefined();
+    expect(shots).toHaveLength(1);
+    expect(shots[0]!.ok).toBe(false);
+  });
+
+  it("setIntervals 非有限值回落默认档（不产生 0ms 间隔）", async () => {
+    const { dir, registry } = await setup("nan", ["/tmp/nan"]);
+    const clock2 = fakeTimers();
+    const agg = makeAggregator(
+      registry,
+      join(dir, "state-history.jsonl"),
+      new Map(),
+      clock2.timers,
+    );
+    agg.setIntervals(Number.NaN, Number.NaN);
+    agg.setVisible(true);
+    expect(clock2.activeDelay()).toBe(5 * 60_000);
+    agg.setVisible(false);
+    expect(clock2.activeDelay()).toBe(60 * 60_000);
+  });
+
+  it("同档 setVisible 幂等：interval 句柄不重建（不重置倒计时）", async () => {
+    const { dir, registry } = await setup("idempotent", ["/tmp/idem"]);
+    const clock2 = fakeTimers();
+    const agg = makeAggregator(
+      registry,
+      join(dir, "state-history.jsonl"),
+      new Map(),
+      clock2.timers,
+    );
+    agg.setVisible(true);
+    const fgId = clock2.activeId();
+    agg.setVisible(true);
+    expect(clock2.activeId()).toBe(fgId);
+    agg.setVisible(false);
+    const bgId = clock2.activeId();
+    expect(bgId).not.toBe(fgId);
+    agg.setVisible(false);
+    expect(clock2.activeId()).toBe(bgId);
   });
 
   it("ok=false 的轮次不参与跃迁对比（不产生噪音事件）", async () => {

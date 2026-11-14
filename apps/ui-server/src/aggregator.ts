@@ -125,7 +125,8 @@ export class StatusAggregator {
   private restartTimer(): void {
     if (this.timerId !== undefined) this.timers.clearInterval(this.timerId);
     this.timerId = this.timers.setInterval(() => {
-      void this.refreshNow();
+      // 回调/工厂抛错已在 refreshNow 内隔离；此处兜底防拒绝逸出到进程级 unhandledRejection
+      this.refreshNow().catch(() => {});
     }, this.currentIntervalMs());
   }
 
@@ -137,8 +138,9 @@ export class StatusAggregator {
   }
 
   setIntervals(foregroundMs: number, backgroundMs: number): void {
-    this.fgMs = clamp(foregroundMs, FG_MIN_MS);
-    this.bgMs = clamp(backgroundMs, BG_MIN_MS);
+    // NaN/Infinity 会被 Math.max 原样放过（NaN 间隔 → setInterval 0ms 背靠背打 API），非有限值回落默认档
+    this.fgMs = Number.isFinite(foregroundMs) ? clamp(foregroundMs, FG_MIN_MS) : FG_DEFAULT_MS;
+    this.bgMs = Number.isFinite(backgroundMs) ? clamp(backgroundMs, BG_MIN_MS) : BG_DEFAULT_MS;
     if (this.timerId !== undefined) this.restartTimer();
   }
 
@@ -153,9 +155,10 @@ export class StatusAggregator {
 
   private async runOnce(): Promise<void> {
     for (const entry of this.registry.list()) {
-      const runner = this.runnerFactory(entry.path);
       let report: StatusReport | null = null;
       try {
+        // 工厂在 try 内：同步抛错同样降级为 ok=false 快照，不打断后续项目
+        const runner = this.runnerFactory(entry.path);
         const res = await runner.run(["status", "--json"], {
           timeoutMs: STATUS_TIMEOUT_MS,
         });
@@ -177,16 +180,25 @@ export class StatusAggregator {
           ok,
         };
         if (ok) await this.diffAndPersist(snapshot);
-        this.onSnapshot(snapshot);
+        this.emitSnapshot(snapshot);
       } catch {
-        // 子进程层异常（spawn 失败等）同样降级为 ok=false 快照
-        this.onSnapshot({
+        // 子进程层异常（spawn 失败、落盘失败等）同样降级为 ok=false 快照；回调抛错不得炸进程
+        this.emitSnapshot({
           projectId: entry.id,
           channels: [],
           fetchedAt: new Date().toISOString(),
           ok: false,
         });
       }
+    }
+  }
+
+  /** 回调隔离：消费端抛错只影响它自己这一条，不逃逸进轮询循环/进程 */
+  private emitSnapshot(s: ProjectSnapshot): void {
+    try {
+      this.onSnapshot(s);
+    } catch {
+      // 吞掉：ui-server 主进程存活优先于单个订阅者
     }
   }
 
@@ -202,16 +214,19 @@ export class StatusAggregator {
     }
   }
 
-  /** 跃迁检测 + baseline 落盘：unknown 态（渠道错误）不进基线，避免故障期噪音 */
+  /** 跃迁检测 + baseline 落盘：unknown 态（渠道错误）不进基线，避免故障期噪音。
+   * 顺序：先全部落盘，成功后才更新内存基线并发出 FeedEvent（写失败→异常上抛→该轮降级 ok=false，内存与文件不分叉、事件不重发） */
   private async diffAndPersist(snapshot: ProjectSnapshot): Promise<void> {
-    const lines: string[] = [];
     const now = Date.now();
+    const entries: Array<{ key: string; state: string }> = [];
+    const events: FeedEvent[] = [];
+    const lines: string[] = [];
     for (const ch of snapshot.channels) {
       if (ch.state === "unknown") continue;
       const key = `${snapshot.projectId}\t${ch.channel}`;
       const prev = this.lastState.get(key);
       if (prev !== undefined && prev !== ch.state) {
-        this.onFeed({
+        events.push({
           id: randomUUID(),
           ts: now,
           projectId: snapshot.projectId,
@@ -221,7 +236,7 @@ export class StatusAggregator {
           to: ch.state,
         });
       }
-      this.lastState.set(key, ch.state);
+      entries.push({ key, state: ch.state });
       // 每次有效状态都落一行（含首次 from=to）：重启恢复的完整基线
       lines.push(
         JSON.stringify({
@@ -236,5 +251,13 @@ export class StatusAggregator {
     if (lines.length === 0) return;
     await mkdir(dirname(this.baselinePath), { recursive: true });
     await appendFile(this.baselinePath, lines.join("\n") + "\n", "utf8");
+    for (const e of entries) this.lastState.set(e.key, e.state);
+    for (const e of events) {
+      try {
+        this.onFeed(e);
+      } catch {
+        // 同 emitSnapshot：订阅者抛错不炸进程
+      }
+    }
   }
 }
