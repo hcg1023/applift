@@ -9,8 +9,15 @@ import {
   defaultSettingsPath,
   defaultStorePath,
 } from "./registry.js";
-import { cliBinPath, createSettingsRoutes, createTaskRoutes, sendJson } from "./routes.js";
-import { AppliftRunner } from "./runner.js";
+import {
+  cliBinPath,
+  createAppliftRoutes,
+  createSettingsRoutes,
+  createTaskRoutes,
+  sendJson,
+} from "./routes.js";
+import { createAvailabilityProber } from "./applift-install.js";
+import { AppliftRunner, resolveAppliftBin } from "./runner.js";
 import { WsChannel } from "./ws.js";
 
 export { startUiServer } from "./http.js";
@@ -25,12 +32,14 @@ export type { ProjectEntry } from "./registry.js";
 export {
   createProjectRoutes,
   createTaskRoutes,
+  createAppliftRoutes,
   sanitizeBetaArgs,
   validateProject,
   cliBinPath,
 } from "./routes.js";
 export type {
   ApiHandler,
+  AppliftRoutesOptions,
   BetaDryRunReport,
   ProjectRoutesOptions,
   TaskRoutesOptions,
@@ -41,7 +50,15 @@ export type { HostAdapter } from "./host.js";
 export type { ArchivedTask, TaskEvent } from "./ws.js";
 export { StatusAggregator, clampIntervalSettings } from "./aggregator.js";
 export type { ChannelSnapshot, FeedEvent, ProjectSnapshot } from "./aggregator.js";
-export { AppliftRunner } from "./runner.js";
+export {
+  AppliftRunner,
+  resolveAppliftBin,
+  findGlobalApplift,
+  findProjectApplift,
+} from "./runner.js";
+export type { ResolvedBin } from "./runner.js";
+export { createAvailabilityProber } from "./applift-install.js";
+export type { AppliftSource, Availability, AvailabilityProberOptions } from "./applift-install.js";
 
 /** 组合服务句柄：http + ws + aggregator 一体启停 */
 export interface ComposedServer {
@@ -70,8 +87,10 @@ export function defaultStaticDir(): string {
 }
 
 export function defaultRunnerFactory(cwd: string): AppliftRunner {
-  // 数组形态：路径含空格不被切分；与 routes.ts validateProject 同源
-  return new AppliftRunner({ cwd, bin: [process.execPath, cliBinPath()] });
+  // 调用点收敛到检索链：env > 工程 node_modules/.bin > PATH；全缺（开发直跑且未装）回落仓库 dist
+  const resolved = resolveAppliftBin(cwd);
+  const bin = resolved.bin ?? [process.execPath, cliBinPath()];
+  return new AppliftRunner({ cwd, bin });
 }
 
 /** 组合入口：registry + aggregator + ws + 静态托管 + /api/shutdown 一体装配 */
@@ -107,6 +126,8 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
       prevConnections = count;
     },
   });
+  // 检索链探测器（版本探测 60s 缓存；npm view 10s 超时置 null）
+  const availabilityProber = createAvailabilityProber();
   let closing = false;
   const close = async (): Promise<void> => {
     if (closing) return;
@@ -133,6 +154,12 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
         runnerFactory,
         startBetaTask: (projectId, platform, taskOpts) =>
           ws.startBetaTask(projectId, platform, taskOpts),
+      }),
+      // GET /api/applift/availability + POST /api/applift/install|update-global：检索链与引导安装（Tauri 壳 §2）
+      createAppliftRoutes({
+        availability: (cwd) => availabilityProber.get(cwd),
+        startInstallTask: (o) =>
+          ws.startInstallTask({ runner: new AppliftRunner({ bin: "npm" }), ...o }),
       }),
       // POST /api/shutdown：仅本机可达（http 层固定监听 127.0.0.1）；`applift ui --stop` 消费
       (req, res) => {

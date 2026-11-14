@@ -46,12 +46,13 @@ export function isAllowedOrigin(origin: string, serverPort: number): boolean {
 
 interface ActiveTask {
   taskId: string;
+  /** 任务类别：beta（发版）| install（applift 引导安装）；去重按类别各自判定 */
+  kind: "beta" | "install";
   projectId: string;
   platform: string;
   events: TaskEvent[];
   startedAt: number;
 }
-
 type UpMessage =
   | { t: "confirm"; taskId: string; id: string; value: string }
   | { t: "task.cancel"; taskId: string };
@@ -169,7 +170,14 @@ export class WsChannel {
     const taskId = randomUUID();
     const runner = this.runnerFactory(opts.cwd);
     const timeoutMs = opts.confirmTimeoutMs ?? DEFAULT_CONFIRM_TIMEOUT_MS;
-    const task: ActiveTask = { taskId, projectId, platform, events: [], startedAt: Date.now() };
+    const task: ActiveTask = {
+      taskId,
+      kind: "beta",
+      projectId,
+      platform,
+      events: [],
+      startedAt: Date.now(),
+    };
     let confirmTimer: NodeJS.Timeout | undefined;
     const clearConfirmTimer = (): void => {
       if (confirmTimer !== undefined) {
@@ -211,6 +219,58 @@ export class WsChannel {
         taskId,
         projectId,
         platform,
+        events: task.events,
+        startedAt: task.startedAt,
+        endedAt: Date.now(),
+        code,
+      });
+      if (this.archive.length > ARCHIVE_MAX) this.archive = this.archive.slice(-ARCHIVE_MAX);
+      this.broadcast({ t: "task.end", taskId, code });
+    });
+    return taskId;
+  }
+  /**
+   * 启动 applift 引导安装任务（Tauri 壳 §2）：npm install -g @applift/cli（update=true 装 @latest）。
+   * 走通用 spawnStream 任务通道（taskId 前缀 install:），stderr/纯文本 stdout → install.log，结束广播 install.result。
+   * 去重：同 kind 进行中再发起 → 抛错（路由层转 409）。
+   */
+  startInstallTask(opts: { runner: AppliftRunner; update?: boolean }): string {
+    for (const { task } of this.activeTasks.values()) {
+      if (task.kind === "install") {
+        throw new Error(`已有进行中的安装任务（taskId: ${task.taskId}）`);
+      }
+    }
+    const taskId = `install:${randomUUID()}`;
+    const task: ActiveTask = {
+      taskId,
+      kind: "install",
+      projectId: "applift-cli",
+      platform: opts.update === true ? "update-global" : "install",
+      events: [],
+      startedAt: Date.now(),
+    };
+    const emit = (ev: TaskEvent): void => {
+      task.events.push(ev);
+      this.broadcast({ t: "task", taskId, data: ev });
+    };
+    const args =
+      opts.update === true
+        ? ["install", "-g", "@applift/cli@latest"]
+        : ["install", "-g", "@applift/cli"];
+    const handle = opts.runner.spawnStream(args, {
+      onLine: (e) => emit(e as TaskEvent),
+      // npm 进度/告警走 stderr：转发为 error 级 log（npm 自身输出语义，非本服务报错）
+      onError: (msg) => emit({ type: "install.log", level: "error", msg }),
+      onStdoutText: (msg) => emit({ type: "install.log", level: "info", msg }),
+    });
+    this.activeTasks.set(taskId, { task, handle, clearConfirmTimer: () => {} });
+    handle.done.then(({ code }) => {
+      this.activeTasks.delete(taskId);
+      emit({ type: "install.result", ok: code === 0, code });
+      this.archive.push({
+        taskId,
+        projectId: task.projectId,
+        platform: task.platform,
         events: task.events,
         startedAt: task.startedAt,
         endedAt: Date.now(),

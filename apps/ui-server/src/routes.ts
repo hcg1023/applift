@@ -1,8 +1,9 @@
-import { AppliftRunner } from "./runner.js";
+import { AppliftRunner, resolveAppliftBin } from "./runner.js";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { ProjectRegistry, atomicWriteFile, type ProjectEntry } from "./registry.js";
 import { clampIntervalSettings } from "./aggregator.js";
+import type { Availability } from "./applift-install.js";
 
 /** applift validate --json 的结构化结果（关注字段子集，透传 report 给前端） */
 export interface ValidateReport {
@@ -19,10 +20,11 @@ export function sendJson(res: ServerResponse, status: number, body: unknown): vo
   res.end(JSON.stringify(body));
 }
 
-/** CLI bin 定位：`applift ui` spawn server 时经 APPLIFT_CLI_BIN 传入真实 bin 绝对路径（发布安装布局下仓库相对路径不存在）；仓库相对路径仅开发回退 */
+/** CLI bin 定位：收敛到检索链 resolveAppliftBin 的 env 层（`applift ui` spawn server 时经 APPLIFT_CLI_BIN 传入真实 bin 绝对路径）；
+ *  env 缺席（开发直跑）回落本仓库 dist——server 与 CLI 同仓发布，内部 validate/轮询不依赖用户全局安装 */
 export function cliBinPath(): string {
-  const fromEnv = process.env.APPLIFT_CLI_BIN;
-  if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv;
+  const resolved = resolveAppliftBin();
+  if (resolved.source === "env" && resolved.bin !== null) return resolved.bin[1] ?? "";
   return fileURLToPath(new URL("../../../packages/cli/dist/bin.mjs", import.meta.url));
 }
 const VALIDATE_TIMEOUT_MS = 60_000; // validate 为只读探测（findUp/config 解析），60s 远超正常耗时
@@ -308,6 +310,58 @@ export function createSettingsRoutes(opts: SettingsRoutesOptions): ApiHandler {
       return true;
     }
     sendJson(res, 200, { ok: true, settings: applied });
+    return true;
+  };
+}
+export interface AppliftRoutesOptions {
+  /** 检索链探测（createAvailabilityProber().get） */
+  availability: (cwd?: string) => Promise<Availability>;
+  /** 引导安装任务发起（ws 桥 startInstallTask 包装）；进行中重复 → 抛错（转 409） */
+  startInstallTask: (opts: { update?: boolean }) => string;
+}
+
+/** GET /api/applift/availability + POST /api/applift/install | /api/applift/update-global（Tauri 壳 §2 检索链与引导安装） */
+export function createAppliftRoutes(opts: AppliftRoutesOptions): ApiHandler {
+  const { availability, startInstallTask } = opts;
+  return async (req, res) => {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const path = url.pathname;
+    const method = req.method ?? "GET";
+    const isAvailability = path === "/api/applift/availability";
+    const isInstall = path === "/api/applift/install" || path === "/api/applift/update-global";
+    if (!isAvailability && !isInstall) return false;
+
+    if (isAvailability) {
+      // 只读探测：不做 Host 校验（同 /api/projects GET 语义）
+      if (method !== "GET") {
+        sendJson(res, 405, { ok: false, error: "method not allowed" });
+        return true;
+      }
+      const cwdRaw = url.searchParams.get("path");
+      const cwd = cwdRaw !== null && cwdRaw.trim() !== "" ? cwdRaw.trim() : undefined;
+      const data = await availability(cwd);
+      sendJson(res, 200, { ok: true, ...data });
+      return true;
+    }
+
+    // 写操作：Host 校验 + body 上限（同 /api/tasks 款）
+    if (!isLocalHostHeader(req)) {
+      sendJson(res, 403, { ok: false, error: "forbidden host" });
+      return true;
+    }
+    if (method !== "POST") {
+      sendJson(res, 405, { ok: false, error: "method not allowed" });
+      return true;
+    }
+    const body = await readJsonBody(req, res);
+    if (body !== null && typeof body === "object" && "tooLarge" in body) return true; // 已回 413
+    try {
+      const taskId = startInstallTask({ update: path === "/api/applift/update-global" });
+      sendJson(res, 200, { ok: true, taskId });
+    } catch (e) {
+      // 同 kind 进行中（ws 去重拒绝）：409，error 文案内含既有 taskId
+      sendJson(res, 409, { ok: false, error: (e as Error).message });
+    }
     return true;
   };
 }

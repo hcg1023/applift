@@ -1,4 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 /** 运行中的长任务句柄（发版流）：取消 kill、stdin 交互、完成信号 */
 export interface RunningTask {
@@ -8,6 +10,68 @@ export interface RunningTask {
   done: Promise<{ code: number }>;
   /** 向子进程 stdin 写一行（自动补 \n）；子进程已退出则静默丢弃 */
   stdinWrite(line: string): void;
+}
+
+/** applift 检索链解析结果：bin = 直接 spawn 的命令形态（数组防路径空格被切分） */
+export interface ResolvedBin {
+  bin: string[] | null;
+  source: "env" | "project" | "global" | null;
+}
+
+/** 工程内 applift bin 相对位置（npm/pnpm 安装布局一致） */
+const PROJECT_BIN_RELPATH = "node_modules/.bin/applift";
+
+/** Windows 可执行扩展（POSIX 无扩展名在前） */
+const EXE_EXTS = process.platform === "win32" ? ["", ".cmd", ".exe"] : [""];
+
+function firstExisting(dir: string, name: string): string | null {
+  for (const ext of EXE_EXTS) {
+    const p = join(dir, `${name}${ext}`);
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
+/** 检索链可注入环境（测试不污染全局 process.env；缺省用当前进程环境） */
+export interface ResolveEnv {
+  /** APPLIFT_CLI_BIN 值；undefined = 未设 */
+  cliBinEnv?: string;
+  /** PATH 值；undefined = process.env.PATH */
+  pathEnv?: string;
+}
+
+/** PATH 上找 applift（不 spawn，直接扫目录；找不到 = null） */
+export function findGlobalApplift(pathEnv?: string): string | null {
+  const path = pathEnv ?? process.env.PATH ?? "";
+  for (const dir of path.split(process.platform === "win32" ? ";" : ":")) {
+    if (dir.trim() === "") continue;
+    const found = firstExisting(dir, "applift");
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/** 工程目录内找 node_modules/.bin/applift；不存在 = null */
+export function findProjectApplift(cwd: string): string | null {
+  return firstExisting(join(cwd, "node_modules", ".bin"), "applift");
+}
+
+/**
+ * applift 检索链（Tauri 壳 §2 用户裁决）：APPLIFT_CLI_BIN env > 工程 node_modules/.bin > PATH > null。
+ * env 形态 = [node, bin.mjs]（`applift ui` 传入的是仓库 dist 脚本路径）；project/global 是可执行 shim，直接 spawn。
+ */
+export function resolveAppliftBin(cwd?: string, env: ResolveEnv = {}): ResolvedBin {
+  const fromEnv = env.cliBinEnv ?? process.env.APPLIFT_CLI_BIN;
+  if (fromEnv !== undefined && fromEnv.trim() !== "") {
+    return { bin: [process.execPath, fromEnv.trim()], source: "env" };
+  }
+  if (cwd !== undefined) {
+    const project = findProjectApplift(cwd);
+    if (project !== null) return { bin: [project], source: "project" };
+  }
+  const global = findGlobalApplift(env.pathEnv);
+  if (global !== null) return { bin: [global], source: "global" };
+  return { bin: null, source: null };
 }
 
 export interface RunResult {
@@ -146,10 +210,15 @@ export class AppliftRunner {
     return promise;
   }
 
-  /** 长任务流式执行：stdout 按行 NDJSON → onLine；stderr 行与解析失败 → onError */
+  /** 长任务流式执行：stdout 按行 NDJSON → onLine；stderr 行与解析失败 → onError；
+   *  onStdoutText 可选：stdout 非 NDJSON 行改走文本回调（npm install 等纯文本 stdout 场景），未提供时维持 onError */
   spawnStream(
     args: string[],
-    handlers: { onLine: (e: object) => void; onError: (s: string) => void },
+    handlers: {
+      onLine: (e: object) => void;
+      onError: (s: string) => void;
+      onStdoutText?: (s: string) => void;
+    },
   ): RunningTask {
     const child = spawn(this.command, [...this.prefixArgs, ...args], {
       cwd: this.cwd,
@@ -185,12 +254,15 @@ export class AppliftRunner {
       };
     };
     const stdoutLines = makeLineReader((line) => {
+      const onText = handlers.onStdoutText;
       try {
         const parsed: unknown = JSON.parse(line);
         if (parsed !== null && typeof parsed === "object") handlers.onLine(parsed);
+        else if (onText !== undefined) onText(line);
         else handlers.onError(`NDJSON 行非对象: ${line}`);
       } catch {
-        handlers.onError(`无法解析 NDJSON 行: ${line}`);
+        if (onText !== undefined) onText(line);
+        else handlers.onError(`无法解析 NDJSON 行: ${line}`);
       }
     });
     const stderrLines = makeLineReader((line) => handlers.onError(line));
