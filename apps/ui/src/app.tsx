@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { UiClient, classify } from "./api.js";
-import { webuiHost } from "./host.js";
+import { pickHost } from "./host.js";
 import { PageCtxProvider, type PageCtx } from "./state.js";
 import OverviewPage from "./pages/Overview.js";
 import ProjectPage from "./pages/Project.js";
@@ -64,6 +64,9 @@ const NAV_ICONS: Record<string, React.ReactNode> = {
   ),
 };
 
+/** 宿主实现一次性选择：Tauri 壳 → native（通知/目录对话框/角标）；浏览器 → webui 降级 */
+const host = pickHost();
+
 /** applift 窗口根组件：hash 路由 + 布局（titlebar/connBanner/sidebar）+ UiClient 生命周期 */
 export default function App() {
   const [client] = useState(() => new UiClient());
@@ -109,7 +112,7 @@ export default function App() {
     if (ev === undefined || ev.id === notifiedFeedId.current) return;
     notifiedFeedId.current = ev.id;
     const proj = client.state.projects.find((p) => p.id === ev.projectId);
-    void webuiHost.notify(
+    void host.notify(
       "渠道状态变化",
       `${proj?.name ?? ev.projectId} · ${ev.channel} ${classify(ev.from).label} → ${classify(ev.to).label}`,
     );
@@ -158,7 +161,7 @@ export default function App() {
   const navigate = (h: string): void => {
     location.hash = h;
   };
-  const ctx: PageCtx = { client, navigate, host: webuiHost };
+  const ctx: PageCtx = { client, navigate, host };
 
   return (
     <PageCtxProvider value={ctx}>

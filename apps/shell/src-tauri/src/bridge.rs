@@ -115,3 +115,29 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
         .map_err(|e| e.to_string())?;
     Ok(enabled)
 }
+
+// -- 托盘角标（T4 接线；T3 为占位实现——前端 HostAdapter.setBadge 已可用）----------
+
+/// 角标值落地（纯函数面：T4 接托盘/DocK 角标；当前占位恒 Ok）
+fn apply_badge(n: u32) -> Result<(), String> {
+    // T4：写托盘图标 overlay / macOS dock badge。占位接受任意值（含 0=清角标）。
+    let _ = n;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_badge(n: u32) -> Result<(), String> {
+    apply_badge(n)
+}
+
+#[cfg(test)]
+mod badge_tests {
+    use super::apply_badge;
+
+    #[test]
+    fn badge_placeholder_accepts_any_value() {
+        assert!(apply_badge(0).is_ok()); // 0 = 清角标
+        assert!(apply_badge(1).is_ok());
+        assert!(apply_badge(u32::MAX).is_ok());
+    }
+}

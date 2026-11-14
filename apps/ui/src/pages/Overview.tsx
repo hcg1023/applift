@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import AddProjectDialog from "../AddProjectDialog.js";
 import { classify } from "../api.js";
 import { freshness, relTime, toast } from "../util.js";
 import { usePageCtx, useUiTick } from "../state.js";
@@ -114,6 +115,7 @@ export default function OverviewPage() {
   useUiTick();
   const [feedFilter, setFeedFilter] = useState("all");
   const [menu, setMenu] = useState<{ anchor: HTMLElement; id: string; name: string } | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
 
   const projects = client.state.projects;
   const hasSnapshot =
@@ -148,19 +150,6 @@ export default function OverviewPage() {
       } catch {
         toast("状态由服务端自动刷新，页面打开/刷新即即时刷新");
       }
-    }
-  };
-
-  const onAddProject = async () => {
-    // HostAdapter：宿主有原生目录选择器则先弹选择（webui 恒 null → 直接手输路径）
-    const picked = await host.pickDirectory();
-    const path = picked ?? window.prompt("输入工程目录路径（需含 applift.config.ts）：");
-    if (path === null || path.trim() === "") return;
-    try {
-      await client.addProject(path.trim());
-      toast("项目已添加");
-    } catch (err) {
-      toast(`添加失败：${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -313,7 +302,7 @@ export default function OverviewPage() {
             </div>
           );
         })}
-        <button className="ov-card add" id="addProject" onClick={onAddProject}>
+        <button className="ov-card add" id="addProject" onClick={() => setShowAdd(true)}>
           <div className="ov-add-plus">＋</div>
           <div className="ov-add-txt">添加项目</div>
         </button>
@@ -365,6 +354,7 @@ export default function OverviewPage() {
           onAction={(act) => void onMenuAction(act, menu.id, menu.name)}
         />
       ) : null}
+      {showAdd ? <AddProjectDialog host={host} onClose={() => setShowAdd(false)} /> : null}
     </section>
   );
 }

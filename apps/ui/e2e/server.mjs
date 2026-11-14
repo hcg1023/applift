@@ -26,6 +26,7 @@ const registry = new ProjectRegistry(join(tmp, "projects.json"));
 const projDir = join(tmp, "stub-project");
 mkdirSync(projDir, { recursive: true });
 await registry.add(projDir);
+writeFileSync(join(projDir, "applift.config.ts"), "export default {}\n");
 
 const betaBin = fileURLToPath(new URL("./stub-beta.mjs", import.meta.url));
 const server = await createServer({

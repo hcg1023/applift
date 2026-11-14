@@ -1,4 +1,4 @@
-import { useReducer } from "react";
+import { useEffect, useReducer, useState } from "react";
 import {
   BG_MAX,
   BG_MIN,
@@ -10,6 +10,7 @@ import {
   toast,
   type Settings,
 } from "../util.js";
+import { tauriInvoke } from "../host.tauri.js";
 import { usePageCtx } from "../state.js";
 
 interface StepperSpec {
@@ -39,6 +40,44 @@ const STEPPERS: StepperSpec[] = [
 
 type SwitchKey = "checkOnOpen" | "notifyState" | "notifyRelease";
 
+/** Tauri 壳专属开关（webui 下整组隐藏）：登录自启（壳侧 get/set_autostart 命令） */
+function AutostartRow() {
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => {
+    const invoke = tauriInvoke();
+    if (invoke === null) return;
+    void invoke("get_autostart")
+      .then((v) => setOn(v === true))
+      .catch(() => setOn(null));
+  }, []);
+  const toggle = () => {
+    const invoke = tauriInvoke();
+    if (invoke === null || on === null) return;
+    const next = !on;
+    setOn(next);
+    void invoke("set_autostart", { enabled: next }).catch((err: unknown) => {
+      setOn(!next);
+      toast(`开机自启设置失败：${err instanceof Error ? err.message : String(err)}`);
+    });
+  };
+  return (
+    <div className="set-row" id="autostartRow">
+      <div className="set-main">
+        <div className="set-title">登录自启</div>
+        <div className="set-sub">开机后自动在后台启动 applift（托盘常驻）</div>
+      </div>
+      <button
+        className="switch"
+        data-key="autostart"
+        aria-checked={on === true ? "true" : "false"}
+        role="switch"
+        aria-label="登录自启"
+        disabled={on === null}
+        onClick={toggle}
+      />
+    </div>
+  );
+}
 const SWITCHES: Array<{ key: SwitchKey; title: string; sub: string; label: string }> = [
   {
     key: "checkOnOpen",
@@ -163,6 +202,14 @@ export default function SettingsPage({
           </div>
         ))}
       </div>
+      {tauriInvoke() !== null ? (
+        <>
+          <div className="group-title">桌面壳</div>
+          <div className="group" id="shellGroup">
+            <AutostartRow />
+          </div>
+        </>
+      ) : null}
       <div className="group-title">外观</div>
       <div className="group">
         <div className="set-row">

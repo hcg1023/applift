@@ -1,3 +1,5 @@
+import { createTauriHost, tauriInvoke } from "./host.tauri.js";
+
 /**
  * HostAdapter 宿主能力抽象（一期 webui 全降级实现；接口与 @applift/ui-server host.ts 同构——
  * 前端沿用 api.ts 不跨包 import 的约定，本地定义，Tauri 壳（二期）注入 native 实现替换）。
@@ -52,6 +54,15 @@ export function createWebuiHost(deps: NotifyDeps = {}): HostAdapter {
     },
     async setBadge(): Promise<void> {},
   };
+}
+
+/**
+ * 宿主实现选择（Tauri 壳期）：`window.__TAURI_INTERNALS__` 存在 → Tauri 实现
+ * （原生通知/目录对话框/角标），否则 webuiHost（目录选择由前端服务端目录浏览器承担）。
+ */
+export function pickHost(): HostAdapter {
+  const invoke = tauriInvoke();
+  return invoke === null ? webuiHost : createTauriHost(invoke);
 }
 
 /** 一期默认宿主实例（全降级语义；Tauri 壳注入 native 实现时替换此出口） */

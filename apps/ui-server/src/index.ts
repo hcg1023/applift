@@ -12,6 +12,7 @@ import {
 import {
   cliBinPath,
   createAppliftRoutes,
+  createFsRoutes,
   createSettingsRoutes,
   createTaskRoutes,
   sendJson,
@@ -30,9 +31,10 @@ export {
 } from "./registry.js";
 export type { ProjectEntry } from "./registry.js";
 export {
+  createAppliftRoutes,
+  createFsRoutes,
   createProjectRoutes,
   createTaskRoutes,
-  createAppliftRoutes,
   sanitizeBetaArgs,
   validateProject,
   cliBinPath,
@@ -41,6 +43,8 @@ export type {
   ApiHandler,
   AppliftRoutesOptions,
   BetaDryRunReport,
+  FsEntry,
+  FsRoot,
   ProjectRoutesOptions,
   TaskRoutesOptions,
   ValidateReport,
@@ -143,7 +147,8 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
     healthInfo: () => ({ refreshIntervalMs: aggregator.currentIntervalMs() }),
     registry,
     extraApiHandlers: [
-      // PUT /api/settings：轮询档位热接入（clamp 护栏 + settings.json 持久化，启动读取）
+      // GET /api/fs/roots + /api/fs/list：服务端目录浏览器（webui 添加项目点选路径）
+      createFsRoutes(),
       createSettingsRoutes({
         setIntervals: (fg, bg) => aggregator.setIntervals(fg, bg),
         settingsPath,

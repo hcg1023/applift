@@ -1209,3 +1209,131 @@ kbd {
 .log-line .lv.error {
   color: var(--red);
 }
+
+/* -- 添加项目弹层（目录浏览器 / 手输双 tab）---------------------------------- */
+.dlg-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.dlg {
+  width: min(560px, calc(100vw - 48px));
+  max-height: min(560px, calc(100vh - 64px));
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: 12px;
+  box-shadow: var(--window-shadow);
+  padding: 16px 16px 14px;
+}
+.dlg-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.dlg-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.dlg-tabs {
+  margin-bottom: 10px;
+}
+.dlg-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 120px;
+  overflow-y: auto;
+}
+.dlg-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--label);
+  background: var(--surface-2);
+  border: 1px solid var(--separator);
+  border-radius: 8px;
+  outline: none;
+}
+.dlg-input:focus-visible {
+  border-color: var(--blue);
+}
+.fs-roots {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.fs-crumb {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--label-2);
+}
+.fs-crumb button {
+  padding: 2px 5px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--blue);
+  cursor: pointer;
+  font-size: 12px;
+}
+.fs-crumb button:hover {
+  background: var(--fill);
+}
+.fs-list {
+  border: 1px solid var(--separator);
+  border-radius: 8px;
+  overflow-y: auto;
+  min-height: 160px;
+  max-height: 300px;
+}
+.fs-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--separator);
+}
+.fs-row:last-child {
+  border-bottom: none;
+}
+.fs-row.proj {
+  background: var(--fill-2);
+}
+.fs-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--label);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.fs-name:hover {
+  color: var(--blue);
+}
+.fs-badge {
+  font-size: 11px;
+  color: var(--green);
+  border: 1px solid var(--green);
+  border-radius: 5px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+.fs-pick {
+  font-size: 12px;
+  padding: 4px 12px;
+}

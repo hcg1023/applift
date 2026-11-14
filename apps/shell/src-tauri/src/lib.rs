@@ -155,6 +155,8 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             Some(vec![]),
         ))
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(ShellState { supervisor })
         .invoke_handler(tauri::generate_handler![
             bridge::get_server_port,
@@ -162,6 +164,7 @@ pub fn run() {
             bridge::get_autostart,
             bridge::retry_server_start,
             bridge::set_autostart,
+            bridge::set_badge,
         ])
         .setup(move |app| {
             // 登录自启：默认开（首次运行未写设置文件时启用），用户在设置页关闭后持久尊重。

@@ -1,9 +1,22 @@
 import { AppliftRunner } from "./runner.js";
 import { fileURLToPath } from "node:url";
+import { readdir, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { ProjectRegistry, atomicWriteFile, type ProjectEntry } from "./registry.js";
 import { clampIntervalSettings } from "./aggregator.js";
 import type { Availability } from "./applift-install.js";
+
+/** 仅存在性探测（浏览器的 applift 工程高亮标记） */
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** applift validate --json 的结构化结果（关注字段子集，透传 report 给前端） */
 export interface ValidateReport {
@@ -362,6 +375,88 @@ export function createAppliftRoutes(opts: AppliftRoutesOptions): ApiHandler {
       // 同 kind 进行中（ws 去重拒绝）：409，error 文案内含既有 taskId
       sendJson(res, 409, { ok: false, error: (e as Error).message });
     }
+    return true;
+  };
+}
+
+// -- 服务端目录浏览器（webui「添加项目」：code-server 式一层一层点选）------------------
+
+/** GET /api/fs/list?dir=<abs>：列一层子目录；hasConfig = 目录内存在 applift.config.ts */
+export interface FsEntry {
+  name: string;
+  path: string;
+  hasConfig: boolean;
+}
+
+/** GET /api/fs/roots：浏览起始根（home 本身 + 常见父目录；只返回真实存在的） */
+export interface FsRoot {
+  name: string;
+  path: string;
+}
+
+const FS_ROOT_CANDIDATES: ReadonlyArray<{ name: string; sub: string | null }> = [
+  { name: "主目录", sub: null },
+  { name: "桌面", sub: "Desktop" },
+  { name: "文档", sub: "Documents" },
+  { name: "下载", sub: "Downloads" },
+];
+
+/** 只读探测：不做 Host 校验（同 /api/projects GET、/api/applift/availability 语义） */
+export function createFsRoutes(): ApiHandler {
+  return async (req, res) => {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const isRoots = url.pathname === "/api/fs/roots";
+    const isList = url.pathname === "/api/fs/list";
+    if (!isRoots && !isList) return false;
+    if (req.method !== "GET") {
+      sendJson(res, 405, { ok: false, error: "method not allowed" });
+      return true;
+    }
+
+    if (isRoots) {
+      const home = homedir();
+      const roots: FsRoot[] = [];
+      for (const c of FS_ROOT_CANDIDATES) {
+        const path = c.sub === null ? home : join(home, c.sub);
+        try {
+          const st = await stat(path);
+          if (st.isDirectory()) roots.push({ name: c.name, path });
+        } catch {
+          // 候选不存在（无桌面/下载目录的机器）直接略过
+        }
+      }
+      sendJson(res, 200, { ok: true, roots });
+      return true;
+    }
+
+    const dir = (url.searchParams.get("dir") ?? "").trim();
+    if (dir === "") {
+      sendJson(res, 400, { ok: false, error: "dir is required" });
+      return true;
+    }
+    let names: string[];
+    try {
+      const st = await stat(dir); // 存在性 + 必须是目录（文件/坏路径 → 400）
+      if (!st.isDirectory()) throw new Error("not a directory");
+      names = await readdir(dir);
+    } catch {
+      sendJson(res, 400, { ok: false, error: `目录不可读或不存在：${dir}` });
+      return true;
+    }
+    // 一层子目录（含指到目录的符号链接；stat 失败——悬空链接/循环——由 readdir/stat 自然略过）
+    const entries: FsEntry[] = [];
+    for (const name of names.sort((a, b) => a.localeCompare(b))) {
+      const path = join(dir, name);
+      const hasConfig = await fileExists(join(path, "applift.config.ts"));
+      let isDir: boolean;
+      try {
+        isDir = (await stat(path)).isDirectory();
+      } catch {
+        continue; // 悬空符号链接等不可 stat 项跳过
+      }
+      if (isDir) entries.push({ name, path, hasConfig });
+    }
+    sendJson(res, 200, { ok: true, dir, entries });
     return true;
   };
 }

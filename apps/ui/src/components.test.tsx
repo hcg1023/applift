@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { UiClient, UiState, type ProjectSnapshot } from "./api.js";
 import { PageCtxProvider, type PageCtx } from "./state.js";
 import { ConfirmCard } from "./pages/Release.js";
 import ProjectPage from "./pages/Project.js";
 import SettingsPage from "./pages/Settings.js";
+import AddProjectDialog from "./AddProjectDialog.js";
 import type { HostAdapter } from "./host.js";
 
 afterEach(() => {
@@ -138,5 +139,91 @@ describe("Settings 轮询 clamp", () => {
     fireEvent.click(minus);
     expect(el.textContent).toBe("已是最短间隔：15 分钟");
     el.remove();
+  });
+});
+
+describe("AddProjectDialog 双路径", () => {
+  const HOST = { notify: vi.fn(), pickDirectory: vi.fn(async () => null), setBadge: vi.fn() };
+
+  function fsClient(over: Partial<Record<"fsRoots" | "fsList" | "addProject", unknown>> = {}) {
+    return {
+      fsRoots: vi.fn(async () => [{ name: "主目录", path: "/tmp/home" }]),
+      fsList: vi.fn(async (dir: string) =>
+        dir === "/tmp/home"
+          ? [
+              { name: "plain", path: "/tmp/home/plain", hasConfig: false },
+              { name: "proj", path: "/tmp/home/proj", hasConfig: true },
+            ]
+          : [],
+      ),
+      addProject: vi.fn(async () => ({ id: "p2", name: "proj", path: "/tmp/home/proj" })),
+      ...over,
+    } as unknown as UiClient;
+  }
+
+  it("浏览：roots 起始 → 子目录列表，applift 工程高亮 + 选择即 add", async () => {
+    const client = fsClient();
+    render(withCtx(<AddProjectDialog host={HOST} onClose={vi.fn()} />, client));
+    await screen.findByText("📁 proj");
+    const row = document.querySelector('.fs-row[data-name="proj"]')!;
+    expect(row.querySelector(".fs-badge")!.textContent).toBe("applift 工程");
+    fireEvent.click(row.querySelector("button[data-pick]")!);
+    await waitFor(() => expect(client.addProject).toHaveBeenCalledWith("/tmp/home/proj"));
+  });
+
+  it("浏览：普通目录点击进入下一层（fsList 换目录）", async () => {
+    const client = fsClient();
+    render(withCtx(<AddProjectDialog host={HOST} onClose={vi.fn()} />, client));
+    await screen.findByText("📁 plain");
+    fireEvent.click(screen.getByText("📁 plain"));
+    await waitFor(() => expect(client.fsList).toHaveBeenCalledWith("/tmp/home/plain"));
+  });
+
+  it("手输：切 tab → 输入路径 → 添加", async () => {
+    const client = fsClient();
+    render(withCtx(<AddProjectDialog host={HOST} onClose={vi.fn()} />, client));
+    fireEvent.click(document.querySelector('button[data-tab="manual"]')!);
+    const input = document.querySelector<HTMLInputElement>("#manualPath")!;
+    fireEvent.change(input, { target: { value: "/tmp/home/proj" } });
+    fireEvent.click(document.querySelector("#manualAdd")!);
+    await waitFor(() => expect(client.addProject).toHaveBeenCalledWith("/tmp/home/proj"));
+  });
+
+  it("添加失败（validate 不通过）→ toast 报错且弹层不关", async () => {
+    const toastEl = document.createElement("div");
+    toastEl.id = "toast";
+    document.body.append(toastEl);
+    const client = fsClient({
+      addProject: vi.fn(async () => {
+        throw new Error("no applift.config.ts");
+      }),
+    });
+    const onClose = vi.fn();
+    render(withCtx(<AddProjectDialog host={HOST} onClose={onClose} />, client));
+    fireEvent.click(document.querySelector('button[data-tab="manual"]')!);
+    fireEvent.change(document.querySelector<HTMLInputElement>("#manualPath")!, {
+      target: { value: "/tmp/bad" },
+    });
+    fireEvent.click(document.querySelector("#manualAdd")!);
+    await waitFor(() => expect(toastEl.textContent).toContain("no applift.config.ts"));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(document.querySelector("#addProjectDlg")).not.toBeNull();
+    toastEl.remove();
+  });
+
+  it("Tauri 环境：浏览 tab 变原生选择器，pickDirectory 结果直达 add", async () => {
+    const w = window as unknown as { __TAURI_INTERNALS__?: { invoke: unknown } };
+    w.__TAURI_INTERNALS__ = { invoke: vi.fn(async () => true) };
+    try {
+      const host = { ...HOST, pickDirectory: vi.fn(async () => "/Users/x/proj") };
+      const client = fsClient();
+      render(withCtx(<AddProjectDialog host={host as never} onClose={vi.fn()} />, client));
+      // webui 目录浏览器被收起（无 fsRoots 消费）
+      expect(document.querySelector("#fsRoots")).toBeNull();
+      fireEvent.click(document.querySelector("#nativePick")!);
+      await waitFor(() => expect(client.addProject).toHaveBeenCalledWith("/Users/x/proj"));
+    } finally {
+      delete w.__TAURI_INTERNALS__;
+    }
   });
 });

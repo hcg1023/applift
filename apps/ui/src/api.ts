@@ -63,6 +63,19 @@ export interface JudgementReport {
   note: string;
 }
 
+/** GET /api/fs/list 单层子目录（hasConfig = 目录内含 applift.config.ts） */
+export interface FsEntry {
+  name: string;
+  path: string;
+  hasConfig: boolean;
+}
+
+/** GET /api/fs/roots 浏览起始根（home + 常见父目录，仅真实存在项） */
+export interface FsRoot {
+  name: string;
+  path: string;
+}
+
 export type DownMessage =
   | { t: "snapshot"; data: ProjectSnapshot }
   | { t: "feed"; data: FeedEvent }
@@ -515,5 +528,19 @@ export class UiClient {
   /** 服务端健康信息（含当前轮询档位间隔 refreshIntervalMs——「重新检查」toast 的服务端真话） */
   async health(): Promise<{ ok: boolean; refreshIntervalMs?: number }> {
     return this.json("/api/health");
+  }
+
+  /** 服务端目录浏览器：起始根列表（添加项目弹层首页） */
+  async fsRoots(): Promise<FsRoot[]> {
+    const body = await this.json<{ roots: FsRoot[] }>("/api/fs/roots");
+    return body.roots ?? [];
+  }
+
+  /** 服务端目录浏览器：列一层子目录（applift 工程带 hasConfig 高亮标记） */
+  async fsList(dir: string): Promise<FsEntry[]> {
+    const body = await this.json<{ entries: FsEntry[] }>(
+      `/api/fs/list?dir=${encodeURIComponent(dir)}`,
+    );
+    return body.entries ?? [];
   }
 }
