@@ -38,23 +38,39 @@ pub fn badge_title(n: u32) -> Option<String> {
     }
 }
 
-/// 托盘图标位图（RGBA）：applift 上箭头（与前端 release 导航同形），黑色 + alpha 蒙版——
-/// macOS template 模式按 alpha 渲染单色图形，Windows/Linux 直接显示黑箭头。
-/// 形状（归一化坐标）：实心三角头（顶点 (0.5,0.10)、底边 y=0.52 跨 [0.14,0.86]）
-/// + 矩形杆（x 跨 [0.42,0.58]、y 跨 [0.30,0.90]）。
+/// 托盘图标位图（RGBA）：applift 品牌棱镜 A 剪影（与 docs/brand/assets/logo-favicon.svg 同形），
+/// 黑色 + alpha 蒙版——macOS template 模式按 alpha 渲染系统单色，Windows/Linux 直接显示剪影。
+/// 形状（brand 坐标 1024 系，evenodd）：外轮廓三角 (512,232)-(268,792)-(756,792)，
+/// 字腔三角 (512,396)-(580,566)-(444,566) 掏空；含横梁内衬（两腿之间保持实心的横杠区域）。
 pub fn tray_icon_rgba(size: u32) -> Vec<u8> {
     let s = size.max(1) as f64;
     let mut rgba = Vec::with_capacity((size * size * 4) as usize);
-    let inside = |nx: f64, ny: f64| -> bool {
-        let head = ny >= 0.10 && ny <= 0.52 && (nx - 0.5).abs() <= 0.36 * (ny - 0.10) / 0.42;
-        let stem = ny >= 0.30 && ny <= 0.90 && (nx - 0.5).abs() <= 0.08;
-        head || stem
+    // 三角形内测试（叉积同号法），p1-p2-p3 逆时针
+    let in_tri = |px: f64, py: f64, p1: (f64, f64), p2: (f64, f64), p3: (f64, f64)| -> bool {
+        let d1 = (px - p2.0) * (p1.1 - p2.1) - (p1.0 - p2.0) * (py - p2.1);
+        let d2 = (px - p3.0) * (p2.1 - p3.1) - (p2.0 - p3.0) * (py - p3.1);
+        let d3 = (px - p1.0) * (p3.1 - p1.1) - (p3.0 - p1.0) * (py - p1.1);
+        let neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+        let pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+        !(neg && pos)
+    };
+    // brand 1024 坐标 → 归一化（留 6% 边距让剪影不顶满格子）
+    let n = |v: f64| (v / 1024.0 - 0.06) / 0.88;
+    let outer = [(n(512.0), n(232.0)), (n(268.0), n(792.0)), (n(756.0), n(792.0))];
+    let counter = [(n(512.0), n(396.0)), (n(580.0), n(566.0)), (n(444.0), n(566.0))];
+    // 横梁内衬：字腔中补回的横杠（brand y 512-592 区间、腿内侧之间）
+    let bar = |nx: f64, ny: f64| -> bool {
+        let (bx, by) = ((nx * 0.88 + 0.06) * 1024.0, (ny * 0.88 + 0.06) * 1024.0); // 归一化 → brand
+        by >= 512.0 && by <= 592.0 && bx >= 424.0 && bx <= 600.0
     };
     for y in 0..size {
         for x in 0..size {
             let nx = (x as f64 + 0.5) / s;
             let ny = (y as f64 + 0.5) / s;
-            let a = if inside(nx, ny) { 255 } else { 0 };
+            let in_outer = in_tri(nx, ny, outer[0], outer[1], outer[2]);
+            let in_counter = in_tri(nx, ny, counter[0], counter[1], counter[2]);
+            let inside = (in_outer && !in_counter) || (in_counter && bar(nx, ny));
+            let a = if inside { 255 } else { 0 };
             rgba.extend_from_slice(&[0, 0, 0, a]);
         }
     }
@@ -289,8 +305,8 @@ mod tests {
     }
 
     #[test]
-    fn tray_icon_is_alpha_arrow() {
-        let size = 44u32;
+    fn tray_icon_is_alpha_prism_a() {
+        let size = 128u32;
         let rgba = tray_icon_rgba(size);
         assert_eq!(rgba.len(), (size * size * 4) as usize);
         let px = |nx: f64, ny: f64| -> u8 {
@@ -298,12 +314,20 @@ mod tests {
             let y = ((ny * size as f64) as u32).min(size - 1);
             rgba[(y * size + x) as usize * 4 + 3]
         };
-        assert!(px(0.5, 0.2) > 0, "箭头头部实心");
-        assert!(px(0.5, 0.8) > 0, "箭头杆实心");
-        assert!(px(0.3, 0.45) > 0, "三角底边内实心");
-        assert_eq!(px(0.05, 0.9), 0, "左下角透明");
-        assert_eq!(px(0.95, 0.2), 0, "头右侧外部透明");
-        assert_eq!(px(0.5, 0.95), 0, "杆下方透明");
+        // 归一化坐标 → brand 1024 坐标的采样点（n 的逆变换：brand = (n*0.88+0.06)*1024）
+        let p = |bx: f64, by: f64| ((bx / 1024.0 - 0.06) / 0.88, (by / 1024.0 - 0.06) / 0.88);
+        let (ax, ay) = p(512.0, 300.0);
+        assert!(px(ax, ay) > 0, "A 顶点区实心");
+        let (lx, ly) = p(340.0, 700.0);
+        assert!(px(lx, ly) > 0, "左腿实心");
+        let (rx, ry) = p(690.0, 700.0);
+        assert!(px(rx, ry) > 0, "右腿实心");
+        let (bx, by) = p(512.0, 550.0);
+        assert!(px(bx, by) > 0, "横梁实心");
+        let (cx, cy) = p(512.0, 470.0);
+        assert_eq!(px(cx, cy), 0, "字腔上部掏空");
+        let (ex, ey) = p(150.0, 700.0);
+        assert_eq!(px(ex, ey), 0, "左下角外部透明");
         // RGB 全 0（macOS template 按 alpha 取形）
         assert!(rgba.chunks_exact(4).all(|c| c[0] == 0 && c[1] == 0 && c[2] == 0));
     }
