@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+          <defs>
+            <linearGradient id="p2-bg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#11151f" />
+              <stop offset="0.55" stop-color="#0b0e16" />
+              <stop offset="1" stop-color="#090b12" />
+            </linearGradient>
+            <radialGradient id="p2-halo" cx="0.5" cy="0.38" r="0.46">
+              <stop offset="0" stop-color="#3b82f6" stop-opacity="0.38" />
+              <stop offset="0.55" stop-color="#1d4ed8" stop-opacity="0.16" />
+              <stop offset="1" stop-color="#1d4ed8" stop-opacity="0" />
+            </radialGradient>
+            <linearGradient id="p2-legL" x1="0" y1="0" x2="1" y2="0.7">
+              <stop offset="0" stop-color="#9ed2ff" />
+              <stop offset="0.42" stop-color="#4f8df9" />
+              <stop offset="0.74" stop-color="#2456ce" />
+              <stop offset="1" stop-color="#17337f" />
+            </linearGradient>
+            <linearGradient id="p2-legR" x1="0" y1="0" x2="1" y2="0.7">
+              <stop offset="0" stop-color="#3e6fe3" />
+              <stop offset="0.45" stop-color="#20499f" />
+              <stop offset="1" stop-color="#0b1b4e" />
+            </linearGradient>
+            <linearGradient id="p2-bar" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#eaf4ff" />
+              <stop offset="0.34" stop-color="#a8cfff" />
+              <stop offset="0.78" stop-color="#5b99f4" />
+              <stop offset="1" stop-color="#3b6fd9" />
+            </linearGradient>
+            <linearGradient id="p2-spark" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#ffffff" />
+              <stop offset="1" stop-color="#8fc4ff" />
+            </linearGradient>
+            <linearGradient id="p2-sheen" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#ffffff" stop-opacity="0.12" />
+              <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.02" />
+              <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
+            </linearGradient>
+            <filter id="p2-blurA" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="18" />
+            </filter>
+            <filter id="p2-blurB" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="8" />
+            </filter>
+            <clipPath id="p2-sq">
+              <path d="M285.4 100 C183.0 100 100 183.0 100 285.4 L100 738.6 C100 841.0 183.0 924 285.4 924 L738.6 924 C841.0 924 924 841.0 924 738.6 L924 285.4 C924 183.0 841.0 100 738.6 100 Z" />
+            </clipPath>
+          </defs>
+          <g clip-path="url(#p2-sq)">
+            <!-- L1 曜石场：天幕 + 蓝晕轮 + 维度弧 + 接触阴影 -->
+            <rect x="100" y="100" width="824" height="824" fill="url(#p2-bg)" />
+            <rect x="100" y="100" width="824" height="824" fill="url(#p2-halo)" />
+            <path d="M232 128 Q512 58 792 128" fill="none" stroke="#3b82f6" stroke-opacity="0.18" stroke-width="3" />
+            <path d="M292 176 Q512 118 732 176" fill="none" stroke="#3b82f6" stroke-opacity="0.1" stroke-width="3" />
+            <ellipse cx="512" cy="802" rx="292" ry="34" fill="#04060c" opacity="0.5" filter="url(#p2-blurA)" />
+            <!-- L2 晶体 A：偏移投影 → 左腿受光 → 右腿背光（交叠出棱线） -->
+            <path d="M504 256 L268 768 L352 768 L588 256 Z" fill="#03050b" opacity="0.55" filter="url(#p2-blurA)" transform="translate(14 24)" />
+            <path d="M520 256 L756 768 L672 768 L436 256 Z" fill="#03050b" opacity="0.55" filter="url(#p2-blurA)" transform="translate(14 24)" />
+            <path d="M464 556 L560 556 L600 644 L424 644 Z" fill="#03050b" opacity="0.5" filter="url(#p2-blurB)" transform="translate(10 18)" />
+            <path d="M504 256 L268 768 L352 768 L588 256 Z" fill="url(#p2-legL)" />
+            <path d="M520 256 L756 768 L672 768 L436 256 Z" fill="url(#p2-legR)" />
+            <path d="M504 260 L272 764" stroke="#d9ebff" stroke-opacity="0.7" stroke-width="5" fill="none" stroke-linecap="round" />
+            <path d="M520 260 L752 764" stroke="#9ec5ff" stroke-opacity="0.32" stroke-width="4" fill="none" stroke-linecap="round" />
+            <path d="M436 262 L614 654" stroke="#bfd9ff" stroke-opacity="0.4" stroke-width="3" fill="none" />
+            <!-- L3 悬浮横梁（最亮玻璃件，上下留缝）+ 顶缘高光 -->
+            <path d="M464 556 L560 556 L600 644 L424 644 Z" fill="url(#p2-bar)" />
+            <path d="M468 560 L556 560" stroke="#ffffff" stroke-opacity="0.85" stroke-width="4" stroke-linecap="round" fill="none" />
+            <path d="M464 556 L560 556 L600 644 L424 644 Z" fill="none" stroke="#eaf4ff" stroke-opacity="0.35" stroke-width="2" />
+            <!-- L3b 顶点脱离火花 + 光环 -->
+            <circle cx="512" cy="178" r="64" fill="none" stroke="#7cc4ff" stroke-opacity="0.25" stroke-width="2.5" />
+            <path d="M512 138 C518 170 521 173 553 178 C521 183 518 186 512 218 C506 186 503 183 471 178 C503 173 506 170 512 138 Z" fill="url(#p2-spark)" />
+            <circle cx="512" cy="178" r="26" fill="#dfefff" opacity="0.28" filter="url(#p2-blurB)" />
+            <path d="M285.4 100 C183.0 100 100 183.0 100 285.4 L100 738.6 C100 841.0 183.0 924 285.4 924 L738.6 924 C841.0 924 924 841.0 924 738.6 L924 285.4 C924 183.0 841.0 100 738.6 100 Z" fill="url(#p2-sheen)" />
+          </g>
+        </svg>
