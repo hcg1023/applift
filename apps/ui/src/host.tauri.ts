@@ -29,6 +29,8 @@ export function isTauriEnv(): boolean {
 }
 
 export function createTauriHost(invoke: TauriInvoke): HostAdapter {
+  let visible = false; // 主窗 isVisible 乐观缓存（isWindowVisible 用）
+  let visibleAt = 0;
   return {
     async notify(title, body): Promise<boolean> {
       try {
@@ -51,6 +53,20 @@ export function createTauriHost(invoke: TauriInvoke): HostAdapter {
     },
     async setBadge(n): Promise<void> {
       await invoke("set_badge", { n });
+    },
+    isWindowVisible(): boolean {
+      // invoke 异步但接口同步：乐观缓存（最近一次 invoke 结果 + 500ms 有效期）。
+      // Tauri 壳 webview 隐藏后 visibilityState 恒 visible（文档值不可信），以宿主 isVisible 为真值；
+      // 缓存过期返回 false（保守：宁可多通知，不漏通知——窗口隐藏时通知正是本接口的目的）。
+      if (Date.now() - visibleAt >= 500) {
+        void invoke("is_main_visible")
+          .then((v) => {
+            visible = v === true;
+            visibleAt = Date.now();
+          })
+          .catch(() => {});
+      }
+      return visible;
     },
   };
 }

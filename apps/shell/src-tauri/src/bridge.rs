@@ -7,6 +7,17 @@ use tauri_plugin_autostart::ManagerExt;
 use super::supervisor::ServerState;
 use super::ShellState;
 
+/// 主窗口真实可见性（前端通知/已读抑制用）：isVisible() —— hide() 到托盘 = false。
+/// wry webview 在窗口隐藏后 document.visibilityState 仍是 "visible"（不发 visibilitychange），
+/// 前端以本命令的宿主真值为准。
+#[tauri::command]
+pub fn is_main_visible(app: AppHandle) -> bool {
+    app.get_webview_window("main")
+        .map(|w| w.is_visible().unwrap_or(false))
+        .unwrap_or(false)
+}
+
+
 #[derive(Serialize)]
 pub struct ServerStatus {
     pub state: String,

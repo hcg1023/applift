@@ -1,6 +1,6 @@
 {
   "name": "@applift/ui-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "files": [
     "dist"
   ],
@@ -22,6 +22,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "package-manager-detector": "^1.9.0",
     "ws": "^8.23.0"
   },
   "devDependencies": {

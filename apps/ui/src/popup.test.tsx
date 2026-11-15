@@ -34,6 +34,7 @@ const host: HostAdapter = {
   notify: vi.fn(async () => true),
   pickDirectory: vi.fn(async () => null),
   setBadge: vi.fn(async () => {}),
+  isWindowVisible: () => true,
 };
 
 const navigate = vi.fn();

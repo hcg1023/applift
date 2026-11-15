@@ -180,6 +180,7 @@ pub fn run() {
             bridge::set_autostart,
             bridge::set_badge,
             bridge::open_main,
+            bridge::is_main_visible,
         ])
         .on_window_event(|window, event| {
             // 常驻语义（spec §4）：主窗关=隐藏到托盘（菜单退出才真退）；

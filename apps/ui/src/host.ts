@@ -12,8 +12,10 @@ export interface HostAdapter {
   pickDirectory(): Promise<string | null>;
   /** 应用角标；webui no-op（Tauri 壳 = dock badge） */
   setBadge(n: number): Promise<void>;
+  /** 窗口真实可见性：Tauri 壳查宿主 isVisible（webview 隐藏后 visibilityState 不变，文档值不可信）；
+   *  webui 恒 true（浏览器文档可见性即真值）。同步签名：调用点在渲染/事件路径，避免异步竞态 */
+  isWindowVisible(): boolean;
 }
-
 /** Notification API 可注入面（测试/宿主差异） */
 export interface NotifyDeps {
   /** Notification 构造器（默认 window.Notification） */
@@ -51,6 +53,9 @@ export function createWebuiHost(deps: NotifyDeps = {}): HostAdapter {
     },
     async pickDirectory(): Promise<string | null> {
       return null;
+    },
+    isWindowVisible(): boolean {
+      return true;
     },
     async setBadge(): Promise<void> {},
   };

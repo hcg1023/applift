@@ -244,6 +244,8 @@ export class WsChannel {
    */
   startInstallTask(opts: {
     runner: AppliftRunner;
+    /** 安装子命令全参（包管理器识别产物 installCommand；缺省 npm 形态，测试兼容） */
+    installArgs?: string[];
     update?: boolean;
     timeoutMs?: number;
     onDone?: () => void;
@@ -266,10 +268,7 @@ export class WsChannel {
       task.events.push(ev);
       this.broadcast({ t: "task", taskId, data: ev });
     };
-    const args =
-      opts.update === true
-        ? ["install", "-g", "@applift/cli@latest"]
-        : ["install", "-g", "@applift/cli"];
+    const args = opts.installArgs ?? ["install", "-g", "@applift/cli"];
     const handle = opts.runner.spawnStream(args, {
       onLine: (e) => emit(e as TaskEvent),
       // npm 进度/告警走 stderr：转发为 error 级 log（npm 自身输出语义，非本服务报错）

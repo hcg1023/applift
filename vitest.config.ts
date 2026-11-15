@@ -17,6 +17,7 @@ export default defineConfig({
     // 不用 vitest globalSetup:其在 CI 上 spawn pnpm 即败(dist 缺失 → spawn 测试崩,Test step 7s 失败根因)
     testTimeout: 30_000, // spawn/git 重型用例在全仓并发 CPU 争抢下的余量
     include: ["packages/*/src/**/*.test.ts", "apps/*/src/**/*.test.ts", "apps/*/src/**/*.test.tsx"],
+    exclude: ["**/e2e/**", "**/node_modules/**"],
     // (Test step 12s 失败、本地增量 build 秒过的根因),拉到与构建预算同量级
     hookTimeout: 240_000,
     environment: "node",

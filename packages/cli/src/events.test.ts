@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventChannel } from "./events.js";
@@ -14,7 +15,7 @@ describe("EventChannel", () => {
     expect(JSON.parse(lines[0]!)).toEqual({
       type: "hello",
       protocol: 1,
-      cli: "0.13.0",
+      cli: JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version,
     });
   });
 

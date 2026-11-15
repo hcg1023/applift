@@ -19,6 +19,7 @@ const host: HostAdapter = {
   notify: vi.fn(async () => true),
   pickDirectory: vi.fn(async () => null),
   setBadge: vi.fn(async () => {}),
+  isWindowVisible: () => true,
 };
 
 function withCtx(ui: React.ReactElement, client: UiClient): React.ReactElement {
@@ -147,7 +148,7 @@ describe("Settings 轮询 clamp", () => {
 });
 
 describe("AddProjectDialog 双路径", () => {
-  const HOST = { notify: vi.fn(), pickDirectory: vi.fn(async () => null), setBadge: vi.fn() };
+  const HOST = { notify: vi.fn(), pickDirectory: vi.fn(async () => null), setBadge: vi.fn(), isWindowVisible: () => true };
 
   function fsClient(
     over: Partial<Record<"fsRoots" | "fsList" | "addProject" | "availability", unknown>> = {},
@@ -241,7 +242,7 @@ describe("AddProjectDialog 双路径", () => {
 });
 
 describe("AddProjectDialog 加固（错误态/重试/竞态）", () => {
-  const HOST = { notify: vi.fn(), pickDirectory: vi.fn(async () => null), setBadge: vi.fn() };
+  const HOST = { notify: vi.fn(), pickDirectory: vi.fn(async () => null), setBadge: vi.fn(), isWindowVisible: () => true };
 
   it("fsList 失败 → 错误态 + 重试再拉", async () => {
     const client = {
@@ -296,7 +297,7 @@ describe("AddProjectDialog 加固（错误态/重试/竞态）", () => {
 });
 
 describe("引导安装块（InstallBlock 三态 + 添加项目联动）", () => {
-  const HOST = { notify: vi.fn(), pickDirectory: vi.fn(async () => null), setBadge: vi.fn() };
+  const HOST = { notify: vi.fn(), pickDirectory: vi.fn(async () => null), setBadge: vi.fn(), isWindowVisible: () => true };
 
   /** 可控安装桩客户端：installApplift 返回固定 taskId，emitTask/emitEnd 手推事件 */
   function installClient(extra: Record<string, unknown> = {}) {

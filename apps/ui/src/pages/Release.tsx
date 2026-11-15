@@ -434,6 +434,18 @@ export default function ReleasePage() {
     };
   }, [client]);
 
+  /** 默认选中：无记住选择（首次/失效）且项目列表到达 → 选第一个（发版页初始化即有上下文） */
+  useEffect(() => {
+    const state = stateRef.current;
+    const first = client.state.projects[0];
+    if (first === undefined) return;
+    if (state.form.projectId === "" || client.state.projects.every((p) => p.id !== state.form.projectId)) {
+      state.form.projectId = first.id;
+      saveForm(state.form);
+      force();
+    }
+  }, [client, client.state.projects]);
+
   /** ---------- 步骤1 交互 ---------- */
   const onPickProject = (projectId: string) => {
     const state = stateRef.current;
@@ -778,7 +790,6 @@ export default function ReleasePage() {
                         onClick={() => onTogglePlatform(p.key)}
                       >
                         {p.label}
-                        {on ? " ✓" : ""}
                       </button>
                     );
                   })}

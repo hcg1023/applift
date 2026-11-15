@@ -19,7 +19,8 @@ import {
   sendJson,
 } from "./routes.js";
 import { createAvailabilityProber } from "./applift-install.js";
-import { AppliftRunner, resolveAppliftBin } from "./runner.js";
+import { AppliftRunner, findGlobalApplift, resolveAppliftBin } from "./runner.js";
+import { detectGlobalPackageManager, installCommand } from "./pm.js";
 import type { ValidateReport } from "./routes.js";
 import { WsChannel } from "./ws.js";
 
@@ -140,6 +141,13 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
   const availabilityProber = createAvailabilityProber(
     opts.npmBin === undefined ? {} : { npmBin: opts.npmBin },
   );
+  // 包管理器识别（装配期一次：env 覆盖 > 全局 applift 归属 > user_agent > 锁文件 > npm）；
+  // install/update-global 任务按识别结果构造命令（pnpm/bun add -g、yarn1 global add、berry 降级 npm）
+  const pmResolution = await detectGlobalPackageManager({
+    globalAppliftPath: findGlobalApplift(),
+  });
+  const pmCommand = installCommand(pmResolution);
+  const pmCommandUpdate = installCommand(pmResolution, { update: true });
   let closing = false;
   const close = async (): Promise<void> => {
     if (closing) return;
@@ -174,7 +182,10 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
         availability: (cwd) => availabilityProber.get(cwd),
         startInstallTask: (o) =>
           ws.startInstallTask({
-            runner: new AppliftRunner({ bin: opts.npmBin ?? "npm" }),
+            runner: new AppliftRunner({
+              bin: o.update === true ? pmCommandUpdate.bin : pmCommand.bin,
+            }),
+            installArgs: o.update === true ? pmCommandUpdate.args : pmCommand.args,
             ...o,
             // 任务结束（无论成败）失效版本缓存：前端立即重拉 availability 拿新版本
             onDone: () => availabilityProber.invalidate(),

@@ -117,7 +117,7 @@ export default function App() {
   const notifyUnread = (): void => {
     if (!loadSettings().notifyState) return;
     if (route.page === "popup") return;
-    if (document.visibilityState === "visible") return;
+    if (host.isWindowVisible() && document.visibilityState === "visible") return;
     const lastRead = Number(localStorage.getItem("applift-ui:feedRead") ?? "0");
     const unread = client.state.feed.filter((e) => e.ts > lastRead);
     const ev = unread[0];
@@ -165,7 +165,10 @@ export default function App() {
   const lastRead = Number(localStorage.getItem("applift-ui:feedRead") ?? "0");
   const unread = client.state.feed.filter((e) => e.ts > lastRead).length;
   useEffect(() => {
-    markFeedReadIfVisible(route.page, document.visibilityState);
+    markFeedReadIfVisible(
+      route.page,
+      host.isWindowVisible() && document.visibilityState === "visible" ? "visible" : "hidden",
+    );
   });
 
   /** 托盘/宿主角标接线：未读数变化即同步（webui 宿主为 no-op） */
