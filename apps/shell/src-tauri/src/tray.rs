@@ -63,13 +63,21 @@ pub fn tray_icon_rgba(size: u32) -> Vec<u8> {
         let (bx, by) = ((nx * 0.88 + 0.06) * 1024.0, (ny * 0.88 + 0.06) * 1024.0); // 归一化 → brand
         by >= 512.0 && by <= 592.0 && bx >= 424.0 && bx <= 600.0
     };
+    // 顶部脱离四芒火花（与正标/favicon 同位：A 顶点上方，中心 (512,208)、臂展 ±44/+40/-40）：
+    // 四条尖臂（上/下/左/右菱形），alpha 蒙版下保留「脱离火花」特征
+    let spark = |nx: f64, ny: f64| -> bool {
+        let (bx, by) = ((nx * 0.88 + 0.06) * 1024.0, (ny * 0.88 + 0.06) * 1024.0); // brand
+        let (dx, dy) = ((bx - 512.0).abs(), (by - 208.0).abs());
+        // 四芒：菱形臂（|dx|/44 + |dy|/40 <= 1 太胖，用十字收窄：主轴窄次轴宽）
+        dx / 44.0 + dy / 40.0 <= 1.0 && (dx <= 44.0 || dy <= 12.0)
+    };
     for y in 0..size {
         for x in 0..size {
             let nx = (x as f64 + 0.5) / s;
             let ny = (y as f64 + 0.5) / s;
             let in_outer = in_tri(nx, ny, outer[0], outer[1], outer[2]);
             let in_counter = in_tri(nx, ny, counter[0], counter[1], counter[2]);
-            let inside = (in_outer && !in_counter) || (in_counter && bar(nx, ny));
+            let inside = (in_outer && !in_counter) || (in_counter && bar(nx, ny)) || spark(nx, ny);
             let a = if inside { 255 } else { 0 };
             rgba.extend_from_slice(&[0, 0, 0, a]);
         }
@@ -328,6 +336,8 @@ mod tests {
         assert_eq!(px(cx, cy), 0, "字腔上部掏空");
         let (ex, ey) = p(150.0, 700.0);
         assert_eq!(px(ex, ey), 0, "左下角外部透明");
+        let (sx, sy) = p(512.0, 208.0); // 顶部脱离四芒火花中心
+        assert!(px(sx, sy) > 0, "四芒火花中心实心");
         // RGB 全 0（macOS template 按 alpha 取形）
         assert!(rgba.chunks_exact(4).all(|c| c[0] == 0 && c[1] == 0 && c[2] == 0));
     }

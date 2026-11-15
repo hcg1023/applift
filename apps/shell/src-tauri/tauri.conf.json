@@ -35,5 +35,6 @@
     "resources": {
       "resources/ui-server": "ui-server"
     }
-  }
+  },
+  "mainBinaryName": "applift"
 }
