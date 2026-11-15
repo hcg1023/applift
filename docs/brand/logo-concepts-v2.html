@@ -1,0 +1,1862 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="applift 品牌标识概念稿 v2：6 个方向，体积光影与材质精修，含应用图标、wordmark、favicon 独立简化版与配色板。" />
+    <title>applift · 品牌标识概念稿 V2</title>
+    <!--
+      applift 品牌标识概念稿 v2.0（2026-11-15）
+      目标路径：docs/brand/logo-concepts-v2.html（由主代理从会话产物复制，覆盖写入）。
+      本轮针对 v1 否决意见（细线条几何拼合、无体积、无光影、无材质）全面重做：
+      · 体积与光影：每个主体均为「投影/AO → 辉光层 → 主体多段渐变 → 边缘高光」四层叠印，
+        渐变不少于 3–6 个色标，杜绝单色平涂。
+      · 层次：每个图标 ≥3 个视觉层次（背景场 → 主体 → 高光/点缀），元素间有空间关系（投影偏移、悬浮缝隙）。
+      · 画布：1024×1024，squircle（超椭圆近似：角部立方贝塞尔，控制点 72.4，对角填充点 ≈66px），
+        主体控制在光学边距框 88–936 内，全部坐标 2px 步进对齐。
+      · favicon（fv1–fv6）为独立减法重绘：笔画加粗、删次要素、对比度增强，非正标直接缩小；
+        放大视图内附「正标直缩 16px vs 独立 favicon 16px」对照。
+      · wordmark 沿用系统字体栈（-apple-system / PingFang SC），按每个方向的气质精调字重与字距，
+        "lift" 部分取该方向渐变色；正式稿描边为矢量路径。
+      · 放大视图可开合「1024 网格 + 光学边距 + 关键线」叠加层，核验对齐。
+    -->
+    <style>
+      :root {
+        --bg: #f5f5f7;
+        --surface: #ffffff;
+        --surface-2: #f2f2f4;
+        --label: #1d1d1f;
+        --label-2: #6e6e73;
+        --label-3: #aeaeb2;
+        --separator: rgba(60, 60, 67, 0.12);
+        --blue: #0071e3;
+        --blue-sys: #007aff;
+        --ok: #34c759;
+        --bad: #ff3b30;
+        --fill: rgba(120, 120, 128, 0.12);
+        --fill-2: rgba(120, 120, 128, 0.06);
+        --shadow: 0 8px 26px rgba(0, 0, 0, 0.07), 0 1px 2px rgba(0, 0, 0, 0.04);
+        --shadow-lg: 0 16px 44px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.06);
+        --stage: radial-gradient(120% 100% at 50% 24%, #ffffff 0%, #ececed 62%, #e3e3e6 100%);
+        --icon-shadow: drop-shadow(0 14px 26px rgba(20, 22, 30, 0.28));
+      }
+      [data-theme="dark"] {
+        --bg: #1b1b1d;
+        --surface: #26262a;
+        --surface-2: #202023;
+        --label: #f5f5f7;
+        --label-2: #98989e;
+        --label-3: #636366;
+        --separator: rgba(84, 84, 88, 0.5);
+        --blue: #0a84ff;
+        --blue-sys: #0a84ff;
+        --ok: #30d158;
+        --bad: #ff453a;
+        --fill: rgba(120, 120, 128, 0.24);
+        --fill-2: rgba(120, 120, 128, 0.14);
+        --shadow: 0 8px 26px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.3);
+        --shadow-lg: 0 16px 44px rgba(0, 0, 0, 0.6), 0 2px 6px rgba(0, 0, 0, 0.4);
+        --stage: radial-gradient(120% 100% at 50% 24%, #26262c 0%, #191a1f 62%, #131418 100%);
+        --icon-shadow: drop-shadow(0 16px 30px rgba(0, 0, 0, 0.55));
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html {
+        font-size: 16px;
+      }
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC",
+          "Segoe UI", Microsoft YaHei, sans-serif;
+        background: var(--bg);
+        color: var(--label);
+        min-height: 100vh;
+        transition: background 0.35s ease, color 0.35s ease;
+      }
+      .mono {
+        font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      button {
+        font: inherit;
+        color: inherit;
+      }
+      :focus-visible {
+        outline: 2px solid var(--blue-sys);
+        outline-offset: 2px;
+      }
+
+      .page {
+        max-width: 1520px;
+        margin: 0 auto;
+        padding: 52px 28px 72px;
+      }
+
+      /* ---------- 页头 ---------- */
+      .topbar {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 20px;
+      }
+      .eyebrow {
+        font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--blue);
+      }
+      h1 {
+        margin-top: 12px;
+        font-size: 34px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      h1 .ver {
+        color: var(--label-2);
+        font-weight: 600;
+      }
+      .sub {
+        margin-top: 10px;
+        max-width: 860px;
+        font-size: 15px;
+        line-height: 1.65;
+        color: var(--label-2);
+      }
+      .sub b {
+        color: var(--label);
+        font-weight: 600;
+      }
+      .notice {
+        margin-top: 14px;
+        max-width: 860px;
+        padding: 12px 16px;
+        border-radius: 12px;
+        background: var(--fill-2);
+        border: 1px solid var(--separator);
+        font-size: 13px;
+        line-height: 1.6;
+        color: var(--label-2);
+      }
+      .theme-btn {
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 16px;
+        border-radius: 999px;
+        border: 1px solid var(--separator);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 600;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+      .theme-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-lg);
+      }
+      .theme-btn:active {
+        transform: translateY(0);
+      }
+
+      /* ---------- 概念卡片 ---------- */
+      .grid {
+        margin-top: 36px;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(430px, 1fr));
+        gap: 28px;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--separator);
+        border-radius: 22px;
+        padding: 22px 22px 18px;
+        box-shadow: var(--shadow);
+        transition: transform 0.22s ease, box-shadow 0.22s ease;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .card:hover {
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-lg);
+      }
+      .card-head {
+        display: flex;
+        gap: 14px;
+        align-items: flex-start;
+      }
+      .cnum {
+        font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--label-3);
+        border: 1px solid var(--separator);
+        border-radius: 8px;
+        padding: 4px 8px;
+        margin-top: 2px;
+      }
+      .card-head h2 {
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+      }
+      .card-head .en {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--label-3);
+        letter-spacing: 0.02em;
+      }
+      .idea {
+        margin-top: 6px;
+        font-size: 13.5px;
+        line-height: 1.6;
+        color: var(--label-2);
+      }
+      .stage {
+        border-radius: 18px;
+        background: var(--stage);
+        border: 1px solid var(--separator);
+        display: grid;
+        place-items: center;
+        padding: 34px 0;
+      }
+      .stage svg {
+        width: 188px;
+        height: 188px;
+        filter: var(--icon-shadow);
+      }
+      .lockup {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 4px 6px;
+      }
+      .lockup svg {
+        width: 44px;
+        height: 44px;
+        flex: none;
+      }
+      .wordmark {
+        font-size: 31px;
+        line-height: 1;
+        white-space: nowrap;
+      }
+      .wordmark b {
+        font-weight: inherit;
+        color: var(--label);
+      }
+      .wordmark i {
+        font-style: normal;
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .wm1 { font-weight: 640; letter-spacing: -0.026em; }
+      .wm1 i { background-image: linear-gradient(100deg, #14b8a6 0%, #38bdf8 52%, #818cf8 100%); }
+      .wm2 { font-weight: 700; letter-spacing: -0.034em; }
+      .wm2 b { color: #e8f1ff; }
+      .wm2 i { background-image: linear-gradient(96deg, #60a5fa 0%, #9ed2ff 100%); }
+      .wm2 { text-shadow: 0 0 26px rgba(96, 165, 250, 0.35); }
+      .wm3 { font-weight: 620; letter-spacing: -0.02em; }
+      .wm3 i { background-image: linear-gradient(96deg, #d97706 0%, #f59e0b 45%, #fde68a 100%); }
+      .wm4 { font-weight: 560; letter-spacing: -0.018em; }
+      .wm4 i { background-image: linear-gradient(96deg, #0d9488 0%, #2dd4bf 55%, #6ee7b7 100%); }
+      .wm5 { font-weight: 650; letter-spacing: -0.028em; }
+      .wm5 b { color: var(--label-2); }
+      .wm5 i { background-image: linear-gradient(96deg, #ea580c 0%, #f97316 50%, #fbbf24 100%); }
+      .wm6 { font-weight: 580; letter-spacing: -0.012em; }
+      .wm6 i { background-image: linear-gradient(96deg, #10b981 0%, #2dd4bf 50%, #67e8f9 100%); }
+
+      /* ---------- favicon 实尺寸验证 ---------- */
+      .fav-strip {
+        display: flex;
+        align-items: flex-end;
+        gap: 18px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: var(--fill-2);
+        border: 1px solid var(--separator);
+      }
+      .fav-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        color: var(--label-3);
+      }
+      .fav-item svg {
+        display: block;
+      }
+      .fav-item .px {
+        font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+      }
+      .fav-sep {
+        width: 1px;
+        align-self: stretch;
+        background: var(--separator);
+      }
+      .fav-item.fav-zoom svg {
+        width: 72px;
+        height: 72px;
+      }
+
+      /* ---------- 配色板 ---------- */
+      .palette-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .pch {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+        font-size: 11.5px;
+        color: var(--label-2);
+        padding: 5px 10px 5px 6px;
+        border-radius: 999px;
+        border: 1px solid var(--separator);
+        background: var(--surface);
+      }
+      .sw {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+        flex: none;
+      }
+      .zoom {
+        margin-top: auto;
+        align-self: flex-start;
+        padding: 9px 16px;
+        border-radius: 999px;
+        border: 1px solid var(--separator);
+        background: var(--fill-2);
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.18s ease, background 0.18s ease;
+      }
+      .zoom:hover {
+        transform: translateY(-1px);
+        background: var(--fill);
+      }
+      .zoom:active {
+        transform: translateY(0);
+      }
+
+      /* ---------- 放大视图 ---------- */
+      dialog {
+        border: none;
+        border-radius: 24px;
+        padding: 0;
+        background: var(--surface);
+        color: var(--label);
+        box-shadow: var(--shadow-lg);
+        width: min(1100px, 94vw);
+        max-height: 92vh;
+      }
+      dialog::backdrop {
+        background: rgba(8, 8, 12, 0.6);
+        backdrop-filter: blur(8px);
+      }
+      .v-inner {
+        padding: 26px 30px 30px;
+        overflow: auto;
+        max-height: 92vh;
+      }
+      .v-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .v-head .vt {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+      }
+      .v-head .vnum {
+        font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+        font-weight: 700;
+        font-size: 14px;
+        color: var(--label-3);
+      }
+      .v-head h3 {
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+      .v-head .ven {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--label-3);
+      }
+      .v-actions {
+        display: flex;
+        gap: 8px;
+      }
+      .v-actions button {
+        width: 38px;
+        height: 38px;
+        border-radius: 12px;
+        border: 1px solid var(--separator);
+        background: var(--fill-2);
+        cursor: pointer;
+        font-size: 16px;
+        font-weight: 600;
+        display: grid;
+        place-items: center;
+        transition: transform 0.18s ease, background 0.18s ease;
+      }
+      .v-actions button:hover {
+        transform: translateY(-1px);
+        background: var(--fill);
+      }
+      .v-actions #vGrid {
+        width: auto;
+        padding: 0 14px;
+        font-size: 13px;
+      }
+      .v-actions button[aria-pressed="true"] {
+        background: var(--blue-sys);
+        border-color: transparent;
+        color: #fff;
+      }
+      .v-idea {
+        margin-top: 10px;
+        font-size: 15px;
+        line-height: 1.6;
+        color: var(--label-2);
+      }
+      .v-stage-wrap {
+        margin-top: 18px;
+        display: grid;
+        grid-template-columns: minmax(320px, 1.05fr) minmax(300px, 1fr);
+        gap: 22px;
+        align-items: start;
+      }
+      .v-stage {
+        position: relative;
+        border-radius: 20px;
+        background: var(--stage);
+        border: 1px solid var(--separator);
+        display: grid;
+        place-items: center;
+        padding: 34px;
+      }
+      .v-stage svg.main-mark {
+        width: min(430px, 100%);
+        height: auto;
+        aspect-ratio: 1;
+        filter: var(--icon-shadow);
+      }
+      .grid-overlay {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        transition: opacity 0.25s ease;
+        pointer-events: none;
+      }
+      .grid-on .grid-overlay {
+        opacity: 1;
+      }
+      .v-side {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .v-tiles {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .v-tile {
+        border-radius: 16px;
+        padding: 16px;
+        display: grid;
+        place-items: center;
+        gap: 10px;
+        border: 1px solid var(--separator);
+        position: relative;
+      }
+      .v-tile span {
+        position: absolute;
+        top: 8px;
+        left: 10px;
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        color: rgba(255, 255, 255, 0.55);
+      }
+      .v-tile-l span {
+        color: rgba(0, 0, 0, 0.4);
+      }
+      .v-tile-d {
+        background: #0d0e13;
+      }
+      .v-tile-l {
+        background: #f4f4f6;
+      }
+      .v-tile svg {
+        width: 92px;
+        height: 92px;
+      }
+      .v-lock {
+        border-radius: 16px;
+        border: 1px solid var(--separator);
+        background: var(--fill-2);
+        padding: 18px 20px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .v-lock svg {
+        width: 56px;
+        height: 56px;
+      }
+      .v-lock .wordmark {
+        font-size: 38px;
+      }
+      .v-fig {
+        margin-top: 0;
+      }
+      .v-fig figcaption {
+        font-size: 12px;
+        color: var(--label-3);
+        margin-bottom: 10px;
+        line-height: 1.5;
+      }
+      .v-fav-row {
+        display: flex;
+        align-items: flex-end;
+        gap: 20px;
+        flex-wrap: wrap;
+        padding: 14px 16px;
+        border-radius: 14px;
+        background: var(--fill-2);
+        border: 1px solid var(--separator);
+      }
+      .fav-item .ring-ok {
+        border-radius: 6px;
+        outline: 2px solid var(--ok);
+        outline-offset: 2px;
+      }
+      .fav-item .ring-bad {
+        border-radius: 6px;
+        outline: 2px dashed var(--bad);
+        outline-offset: 2px;
+        opacity: 0.75;
+      }
+      .v-desc {
+        margin-top: 20px;
+        font-size: 14px;
+        line-height: 1.7;
+        color: var(--label-2);
+      }
+      .v-spec {
+        margin-top: 14px;
+        padding: 14px 18px;
+        border-radius: 14px;
+        background: var(--fill-2);
+        border: 1px solid var(--separator);
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+      }
+      .v-spec li {
+        font-size: 12.5px;
+        line-height: 1.6;
+        color: var(--label-2);
+        padding-left: 16px;
+        position: relative;
+      }
+      .v-spec li::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0.62em;
+        width: 6px;
+        height: 6px;
+        border-radius: 2px;
+        background: var(--blue-sys);
+      }
+      .v-palette {
+        margin-top: 14px;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      /* ---------- 页脚 ---------- */
+      footer {
+        margin-top: 56px;
+      }
+      footer h4 {
+        font-size: 16px;
+        font-weight: 700;
+      }
+      .matrix {
+        margin-top: 14px;
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13.5px;
+      }
+      .matrix th,
+      .matrix td {
+        text-align: left;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--separator);
+        vertical-align: top;
+        line-height: 1.55;
+      }
+      .matrix th {
+        color: var(--label-2);
+        font-weight: 600;
+        font-size: 12.5px;
+      }
+      .colophon {
+        margin-top: 22px;
+        font-size: 12.5px;
+        color: var(--label-3);
+        line-height: 1.7;
+      }
+
+      /* ---------- 响应式 ---------- */
+      @media (max-width: 1020px) {
+        .v-stage-wrap {
+          grid-template-columns: 1fr;
+        }
+      }
+      @media (max-width: 960px) {
+        .grid {
+          grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        }
+      }
+      @media (max-width: 780px) {
+        .page {
+          padding: 36px 18px 56px;
+        }
+        .topbar {
+          flex-direction: column;
+        }
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .wordmark {
+          font-size: 27px;
+        }
+      }
+      @media (max-width: 460px) {
+        h1 {
+          font-size: 27px;
+        }
+        .fav-strip {
+          gap: 12px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          transition: none !important;
+          animation: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      ══════════ 共享矢量定义 ══════════
+      每个方向的完整图标（mk1–mk6）与独立 favicon（fv1–fv6）都在 1024 网格上绘制，
+      统一 squircle 轮廓（超椭圆近似），主体约束在光学边距框 88–936。
+      渐变 / 滤镜 / 裁剪 id 按方向前缀隔离（a1 f1 / p2 f2 / g3 f3 / s4 f4 / q5 f5 / r6 f6）。
+      每个图标固定四层结构：L1 背景场 → L2 主体（投影/AO + 多段渐变）→ L3 高光点缀 → L4 玻璃环境光收边。
+    -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <defs>
+        <!-- ════ 01 星轨 Ascent：彗尾光轨 × 破晓星 ════ -->
+        <symbol id="mk1" viewBox="0 0 1024 1024">
+          <defs>
+            <linearGradient id="a1-bg" x1="0.1" y1="0.95" x2="0.9" y2="0.04">
+              <stop offset="0" stop-color="#04081c" />
+              <stop offset="0.38" stop-color="#101a4a" />
+              <stop offset="0.72" stop-color="#231a5e" />
+              <stop offset="1" stop-color="#3a2572" />
+            </linearGradient>
+            <radialGradient id="a1-neb" cx="0.72" cy="0.3" r="0.48">
+              <stop offset="0" stop-color="#7c5cff" stop-opacity="0.5" />
+              <stop offset="0.55" stop-color="#4326a8" stop-opacity="0.22" />
+              <stop offset="1" stop-color="#4326a8" stop-opacity="0" />
+            </radialGradient>
+            <radialGradient id="a1-ground" cx="0.5" cy="0.5" r="0.5">
+              <stop offset="0" stop-color="#2dd4bf" stop-opacity="0.42" />
+              <stop offset="1" stop-color="#2dd4bf" stop-opacity="0" />
+            </radialGradient>
+            <linearGradient id="a1-tube" x1="0" y1="1" x2="1" y2="0">
+              <stop offset="0" stop-color="#0e7490" />
+              <stop offset="0.35" stop-color="#2dd4bf" />
+              <stop offset="0.62" stop-color="#38bdf8" />
+              <stop offset="0.86" stop-color="#818cf8" />
+              <stop offset="1" stop-color="#c7d2fe" />
+            </linearGradient>
+            <linearGradient id="a1-core" x1="0" y1="1" x2="1" y2="0">
+              <stop offset="0" stop-color="#67e8f9" stop-opacity="0" />
+              <stop offset="0.4" stop-color="#a5f3fc" stop-opacity="0.85" />
+              <stop offset="1" stop-color="#ffffff" />
+            </linearGradient>
+            <radialGradient id="a1-starGlow" cx="0.5" cy="0.5" r="0.5">
+              <stop offset="0" stop-color="#ffffff" stop-opacity="0.9" />
+              <stop offset="0.35" stop-color="#a5b4fc" stop-opacity="0.5" />
+              <stop offset="1" stop-color="#818cf8" stop-opacity="0" />
+            </radialGradient>
+            <linearGradient id="a1-star" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#ffffff" />
+              <stop offset="0.55" stop-color="#e0e7ff" />
+              <stop offset="1" stop-color="#a5b4fc" />
+            </linearGradient>
+            <linearGradient id="a1-sheen" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#ffffff" stop-opacity="0.15" />
+              <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.03" />
+              <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
+            </linearGradient>
+            <filter id="a1-blurA" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="26" />
+            </filter>
+            <filter id="a1-blurB" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="9" />
+            </filter>
+            <clipPath id="a1-sq">
+              <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" />
+            </clipPath>
+          </defs>
+          <g clip-path="url(#a1-sq)">
+            <!-- L1 深空场：渐变天幕 + 星云 + 星场 + 发射点地面光 -->
+            <rect width="1024" height="1024" fill="url(#a1-bg)" />
+            <rect width="1024" height="1024" fill="url(#a1-neb)" />
+            <g fill="#eaf0ff">
+              <circle cx="182" cy="164" r="4" opacity="0.4" />
+              <circle cx="330" cy="98" r="3" opacity="0.28" />
+              <circle cx="476" cy="176" r="3.5" opacity="0.2" />
+              <circle cx="640" cy="112" r="4" opacity="0.32" />
+              <circle cx="906" cy="180" r="3.5" opacity="0.42" />
+              <circle cx="852" cy="522" r="3" opacity="0.2" />
+              <circle cx="150" cy="430" r="3" opacity="0.18" />
+              <circle cx="256" cy="600" r="2.5" opacity="0.14" />
+              <circle cx="948" cy="404" r="2.5" opacity="0.24" />
+              <circle cx="700" cy="60" r="2.5" opacity="0.3" />
+            </g>
+            <ellipse cx="268" cy="838" rx="150" ry="44" fill="url(#a1-ground)" />
+            <ellipse cx="268" cy="830" rx="46" ry="13" fill="#0b1233" stroke="#2dd4bf" stroke-opacity="0.55" stroke-width="3" />
+            <!-- L2 玻璃光轨：辉光 → 管身 → 内芯 → 上缘高光 → 尾迹粒子 -->
+            <path d="M268 820 C432 796 592 702 682 556 C724 490 744 434 750 368" fill="none" stroke="#4338ca" stroke-opacity="0.55" stroke-width="104" stroke-linecap="round" filter="url(#a1-blurA)" />
+            <path d="M268 820 C432 796 592 702 682 556 C724 490 744 434 750 368" fill="none" stroke="url(#a1-tube)" stroke-width="72" stroke-linecap="round" />
+            <path d="M268 820 C432 796 592 702 682 556 C724 490 744 434 750 368" fill="none" stroke="url(#a1-core)" stroke-width="24" stroke-linecap="round" opacity="0.95" />
+            <path d="M262 800 C420 776 574 686 664 546 C702 484 722 432 728 372" fill="none" stroke="#ffffff" stroke-opacity="0.5" stroke-width="7" stroke-linecap="round" />
+            <g fill="#7de8dc">
+              <circle cx="392" cy="782" r="9" opacity="0.75" />
+              <circle cx="540" cy="700" r="6.5" opacity="0.55" />
+              <circle cx="634" cy="598" r="5" opacity="0.45" />
+              <circle cx="700" cy="482" r="4" opacity="0.38" />
+            </g>
+            <!-- L3 破晓星：辉光 → 轨道环 → 四芒 → 边缘提亮 -->
+            <circle cx="750" cy="308" r="120" fill="url(#a1-starGlow)" opacity="0.85" />
+            <circle cx="750" cy="308" r="86" fill="none" stroke="#c7d2fe" stroke-opacity="0.3" stroke-width="3" />
+            <path d="M750 224 C759 280 764 285 820 294 C764 303 759 308 750 364 C741 308 736 303 680 294 C736 285 741 280 750 224 Z" fill="url(#a1-star)" />
+            <path d="M750 224 C759 280 764 285 820 294 C764 303 759 308 750 364 C741 308 736 303 680 294 C736 285 741 280 750 224 Z" fill="none" stroke="#ffffff" stroke-opacity="0.65" stroke-width="2.5" filter="url(#a1-blurB)" />
+            <!-- L4 squircle 玻璃环境光 -->
+            <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" fill="url(#a1-sheen)" />
+          </g>
+          <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" fill="none" stroke="#ffffff" stroke-opacity="0.13" stroke-width="2.5" />
+        </symbol>
+        <!-- 01 favicon：弧线 + 四芒，加粗独立重绘 -->
+        <symbol id="fv1" viewBox="0 0 1024 1024">
+          <defs>
+            <linearGradient id="f1-bg" x1="0" y1="1" x2="1" y2="0">
+              <stop offset="0" stop-color="#0a1030" />
+              <stop offset="1" stop-color="#3b2a78" />
+            </linearGradient>
+            <linearGradient id="f1-arc" x1="0" y1="1" x2="1" y2="0">
+              <stop offset="0" stop-color="#14b8a6" />
+              <stop offset="0.55" stop-color="#38bdf8" />
+              <stop offset="1" stop-color="#a78bfa" />
+            </linearGradient>
+          </defs>
+          <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" fill="url(#f1-bg)" />
+          <path d="M286 824 C452 800 590 712 686 552 C730 480 748 420 754 356" fill="none" stroke="url(#f1-arc)" stroke-width="124" stroke-linecap="round" />
+          <path d="M750 208 C764 292 772 300 856 312 C772 324 764 332 750 416 C736 332 728 324 644 312 C728 300 736 292 750 208 Z" fill="#ffffff" />
+        </symbol>
+
+        <!-- ════ 02 棱镜 Prism：晶体 A × 悬浮横梁 ════ -->
+        <symbol id="mk2" viewBox="0 0 1024 1024">
+          <defs>
+            <linearGradient id="p2-bg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#11151f" />
+              <stop offset="0.55" stop-color="#0b0e16" />
+              <stop offset="1" stop-color="#090b12" />
+            </linearGradient>
+            <radialGradient id="p2-halo" cx="0.5" cy="0.38" r="0.46">
+              <stop offset="0" stop-color="#3b82f6" stop-opacity="0.38" />
+              <stop offset="0.55" stop-color="#1d4ed8" stop-opacity="0.16" />
+              <stop offset="1" stop-color="#1d4ed8" stop-opacity="0" />
+            </radialGradient>
+            <linearGradient id="p2-legL" x1="0" y1="0" x2="1" y2="0.7">
+              <stop offset="0" stop-color="#9ed2ff" />
+              <stop offset="0.42" stop-color="#4f8df9" />
+              <stop offset="0.74" stop-color="#2456ce" />
+              <stop offset="1" stop-color="#17337f" />
+            </linearGradient>
+            <linearGradient id="p2-legR" x1="0" y1="0" x2="1" y2="0.7">
+              <stop offset="0" stop-color="#3e6fe3" />
+              <stop offset="0.45" stop-color="#20499f" />
+              <stop offset="1" stop-color="#0b1b4e" />
+            </linearGradient>
+            <linearGradient id="p2-bar" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#eaf4ff" />
+              <stop offset="0.34" stop-color="#a8cfff" />
+              <stop offset="0.78" stop-color="#5b99f4" />
+              <stop offset="1" stop-color="#3b6fd9" />
+            </linearGradient>
+            <linearGradient id="p2-spark" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#ffffff" />
+              <stop offset="1" stop-color="#8fc4ff" />
+            </linearGradient>
+            <linearGradient id="p2-sheen" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#ffffff" stop-opacity="0.12" />
+              <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.02" />
+              <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
+            </linearGradient>
+            <filter id="p2-blurA" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="18" />
+            </filter>
+            <filter id="p2-blurB" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="8" />
+            </filter>
+            <clipPath id="p2-sq">
+              <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" />
+            </clipPath>
+          </defs>
+          <g clip-path="url(#p2-sq)">
+            <!-- L1 曜石场：天幕 + 蓝晕轮 + 维度弧 + 接触阴影 -->
+            <rect width="1024" height="1024" fill="url(#p2-bg)" />
+            <rect width="1024" height="1024" fill="url(#p2-halo)" />
+            <path d="M232 128 Q512 58 792 128" fill="none" stroke="#3b82f6" stroke-opacity="0.18" stroke-width="3" />
+            <path d="M292 176 Q512 118 732 176" fill="none" stroke="#3b82f6" stroke-opacity="0.1" stroke-width="3" />
+            <ellipse cx="512" cy="802" rx="292" ry="34" fill="#04060c" opacity="0.5" filter="url(#p2-blurA)" />
+            <!-- L2 晶体 A：偏移投影 → 左腿受光 → 右腿背光（交叠出棱线） -->
+            <path d="M504 256 L268 768 L352 768 L588 256 Z" fill="#03050b" opacity="0.55" filter="url(#p2-blurA)" transform="translate(14 24)" />
+            <path d="M520 256 L756 768 L672 768 L436 256 Z" fill="#03050b" opacity="0.55" filter="url(#p2-blurA)" transform="translate(14 24)" />
+            <path d="M464 556 L560 556 L600 644 L424 644 Z" fill="#03050b" opacity="0.5" filter="url(#p2-blurB)" transform="translate(10 18)" />
+            <path d="M504 256 L268 768 L352 768 L588 256 Z" fill="url(#p2-legL)" />
+            <path d="M520 256 L756 768 L672 768 L436 256 Z" fill="url(#p2-legR)" />
+            <path d="M504 260 L272 764" stroke="#d9ebff" stroke-opacity="0.7" stroke-width="5" fill="none" stroke-linecap="round" />
+            <path d="M520 260 L752 764" stroke="#9ec5ff" stroke-opacity="0.32" stroke-width="4" fill="none" stroke-linecap="round" />
+            <path d="M436 262 L614 654" stroke="#bfd9ff" stroke-opacity="0.4" stroke-width="3" fill="none" />
+            <!-- L3 悬浮横梁（最亮玻璃件，上下留缝）+ 顶缘高光 -->
+            <path d="M464 556 L560 556 L600 644 L424 644 Z" fill="url(#p2-bar)" />
+            <path d="M468 560 L556 560" stroke="#ffffff" stroke-opacity="0.85" stroke-width="4" stroke-linecap="round" fill="none" />
+            <path d="M464 556 L560 556 L600 644 L424 644 Z" fill="none" stroke="#eaf4ff" stroke-opacity="0.35" stroke-width="2" />
+            <!-- L3b 顶点脱离火花 + 光环 -->
+            <circle cx="512" cy="178" r="64" fill="none" stroke="#7cc4ff" stroke-opacity="0.25" stroke-width="2.5" />
+            <path d="M512 138 C518 170 521 173 553 178 C521 183 518 186 512 218 C506 186 503 183 471 178 C503 173 506 170 512 138 Z" fill="url(#p2-spark)" />
+            <circle cx="512" cy="178" r="26" fill="#dfefff" opacity="0.28" filter="url(#p2-blurB)" />
+            <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" fill="url(#p2-sheen)" />
+          </g>
+          <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="2.5" />
+        </symbol>
+        <!-- 02 favicon：A 剪影（evenodd 掏空字腔） -->
+        <symbol id="fv2" viewBox="0 0 1024 1024">
+          <defs>
+            <linearGradient id="f2a" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#7cb8ff" />
+              <stop offset="1" stop-color="#1d4ed8" />
+            </linearGradient>
+          </defs>
+          <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" fill="#0b0e16" />
+          <path fill-rule="evenodd" d="M512 232 L756 792 L650 792 L512 448 L374 792 L268 792 Z M512 396 L580 566 L444 566 Z" fill="url(#f2a)" />
+        </symbol>
+
+        <!-- ════ 03 远地点 Apogee：发射台 × 熔金光柱 ════ -->
+        <symbol id="mk3" viewBox="0 0 1024 1024">
+          <defs>
+            <linearGradient id="g3-sky" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#110b26" />
+              <stop offset="0.4" stop-color="#2b1440" />
+              <stop offset="0.64" stop-color="#55200f" />
+              <stop offset="0.84" stop-color="#8f430e" />
+              <stop offset="1" stop-color="#c66a0b" />
+            </linearGradient>
+            <radialGradient id="g3-horizon" cx="0.5" cy="0.5" r="0.5">
+              <stop offset="0" stop-color="#fbbf24" stop-opacity="0.55" />
+              <stop offset="0.55" stop-color="#f59e0b" stop-opacity="0.2" />
+              <stop offset="1" stop-color="#f59e0b" stop-opacity="0" />
+            </radialGradient>
+            <linearGradient id="g3-wall" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#241206" />
+              <stop offset="1" stop-color="#6b3a12" />
+            </linearGradient>
+            <radialGradient id="g3-deck" cx="0.5" cy="0.5" r="0.5">
+              <stop offset="0" stop-color="#5c3a1c" />
+              <stop offset="1" stop-color="#2a170a" />
+            </radialGradient>
+            <linearGradient id="g3-beam" gradientUnits="userSpaceOnUse" x1="0" y1="792" x2="0" y2="344">
+              <stop offset="0" stop-color="#b45309" />
+              <stop offset="0.55" stop-color="#f59e0b" />
+              <stop offset="1" stop-color="#fcd34d" />
+            </linearGradient>
+            <linearGradient id="g3-core" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0" stop-color="#fde68a" />
+              <stop offset="1" stop-color="#fffbeb" />
+            </linearGradient>
+            <radialGradient id="g3-starGlow" cx="0.5" cy="0.5" r="0.5">
+              <stop offset="0" stop-color="#fff7e0" stop-opacity="0.8" />
+              <stop offset="0.4" stop-color="#f59e0b" stop-opacity="0.35" />
+              <stop offset="1" stop-color="#f59e0b" stop-opacity="0" />
+            </radialGradient>
+            <linearGradient id="g3-star" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#ffffff" />
+              <stop offset="0.6" stop-color="#fde68a" />
+              <stop offset="1" stop-color="#f59e0b" />
+            </linearGradient>
+            <linearGradient id="g3-sheen" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#ffffff" stop-opacity="0.1" />
+              <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.02" />
+              <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
+            </linearGradient>
+            <filter id="g3-blurA" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="24" />
+            </filter>
+            <filter id="g3-blurB" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="12" />
+            </filter>
+            <filter id="g3-blurC" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="16" />
+            </filter>
+            <clipPath id="g3-sq">
+              <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" />
+            </clipPath>
+          </defs>
+          <g clip-path="url(#g3-sq)">
+            <!-- L1 暮空：五段渐变 + 地平线余晖 + 高空星点 -->
+            <rect width="1024" height="1024" fill="url(#g3-sky)" />
+            <ellipse cx="512" cy="900" rx="560" ry="260" fill="url(#g3-horizon)" />
+            <g fill="#ffe9c7">
+              <circle cx="172" cy="150" r="3.5" opacity="0.4" />
+              <circle cx="306" cy="106" r="2.5" opacity="0.3" />
+              <circle cx="714" cy="122" r="3" opacity="0.32" />
+              <circle cx="866" cy="212" r="3" opacity="0.36" />
+              <circle cx="932" cy="120" r="2.5" opacity="0.28" />
+            </g>
+            <!-- L1b 山影云翳（左右两团暗紫，衬托光柱） -->
+            <ellipse cx="286" cy="700" rx="138" ry="26" fill="#2b1440" opacity="0.38" filter="url(#g3-blurC)" />
+            <ellipse cx="742" cy="688" rx="126" ry="24" fill="#2b1440" opacity="0.32" filter="url(#g3-blurC)" />
+            <!-- L2 金属发射台：侧壁厚度 + 台面 + 金色轮缘 + 内环 + 台心辉 -->
+            <ellipse cx="512" cy="818" rx="252" ry="60" fill="#160b06" />
+            <path d="M260 792 A252 60 0 0 0 764 792 L764 818 A252 60 0 0 1 260 818 Z" fill="url(#g3-wall)" />
+            <ellipse cx="512" cy="792" rx="252" ry="60" fill="url(#g3-deck)" stroke="#f59e0b" stroke-opacity="0.35" stroke-width="3" />
+            <ellipse cx="512" cy="792" rx="156" ry="37" fill="none" stroke="#fbbf24" stroke-opacity="0.45" stroke-width="5" />
+            <ellipse cx="512" cy="792" rx="56" ry="14" fill="#fde68a" opacity="0.85" />
+            <!-- L3 熔金光柱：外晕 → 柱身 → 白热芯 → 台底耀斑（向上渐亮） -->
+            <path d="M464 796 L494 344 L530 344 L560 796 Z" fill="#f59e0b" opacity="0.5" filter="url(#g3-blurA)" />
+            <path d="M478 792 L500 348 L524 348 L546 792 Z" fill="url(#g3-beam)" />
+            <path d="M492 788 L506 352 L518 352 L532 788 Z" fill="url(#g3-core)" opacity="0.95" />
+            <ellipse cx="512" cy="790" rx="90" ry="22" fill="#fde68a" opacity="0.5" filter="url(#g3-blurB)" />
+            <!-- L4 轨道弧 ×2 + 远地点星 -->
+            <path d="M340 556 Q512 440 684 556" fill="none" stroke="#ffd9a0" stroke-opacity="0.16" stroke-width="5" />
+            <path d="M296 470 Q512 330 728 470" fill="none" stroke="#ffd9a0" stroke-opacity="0.3" stroke-width="5" />
+            <circle cx="512" cy="286" r="130" fill="url(#g3-starGlow)" />
+            <circle cx="512" cy="286" r="92" fill="none" stroke="#ffe6b0" stroke-opacity="0.35" stroke-width="3" />
+            <path d="M512 214 C521 268 526 273 580 282 C526 291 521 296 512 350 C503 296 498 291 444 282 C498 273 503 268 512 214 Z" fill="url(#g3-star)" />
+            <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" fill="url(#g3-sheen)" />
+          </g>
+          <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="2.5" />
+        </symbol>
+        <!-- 03 favicon：光柱 + 四芒 -->
+        <symbol id="fv3" viewBox="0 0 1024 1024">
+          <defs>
+            <linearGradient id="f3-bg" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#1e1040" />
+              <stop offset="1" stop-color="#7c3a0d" />
+            </linearGradient>
+          </defs>
+          <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" fill="url(#f3-bg)" />
+          <path d="M468 828 L496 372 L528 372 L556 828 Z" fill="#f59e0b" />
+          <path d="M492 820 L506 376 L518 376 L532 820 Z" fill="#fef3c7" />
+          <path d="M512 236 C523 306 530 313 600 326 C530 339 523 346 512 416 C501 346 494 339 424 326 C494 313 501 306 512 236 Z" fill="#ffffff" />
+        </symbol>
+
+        <!-- ════ 04 层积 Strata：等高线厚板 × 层层托举 ════ -->
+        <symbol id="mk4" viewBox="0 0 1024 1024">
+          <defs>
+            <radialGradient id="s4-bg" cx="0.5" cy="0.42" r="0.62">
+              <stop offset="0" stop-color="#0b3b3e" />
+              <stop offset="0.55" stop-color="#04181b" />
+              <stop offset="1" stop-color="#020b0d" />
+            </radialGradient>
+            <linearGradient id="s4-l3" x1="0" y1="0" x2="1" y2="0.6">
+              <stop offset="0" stop-color="#116e64" />
+              <stop offset="0.5" stop-color="#0c5b56" />
+              <stop offset="1" stop-color="#083e3c" />
+            </linearGradient>
+            <linearGradient id="s4-l2" x1="0" y1="0" x2="1" y2="0.6">
+              <stop offset="0" stop-color="#14b8a6" />
+              <stop offset="0.5" stop-color="#0d9488" />
+              <stop offset="1" stop-color="#0b6e66" />
+            </linearGradient>
+            <linearGradient id="s4-l1" x1="0" y1="0" x2="1" y2="0.6">
+              <stop offset="0" stop-color="#6ee7b7" />
+              <stop offset="0.5" stop-color="#2dd4bf" />
+              <stop offset="1" stop-color="#14b8a6" />
+            </linearGradient>
+            <linearGradient id="s4-glass" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#ffffff" stop-opacity="0.3" />
+              <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
+            </linearGradient>
+            <radialGradient id="s4-starGlow" cx="0.5" cy="0.5" r="0.5">
+              <stop offset="0" stop-color="#ffffff" stop-opacity="0.85" />
+              <stop offset="0.4" stop-color="#5eead4" stop-opacity="0.4" />
+              <stop offset="1" stop-color="#5eead4" stop-opacity="0" />
+            </radialGradient>
+            <linearGradient id="s4-star" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#ffffff" />
+              <stop offset="1" stop-color="#99f6e4" />
+            </linearGradient>
+            <linearGradient id="s4-sheen" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#ffffff" stop-opacity="0.13" />
+              <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.02" />
+              <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
+            </linearGradient>
+            <filter id="s4-blurA" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="14" />
+            </filter>
+            <filter id="s4-blurB" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="9" />
+            </filter>
+            <clipPath id="s4-sq">
+              <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" />
+            </clipPath>
+          </defs>
+          <g clip-path="url(#s4-sq)">
+            <!-- L1 深渊场：径向天幕 + 等高线椭圆环 ×3 -->
+            <rect width="1024" height="1024" fill="url(#s4-bg)" />
+            <ellipse cx="512" cy="610" rx="430" ry="150" fill="none" stroke="#14b8a6" stroke-opacity="0.1" stroke-width="2.5" />
+            <ellipse cx="512" cy="610" rx="330" ry="114" fill="none" stroke="#14b8a6" stroke-opacity="0.13" stroke-width="2.5" />
+            <ellipse cx="512" cy="610" rx="226" ry="78" fill="none" stroke="#14b8a6" stroke-opacity="0.16" stroke-width="2.5" />
+            <!-- L2 厚板 ×3：层间 AO → 唇边厚度（暗层）→ 受光面（柱面渐变）→ 顶缘高光条 -->
+            <rect x="374" y="446" width="276" height="34" rx="17" fill="#021416" opacity="0.45" filter="url(#s4-blurA)" />
+            <rect x="312" y="594" width="400" height="36" rx="18" fill="#021416" opacity="0.45" filter="url(#s4-blurA)" />
+            <rect x="232" y="614" width="560" height="118" rx="30" fill="#053a3a" />
+            <rect x="232" y="600" width="560" height="118" rx="30" fill="url(#s4-l3)" />
+            <rect x="254" y="612" width="516" height="7" rx="3.5" fill="#5eead4" opacity="0.25" />
+            <rect x="300" y="466" width="424" height="106" rx="27" fill="#064a46" />
+            <rect x="300" y="452" width="424" height="106" rx="27" fill="url(#s4-l2)" />
+            <rect x="322" y="464" width="380" height="7" rx="3.5" fill="#99f6e4" opacity="0.35" />
+            <rect x="362" y="330" width="300" height="96" rx="24" fill="#0b5f56" />
+            <rect x="362" y="318" width="300" height="96" rx="24" fill="url(#s4-l1)" />
+            <rect x="362" y="318" width="300" height="52" rx="24" fill="url(#s4-glass)" />
+            <rect x="384" y="330" width="256" height="7" rx="3.5" fill="#ccfbf1" opacity="0.5" />
+            <!-- L3 上升粒子 + 顶端星光（辉光 + 环 + 四芒） -->
+            <g fill="#5eead4">
+              <circle cx="536" cy="433" r="5" opacity="0.55" />
+              <circle cx="476" cy="576" r="5.5" opacity="0.42" />
+              <circle cx="596" cy="296" r="4" opacity="0.5" />
+            </g>
+            <circle cx="512" cy="224" r="100" fill="url(#s4-starGlow)" />
+            <circle cx="512" cy="224" r="78" fill="none" stroke="#99f6e4" stroke-opacity="0.3" stroke-width="3" />
+            <path d="M512 170 C519 212 523 216 569 224 C523 232 519 236 512 278 C505 236 501 232 455 224 C501 216 505 212 512 170 Z" fill="url(#s4-star)" />
+            <circle cx="512" cy="224" r="22" fill="#f0fdfa" opacity="0.3" filter="url(#s4-blurB)" />
+            <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" fill="url(#s4-sheen)" />
+          </g>
+          <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="2.5" />
+        </symbol>
+        <!-- 04 favicon：三厚条 + 四芒 -->
+        <symbol id="fv4" viewBox="0 0 1024 1024">
+          <defs>
+            <linearGradient id="f4-bg" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#062b2e" />
+              <stop offset="1" stop-color="#02100f" />
+            </linearGradient>
+          </defs>
+          <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" fill="url(#f4-bg)" />
+          <rect x="192" y="676" width="640" height="120" rx="34" fill="#0f766e" />
+          <rect x="258" y="516" width="508" height="108" rx="32" fill="#14b8a6" />
+          <rect x="320" y="366" width="384" height="96" rx="30" fill="#5eead4" />
+          <path d="M512 176 C521 220 526 225 570 234 C526 243 521 248 512 292 C503 248 498 243 454 234 C498 225 503 220 512 176 Z" fill="#ecfdf5" />
+        </symbol>
+
+        <!-- ════ 05 管线 Conduit：铬面直角管 × 信号橙流光 ════ -->
+        <symbol id="mk5" viewBox="0 0 1024 1024">
+          <defs>
+            <radialGradient id="q5-bg" cx="0.45" cy="0.42" r="0.68">
+              <stop offset="0" stop-color="#1c2433" />
+              <stop offset="0.6" stop-color="#10151f" />
+              <stop offset="1" stop-color="#0a0d14" />
+            </radialGradient>
+            <pattern id="q5-grid" width="128" height="128" patternUnits="userSpaceOnUse">
+              <path d="M128 0H0V128" fill="none" stroke="#8b98ab" stroke-opacity="0.06" stroke-width="1.5" />
+            </pattern>
+            <linearGradient id="q5-chrome" gradientUnits="userSpaceOnUse" x1="0" y1="612" x2="0" y2="716">
+              <stop offset="0" stop-color="#f1f5f9" />
+              <stop offset="0.18" stop-color="#cbd5e1" />
+              <stop offset="0.38" stop-color="#94a3b8" />
+              <stop offset="0.55" stop-color="#64748b" />
+              <stop offset="0.78" stop-color="#475569" />
+              <stop offset="1" stop-color="#334155" />
+            </linearGradient>
+            <linearGradient id="q5-flow" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stop-color="#7c2d12" />
+              <stop offset="0.35" stop-color="#c2410c" />
+              <stop offset="0.6" stop-color="#f97316" />
+              <stop offset="0.82" stop-color="#fb923c" />
+              <stop offset="1" stop-color="#fde68a" />
+            </linearGradient>
+            <radialGradient id="q5-starGlow" cx="0.5" cy="0.5" r="0.5">
+              <stop offset="0" stop-color="#fff7ed" stop-opacity="0.8" />
+              <stop offset="0.4" stop-color="#fb923c" stop-opacity="0.38" />
+              <stop offset="1" stop-color="#f97316" stop-opacity="0" />
+            </radialGradient>
+            <linearGradient id="q5-ray" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#ffffff" />
+              <stop offset="1" stop-color="#fbbf24" />
+            </linearGradient>
+            <linearGradient id="q5-sheen" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#ffffff" stop-opacity="0.12" />
+              <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.02" />
+              <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
+            </linearGradient>
+            <filter id="q5-blurA" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="18" />
+            </filter>
+            <filter id="q5-blurB" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="12" />
+            </filter>
+            <clipPath id="q5-sq">
+              <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" />
+            </clipPath>
+          </defs>
+          <g clip-path="url(#q5-sq)">
+            <!-- L1 石墨场：径向天幕 + 蓝图网格 + 远景幽灵管道（纵深） -->
+            <rect width="1024" height="1024" fill="url(#q5-bg)" />
+            <rect width="1024" height="1024" fill="url(#q5-grid)" />
+            <path d="M160 824 C320 800 452 736 556 640" fill="none" stroke="#2c3850" stroke-width="88" stroke-linecap="round" opacity="0.35" />
+            <!-- L2 铬面管道：AO → 外壁金属渐变 → 管芯暗槽 → 流光辉光 → 流光本体 -->
+            <path d="M160 664 L560 664 A160 160 0 0 0 720 504 L720 352" fill="none" stroke="#04060b" stroke-opacity="0.55" stroke-width="110" stroke-linecap="round" filter="url(#q5-blurA)" transform="translate(10 16)" />
+            <path d="M160 664 L560 664 A160 160 0 0 0 720 504 L720 352" fill="none" stroke="url(#q5-chrome)" stroke-width="88" stroke-linecap="round" />
+            <path d="M160 664 L560 664 A160 160 0 0 0 720 504 L720 352" fill="none" stroke="#0b111c" stroke-width="58" stroke-linecap="round" />
+            <path d="M160 664 L560 664 A160 160 0 0 0 720 504 L720 352" fill="none" stroke="#f97316" stroke-opacity="0.55" stroke-width="42" stroke-linecap="round" filter="url(#q5-blurB)" />
+            <path d="M160 664 L560 664 A160 160 0 0 0 720 504 L720 352" fill="none" stroke="url(#q5-flow)" stroke-width="40" stroke-linecap="round" />
+            <!-- L3 金属直高光条 ×2 + 管口（圆柱错觉收口） -->
+            <path d="M172 640 L556 640" fill="none" stroke="#ffffff" stroke-opacity="0.8" stroke-width="6" stroke-linecap="round" />
+            <path d="M696 468 L696 364" fill="none" stroke="#ffffff" stroke-opacity="0.5" stroke-width="5" stroke-linecap="round" />
+            <ellipse cx="720" cy="352" rx="44" ry="14" fill="#050810" stroke="#cbd5e1" stroke-opacity="0.8" stroke-width="3" />
+            <ellipse cx="720" cy="352" rx="28" ry="8" fill="#fde68a" />
+            <!-- L4 发布星芒：辉光 + 六芒（3×细菱形）+ 白核 -->
+            <circle cx="720" cy="286" r="150" fill="url(#q5-starGlow)" />
+            <g transform="translate(720 286)">
+              <path d="M0 -118 L11 0 L0 118 L-11 0 Z" fill="url(#q5-ray)" />
+              <path d="M0 -118 L11 0 L0 118 L-11 0 Z" fill="url(#q5-ray)" transform="rotate(60)" />
+              <path d="M0 -118 L11 0 L0 118 L-11 0 Z" fill="url(#q5-ray)" transform="rotate(120)" />
+              <circle cx="0" cy="0" r="60" fill="#fde68a" opacity="0.5" filter="url(#q5-blurB)" />
+              <circle cx="0" cy="0" r="30" fill="#ffffff" />
+            </g>
+            <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" fill="url(#q5-sheen)" />
+          </g>
+          <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="2.5" />
+        </symbol>
+        <!-- 05 favicon：粗弯管 + 流光 + 四芒 -->
+        <symbol id="fv5" viewBox="0 0 1024 1024">
+          <defs>
+            <linearGradient id="f5-bg" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#131926" />
+              <stop offset="1" stop-color="#0a0d14" />
+            </linearGradient>
+            <linearGradient id="f5-flow" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stop-color="#c2410c" />
+              <stop offset="0.6" stop-color="#f97316" />
+              <stop offset="1" stop-color="#fbbf24" />
+            </linearGradient>
+          </defs>
+          <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" fill="url(#f5-bg)" />
+          <path d="M196 748 H556 A150 150 0 0 0 706 598 V440" fill="none" stroke="#d9e1ec" stroke-width="150" stroke-linecap="round" />
+          <path d="M196 748 H556 A150 150 0 0 0 706 598 V440" fill="none" stroke="#101724" stroke-width="84" stroke-linecap="round" />
+          <path d="M196 748 H556 A150 150 0 0 0 706 598 V440" fill="none" stroke="url(#f5-flow)" stroke-width="62" stroke-linecap="round" />
+          <path d="M706 280 C718 358 725 365 803 390 C725 415 718 422 706 500 C694 422 687 415 609 390 C687 365 694 358 706 280 Z" fill="#fff7ed" />
+        </symbol>
+
+        <!-- ════ 06 极光 Aurora：双帘极光 × 上升光点 ════ -->
+        <symbol id="mk6" viewBox="0 0 1024 1024">
+          <defs>
+            <linearGradient id="r6-sky" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#010a09" />
+              <stop offset="0.55" stop-color="#03201c" />
+              <stop offset="1" stop-color="#04352e" />
+            </linearGradient>
+            <radialGradient id="r6-skyGlow" cx="0.5" cy="0.3" r="0.44">
+              <stop offset="0" stop-color="#10b981" stop-opacity="0.16" />
+              <stop offset="1" stop-color="#10b981" stop-opacity="0" />
+            </radialGradient>
+            <linearGradient id="r6-veilL" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0" stop-color="#0d9488" stop-opacity="0" />
+              <stop offset="0.25" stop-color="#10b981" stop-opacity="0.55" />
+              <stop offset="0.55" stop-color="#34d399" stop-opacity="0.75" />
+              <stop offset="0.8" stop-color="#67e8f9" stop-opacity="0.55" />
+              <stop offset="1" stop-color="#a5f3fc" stop-opacity="0.2" />
+            </linearGradient>
+            <linearGradient id="r6-veilR" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0" stop-color="#0d9488" stop-opacity="0" />
+              <stop offset="0.3" stop-color="#10b981" stop-opacity="0.6" />
+              <stop offset="0.7" stop-color="#2dd4bf" stop-opacity="0.7" />
+              <stop offset="1" stop-color="#99f6e4" stop-opacity="0.45" />
+            </linearGradient>
+            <linearGradient id="r6-veilF" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0" stop-color="#0d9488" stop-opacity="0" />
+              <stop offset="0.5" stop-color="#10b981" stop-opacity="0.4" />
+              <stop offset="1" stop-color="#67e8f9" stop-opacity="0.3" />
+            </linearGradient>
+            <linearGradient id="r6-rise" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0" stop-color="#a5f3fc" stop-opacity="0" />
+              <stop offset="0.65" stop-color="#a5f3fc" stop-opacity="0.8" />
+              <stop offset="1" stop-color="#ffffff" />
+            </linearGradient>
+            <linearGradient id="r6-star" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#ffffff" />
+              <stop offset="1" stop-color="#a5f3fc" />
+            </linearGradient>
+            <linearGradient id="r6-sheen" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#ffffff" stop-opacity="0.12" />
+              <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.02" />
+              <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
+            </linearGradient>
+            <filter id="r6-blurA" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="22" />
+            </filter>
+            <filter id="r6-blurB" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="10" />
+            </filter>
+            <clipPath id="r6-sq">
+              <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" />
+            </clipPath>
+          </defs>
+          <g clip-path="url(#r6-sq)">
+            <!-- L1 极夜场：三段天幕 + 天光 + 星点 -->
+            <rect width="1024" height="1024" fill="url(#r6-sky)" />
+            <rect width="1024" height="1024" fill="url(#r6-skyGlow)" />
+            <g fill="#eafcf7">
+              <circle cx="204" cy="140" r="3.5" opacity="0.4" />
+              <circle cx="388" cy="96" r="2.5" opacity="0.3" />
+              <circle cx="652" cy="128" r="3" opacity="0.34" />
+              <circle cx="846" cy="98" r="3" opacity="0.4" />
+              <circle cx="936" cy="230" r="2.5" opacity="0.26" />
+              <circle cx="128" cy="330" r="2.5" opacity="0.2" />
+            </g>
+            <!-- L2 极光帘：远景帘 → 左帘（辉光 + 帘体）→ 右帘（辉光 + 帘体） -->
+            <path d="M172 846 C196 700 190 560 220 420 C232 360 252 320 282 296 C252 480 250 660 240 846 Z" fill="url(#r6-veilF)" opacity="0.3" />
+            <path d="M262 846 C296 690 286 520 336 356 C358 288 396 234 448 210 C402 420 398 640 368 846 Z" fill="#34d399" opacity="0.5" filter="url(#r6-blurA)" />
+            <path d="M262 846 C296 690 286 520 336 356 C358 288 396 234 448 210 C402 420 398 640 368 846 Z" fill="url(#r6-veilL)" />
+            <path d="M762 846 C728 690 738 520 688 356 C666 288 628 234 576 210 C622 420 626 640 656 846 Z" fill="#2dd4bf" opacity="0.45" filter="url(#r6-blurA)" />
+            <path d="M762 846 C728 690 738 520 688 356 C666 288 628 234 576 210 C622 420 626 640 656 846 Z" fill="url(#r6-veilR)" />
+            <!-- L3 上升光点：渐显尾迹 + 四芒星 + 辉光 -->
+            <path d="M512 560 L512 310" stroke="url(#r6-rise)" stroke-width="20" stroke-linecap="round" fill="none" />
+            <circle cx="512" cy="260" r="90" fill="#a5f3fc" opacity="0.28" filter="url(#r6-blurB)" />
+            <path d="M512 210 C518 248 522 252 560 260 C522 268 518 272 512 310 C506 272 502 268 464 260 C502 252 506 248 512 210 Z" fill="url(#r6-star)" />
+            <!-- L4 地平线山脊剪影 + 极光倒影 -->
+            <path d="M0 848 L182 848 L212 830 L262 852 L338 824 L402 850 L512 836 L622 852 L688 826 L762 850 L818 832 L1024 850 L1024 1024 L0 1024 Z" fill="#01110e" />
+            <ellipse cx="512" cy="874" rx="380" ry="22" fill="#2dd4bf" opacity="0.1" filter="url(#r6-blurB)" />
+            <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" fill="url(#r6-sheen)" />
+          </g>
+          <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="2.5" />
+        </symbol>
+        <!-- 06 favicon：单帘光带 + 白点 -->
+        <symbol id="fv6" viewBox="0 0 1024 1024">
+          <defs>
+            <linearGradient id="f6-bg" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#01201b" />
+              <stop offset="1" stop-color="#010b0a" />
+            </linearGradient>
+            <linearGradient id="f6-band" x1="0" y1="1" x2="1" y2="0">
+              <stop offset="0" stop-color="#0d9488" />
+              <stop offset="0.5" stop-color="#34d399" />
+              <stop offset="1" stop-color="#7df3e1" />
+            </linearGradient>
+          </defs>
+          <path d="M0 272C0 72.4 72.4 0 272 0L752 0C951.6 0 1024 72.4 1024 272L1024 752C1024 951.6 951.6 1024 752 1024L272 1024C72.4 1024 0 951.6 0 752Z" fill="url(#f6-bg)" />
+          <path d="M236 838 C346 606 512 436 774 318" fill="none" stroke="url(#f6-band)" stroke-width="132" stroke-linecap="round" />
+          <circle cx="792" cy="262" r="58" fill="#f0fdfa" />
+        </symbol>
+      </defs>
+    </svg>
+
+    <div class="page">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">applift · brand concepts · v2</div>
+          <h1>标识概念稿 <span class="ver">V2 · 六个方向</span></h1>
+          <p class="sub">
+            V1 否决复盘：<b>细线条几何拼合、单色描边、无体积无光影无材质</b>——像线框图，不像成品。V2 全部重做：
+            每个主体按「<b>投影/AO → 辉光层 → 多段渐变主体 → 边缘高光</b>」四层叠印，≥3 个视觉层次；
+            6 套独立配色（深空紫 / 曜石电光 / 熔金 / 极光青 / 钛金橙 / 极光绿）；
+            favicon 一律<b>独立减法重绘</b>（放大视图附「正标直缩」对照）；wordmark 按方向气质精调字重与字距。
+            对标 Linear / Raycast / Vercel / Warp / Arc 的图标完成度。
+          </p>
+          <p class="notice">
+            <span>概念稿供内部评选（v2.0）。画布 1024×1024 squircle（超椭圆近似），主体约束于光学边距框 88–936，
+            坐标 2px 步进对齐。点击每张卡片右下角「放大查看」：大图 + 1024 网格/关键线叠加 + 明暗双底预览 +
+            favicon 实尺寸验证 + wordmark 横版。选定 1–2 个方向后产出正式源文件（SVG/AI、icns、ico、favicon 套件、使用规范）。</span>
+          </p>
+        </div>
+        <button class="theme-btn" id="themeBtn" type="button" aria-label="切换明暗主题">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z" fill="currentColor" />
+          </svg>
+          <span id="themeLabel">深色</span>
+        </button>
+      </header>
+
+      <main class="grid" id="cards">
+        <!-- ════════ 01 星轨 ════════
+        规格：光轨管身 72px（辉光 104 / 内芯 24 / 上缘高光 7）；发射点 Ø92；
+        破晓星四芒 140×70 + 辉光 r120 + 轨道环 r86；背景 4 段线性渐变 + 紫罗兰星云；
+        层次：星场/星云 → 光轨 → 星芒；favicon 弧线加粗至 124px、四芒 208×212，删星场/粒子/发射点。 -->
+        <article
+          class="card"
+          data-zoom-target
+          data-num="01"
+          data-name="星轨"
+          data-en="Ascent"
+          data-wm="wm1"
+          data-idea="一道星轨自发射台弧升，终点亮起破晓星——构建到上架的完整爬升。"
+          data-desc="深空蓝 × 紫罗兰 × 星轨青的三色叙事：光轨以玻璃管材质呈现——外层电离紫辉光、中层青→蓝→紫→白多段渐变管身、内芯亮线、上缘高光条四层叠印，从左下发射点（青绿地面光）划出一道弧线，途中散出尾迹粒子，终点是四芒破晓星与轨道环。渐变沿轨迹推进，寓意 pipeline 各阶段逐级点亮；squircle 顶缘一道玻璃环境光收束整体。"
+          data-spec="画布 1024 · squircle（超椭圆近似）| 光轨：辉光 104 / 管身 72 / 内芯 24px · 上缘高光 7px | 发射点 Ø92 + 地面辉光 | 破晓星：四芒 140×70 + 辉光 r120 + 环 r86 | 层次：星场/星云 → 光轨 → 星芒（×3）| favicon：弧线 124px · 四芒 208×212 · 删星场/粒子 | wordmark：640 · 字距 -2.6% · lift 青→紫渐变"
+          data-palette="#04081C 深空,#231A5E 电离紫,#2DD4BF 星轨青,#818CF8 轨道蓝紫,#EAF0FF 破晓白"
+        >
+          <div class="card-head">
+            <span class="cnum">01</span>
+            <div>
+              <h2>星轨<span class="en">Ascent</span></h2>
+              <p class="idea">一道星轨自发射台弧升，终点亮起破晓星——构建到上架的完整爬升。</p>
+            </div>
+          </div>
+          <div class="stage">
+            <svg class="src-icon" viewBox="0 0 1024 1024" role="img" aria-label="星轨方向应用图标">
+              <use href="#mk1" />
+            </svg>
+          </div>
+          <div class="lockup" aria-label="横版 logo">
+            <svg viewBox="0 0 1024 1024" aria-hidden="true"><use href="#mk1" /></svg>
+            <span class="wordmark wm1"><b>app</b><i>lift</i></span>
+          </div>
+          <div class="fav-strip" aria-label="favicon 实尺寸验证">
+            <div class="fav-item"><svg width="48" height="48" viewBox="0 0 1024 1024" class="fav-src" role="img" aria-label="favicon 48"><use href="#fv1" /></svg><span class="px">48</span></div>
+            <div class="fav-item"><svg width="32" height="32" viewBox="0 0 1024 1024" role="img" aria-label="favicon 32"><use href="#fv1" /></svg><span class="px">32</span></div>
+            <div class="fav-item"><svg width="16" height="16" viewBox="0 0 1024 1024" role="img" aria-label="favicon 16"><use href="#fv1" /></svg><span class="px">16</span></div>
+            <div class="fav-sep" aria-hidden="true"></div>
+            <div class="fav-item fav-zoom"><svg width="72" height="72" viewBox="0 0 1024 1024" role="img" aria-label="放大检查"><use href="#fv1" /></svg><span>检查放大</span></div>
+          </div>
+          <div class="palette-row">
+            <span class="pch"><span class="sw" style="background: #04081c"></span>#04081C</span>
+            <span class="pch"><span class="sw" style="background: #231a5e"></span>#231A5E</span>
+            <span class="pch"><span class="sw" style="background: #2dd4bf"></span>#2DD4BF</span>
+            <span class="pch"><span class="sw" style="background: #818cf8"></span>#818CF8</span>
+            <span class="pch"><span class="sw" style="background: #eaf0ff"></span>#EAF0FF</span>
+          </div>
+          <button class="zoom" data-zoom type="button">放大查看 ⤢</button>
+        </article>
+
+        <!-- ════════ 02 棱镜 ════════
+        规格：两腿 84px 平行四边形（左受光 / 右背光，交叠出棱线）；横梁梯形 464→600 宽，
+        悬浮缝 12px + 自投影 (10,18)；棱线高光 3–5px ×3；顶点脱离火花 80×64 + 环 r64；
+        favicon：A 剪影 evenodd 掏空字腔，腿宽约 78px。 -->
+        <article
+          class="card"
+          data-zoom-target
+          data-num="02"
+          data-name="棱镜"
+          data-en="Prism"
+          data-wm="wm2"
+          data-idea="三片受光各异的晶体托起悬浮横梁——字母 A 的维度跃迁。"
+          data-desc="曜石黑底上的电光蓝棱镜 A：左腿受光（冰蓝→深蓝四段渐变）、右腿背光（靛蓝→暗夜四段渐变），两腿交叠处天然形成晶体棱线；横梁以最亮的玻璃材质悬浮于两腿之间，上下留缝、自带偏移投影——是被「抬起」的横梁；顶点之上再脱离出一枚四芒火花与光环。背景铺蓝色晕轮与两道维度弧，底部一道接触阴影完成落地感。"
+          data-spec="画布 1024 · squircle | 晶体：两腿 84px 平行四边形 · 横梁梯形（464→600 宽，悬浮缝 12px）| 棱线高光 3–5px ×3 · 投影偏移 (14,24) 模糊 18 | 火花：四芒 80×64 + 环 r64 | 层次：维度弧/晕轮 → 晶体 A → 悬浮横梁 → 脱离火花（×4）| favicon：A 剪影 evenodd 掏空字腔 · 腿宽约 78px | wordmark：700 · 字距 -3.4%"
+          data-palette="#0B0E16 曜石,#17337F 深海钢,#2456CE 电光蓝,#9ED2FF 冰棱高光,#EAF4FF 霜白"
+        >
+          <div class="card-head">
+            <span class="cnum">02</span>
+            <div>
+              <h2>棱镜<span class="en">Prism</span></h2>
+              <p class="idea">三片受光各异的晶体托起悬浮横梁——字母 A 的维度跃迁。</p>
+            </div>
+          </div>
+          <div class="stage">
+            <svg class="src-icon" viewBox="0 0 1024 1024" role="img" aria-label="棱镜方向应用图标">
+              <use href="#mk2" />
+            </svg>
+          </div>
+          <div class="lockup" aria-label="横版 logo">
+            <svg viewBox="0 0 1024 1024" aria-hidden="true"><use href="#mk2" /></svg>
+            <span class="wordmark wm2"><b>app</b><i>lift</i></span>
+          </div>
+          <div class="fav-strip" aria-label="favicon 实尺寸验证">
+            <div class="fav-item"><svg width="48" height="48" viewBox="0 0 1024 1024" class="fav-src" role="img" aria-label="favicon 48"><use href="#fv2" /></svg><span class="px">48</span></div>
+            <div class="fav-item"><svg width="32" height="32" viewBox="0 0 1024 1024" role="img" aria-label="favicon 32"><use href="#fv2" /></svg><span class="px">32</span></div>
+            <div class="fav-item"><svg width="16" height="16" viewBox="0 0 1024 1024" role="img" aria-label="favicon 16"><use href="#fv2" /></svg><span class="px">16</span></div>
+            <div class="fav-sep" aria-hidden="true"></div>
+            <div class="fav-item fav-zoom"><svg width="72" height="72" viewBox="0 0 1024 1024" role="img" aria-label="放大检查"><use href="#fv2" /></svg><span>检查放大</span></div>
+          </div>
+          <div class="palette-row">
+            <span class="pch"><span class="sw" style="background: #0b0e16"></span>#0B0E16</span>
+            <span class="pch"><span class="sw" style="background: #17337f"></span>#17337F</span>
+            <span class="pch"><span class="sw" style="background: #2456ce"></span>#2456CE</span>
+            <span class="pch"><span class="sw" style="background: #9ed2ff"></span>#9ED2FF</span>
+            <span class="pch"><span class="sw" style="background: #eaf4ff"></span>#EAF4FF</span>
+          </div>
+          <button class="zoom" data-zoom type="button">放大查看 ⤢</button>
+        </article>
+
+        <!-- ════════ 03 远地点 ════════
+        规格：天空 5 段纵向渐变 + 地平线余晖；发射台双椭圆侧壁（offset 26px）+ 轮缘光 + 内环；
+        光柱三层嵌套（外晕 192 / 熔金 124 / 白热芯 80px 宽）+ 台底耀斑；轨道弧 ×2；
+        星四芒 136×112 + 辉光 r130 + 环 r92；favicon 删发射台/轨道/云影，光柱 + 四芒。 -->
+        <article
+          class="card"
+          data-zoom-target
+          data-num="03"
+          data-name="远地点"
+          data-en="Apogee"
+          data-wm="wm3"
+          data-idea="暮色发射台升起熔金光柱，冲破轨道线抵达远地点星。"
+          data-desc="唯一的暖色方向：暮靛 → 紫灰烬 → 熔金的天空五段纵向渐变在地平线烧出余晖；拉丝金属发射台以双椭圆侧壁呈现厚度，台面轮缘吃一口金光、内环再收一道；光柱三层嵌套（外晕 / 熔金 / 白热芯）自台心收窄上升，冲破两道轨道弧线，止于四芒星。发射即发版，远地点即上架完成——暖金在一片冷色开发工具品牌里有最高的货架辨识度。"
+          data-spec="画布 1024 · squircle | 发射台：双椭圆侧壁（offset 26px）· 台面 rx252 · 内环 rx156 | 光柱：外晕 192 / 熔金 124 / 白热芯 80px 宽 · 台底耀斑 rx90 | 轨道弧 ×2 | 星：四芒 136×112 + 辉光 r130 + 环 r92 | 层次：暮空/云翳 → 发射台 → 光柱 → 轨道弧 → 星（×4）| favicon：光柱 + 四芒（删发射台/轨道/云影）| wordmark：620 · 字距 -2%"
+          data-palette="#110B26 暮靛,#2B1440 紫灰烬,#8F430E 熔金深,#F59E0B 熔金,#FDE68A 星火白"
+        >
+          <div class="card-head">
+            <span class="cnum">03</span>
+            <div>
+              <h2>远地点<span class="en">Apogee</span></h2>
+              <p class="idea">暮色发射台升起熔金光柱，冲破轨道线抵达远地点星。</p>
+            </div>
+          </div>
+          <div class="stage">
+            <svg class="src-icon" viewBox="0 0 1024 1024" role="img" aria-label="远地点方向应用图标">
+              <use href="#mk3" />
+            </svg>
+          </div>
+          <div class="lockup" aria-label="横版 logo">
+            <svg viewBox="0 0 1024 1024" aria-hidden="true"><use href="#mk3" /></svg>
+            <span class="wordmark wm3"><b>app</b><i>lift</i></span>
+          </div>
+          <div class="fav-strip" aria-label="favicon 实尺寸验证">
+            <div class="fav-item"><svg width="48" height="48" viewBox="0 0 1024 1024" class="fav-src" role="img" aria-label="favicon 48"><use href="#fv3" /></svg><span class="px">48</span></div>
+            <div class="fav-item"><svg width="32" height="32" viewBox="0 0 1024 1024" role="img" aria-label="favicon 32"><use href="#fv3" /></svg><span class="px">32</span></div>
+            <div class="fav-item"><svg width="16" height="16" viewBox="0 0 1024 1024" role="img" aria-label="favicon 16"><use href="#fv3" /></svg><span class="px">16</span></div>
+            <div class="fav-sep" aria-hidden="true"></div>
+            <div class="fav-item fav-zoom"><svg width="72" height="72" viewBox="0 0 1024 1024" role="img" aria-label="放大检查"><use href="#fv3" /></svg><span>检查放大</span></div>
+          </div>
+          <div class="palette-row">
+            <span class="pch"><span class="sw" style="background: #110b26"></span>#110B26</span>
+            <span class="pch"><span class="sw" style="background: #2b1440"></span>#2B1440</span>
+            <span class="pch"><span class="sw" style="background: #8f430e"></span>#8F430E</span>
+            <span class="pch"><span class="sw" style="background: #f59e0b"></span>#F59E0B</span>
+            <span class="pch"><span class="sw" style="background: #fde68a"></span>#FDE68A</span>
+          </div>
+          <button class="zoom" data-zoom type="button">放大查看 ⤢</button>
+        </article>
+
+        <!-- ════════ 04 层积 ════════
+        规格：厚板 560/424/300 宽 × 118/106/96 高，圆角 24–30，唇边厚度 12–14px，
+        横向柱面渐变 + 顶缘高光条；层间 AO（模糊 14）；等高线椭圆环 ×3；
+        星四芒 108×92 + 辉光 r100 + 环 r78；favicon 三厚条 + 四芒。 -->
+        <article
+          class="card"
+          data-zoom-target
+          data-num="04"
+          data-name="层积"
+          data-en="Strata"
+          data-wm="wm4"
+          data-idea="三层等高线平台层层托举，顶端星光即被送上去的应用。"
+          data-desc="极光青绿系的「托举」叙事：三层玻璃厚板自下而上收窄悬浮，每层带唇边厚度、横向柱面渐变与顶缘高光条，上层在下层投下环境光遮蔽——厚度与空气感同时成立；背景三道等高线椭圆环暗示「层级」，两颗上升粒子穿行层间，顶端一枚四芒星悬停。多框架之力把应用一层层送上去：build → artifacts → publish，越往上越亮。"
+          data-spec="画布 1024 · squircle | 厚板：560/424/300 宽 × 118/106/96 高 · 唇边 12–14px · 圆角 24–30 | 层间 AO 模糊 14 · 顶缘高光 7px | 等高线环 ×3 | 星：四芒 108×92 + 辉光 r100 + 环 r78 | 层次：等高线 → 厚板×3 → 粒子 → 星（×4）| favicon：三厚条 + 四芒 | wordmark：560 · 字距 -1.8%"
+          data-palette="#020D0E 深渊绿,#0F6E66 层岩青,#14B8A6 极光青,#5EEAD4 薄雾荷,#ECFDF5 晨霜白"
+        >
+          <div class="card-head">
+            <span class="cnum">04</span>
+            <div>
+              <h2>层积<span class="en">Strata</span></h2>
+              <p class="idea">三层等高线平台层层托举，顶端星光即被送上去的应用。</p>
+            </div>
+          </div>
+          <div class="stage">
+            <svg class="src-icon" viewBox="0 0 1024 1024" role="img" aria-label="层积方向应用图标">
+              <use href="#mk4" />
+            </svg>
+          </div>
+          <div class="lockup" aria-label="横版 logo">
+            <svg viewBox="0 0 1024 1024" aria-hidden="true"><use href="#mk4" /></svg>
+            <span class="wordmark wm4"><b>app</b><i>lift</i></span>
+          </div>
+          <div class="fav-strip" aria-label="favicon 实尺寸验证">
+            <div class="fav-item"><svg width="48" height="48" viewBox="0 0 1024 1024" class="fav-src" role="img" aria-label="favicon 48"><use href="#fv4" /></svg><span class="px">48</span></div>
+            <div class="fav-item"><svg width="32" height="32" viewBox="0 0 1024 1024" role="img" aria-label="favicon 32"><use href="#fv4" /></svg><span class="px">32</span></div>
+            <div class="fav-item"><svg width="16" height="16" viewBox="0 0 1024 1024" role="img" aria-label="favicon 16"><use href="#fv4" /></svg><span class="px">16</span></div>
+            <div class="fav-sep" aria-hidden="true"></div>
+            <div class="fav-item fav-zoom"><svg width="72" height="72" viewBox="0 0 1024 1024" role="img" aria-label="放大检查"><use href="#fv4" /></svg><span>检查放大</span></div>
+          </div>
+          <div class="palette-row">
+            <span class="pch"><span class="sw" style="background: #020d0e"></span>#020D0E</span>
+            <span class="pch"><span class="sw" style="background: #0f6e66"></span>#0F6E66</span>
+            <span class="pch"><span class="sw" style="background: #14b8a6"></span>#14B8A6</span>
+            <span class="pch"><span class="sw" style="background: #5eead4"></span>#5EEAD4</span>
+            <span class="pch"><span class="sw" style="background: #ecfdf5"></span>#ECFDF5</span>
+          </div>
+          <button class="zoom" data-zoom type="button">放大查看 ⤢</button>
+        </article>
+
+        <!-- ════════ 05 管线 ════════
+        规格：管道 Ø88（AO 110 / 铬面 88 / 管芯 58 / 流光 42），直角弯 R160；
+        铬面 6 段金属渐变（F1F5F9→334155）+ 直高光条 ×2 + 管口椭圆 rx46；
+        流光 5 段渐变暗橙→白热；六芒星（3× 细菱形 118 长）+ 白核 r30 + 辉光 r150；
+        favicon 弯管加粗至 150px、流光 62px、四芒 194×220。 -->
+        <article
+          class="card"
+          data-zoom-target
+          data-num="05"
+          data-name="管线"
+          data-en="Conduit"
+          data-wm="wm5"
+          data-idea="钛金直角管道奔流信号橙，终点绽放发布星芒。"
+          data-desc="工程感最强的一支：石墨底上铺 128px 蓝图网格与一根远景幽灵管道制造纵深；主管道以六段铬面渐变（F1F5F9→334155）呈现金属体积，管身两道直高光条与管口椭圆完成圆柱错觉，流光沿路径从暗橙烧到白热，在管口炸开六芒星。管道即 pipeline，流光即正在发生的发版——CLI 气质与 GUI 精致度兼得，也是六支中唯一的双色对撞（钛银 × 信号橙）。"
+          data-spec="画布 1024 · squircle | 管道：AO 110 / 铬面 88 / 管芯 58 / 流光 42px · 直角弯 R160 | 高光条 5–6px ×2 · 管口椭圆 rx46 | 星：六芒（3× 细菱形 118 长）+ 白核 r30 + 辉光 r150 | 层次：蓝图网格/幽灵管 → 铬面管 → 流光 → 星芒（×4）| favicon：弯管 150px · 流光 62px · 四芒 | wordmark：650 · 字距 -2.8%"
+          data-palette="#0A0D14 钛黑,#475569 铁灰,#94A3B8 钛银,#F97316 信号橙,#FDE68A 焰心白"
+        >
+          <div class="card-head">
+            <span class="cnum">05</span>
+            <div>
+              <h2>管线<span class="en">Conduit</span></h2>
+              <p class="idea">钛金直角管道奔流信号橙，终点绽放发布星芒。</p>
+            </div>
+          </div>
+          <div class="stage">
+            <svg class="src-icon" viewBox="0 0 1024 1024" role="img" aria-label="管线方向应用图标">
+              <use href="#mk5" />
+            </svg>
+          </div>
+          <div class="lockup" aria-label="横版 logo">
+            <svg viewBox="0 0 1024 1024" aria-hidden="true"><use href="#mk5" /></svg>
+            <span class="wordmark wm5"><b>app</b><i>lift</i></span>
+          </div>
+          <div class="fav-strip" aria-label="favicon 实尺寸验证">
+            <div class="fav-item"><svg width="48" height="48" viewBox="0 0 1024 1024" class="fav-src" role="img" aria-label="favicon 48"><use href="#fv5" /></svg><span class="px">48</span></div>
+            <div class="fav-item"><svg width="32" height="32" viewBox="0 0 1024 1024" role="img" aria-label="favicon 32"><use href="#fv5" /></svg><span class="px">32</span></div>
+            <div class="fav-item"><svg width="16" height="16" viewBox="0 0 1024 1024" role="img" aria-label="favicon 16"><use href="#fv5" /></svg><span class="px">16</span></div>
+            <div class="fav-sep" aria-hidden="true"></div>
+            <div class="fav-item fav-zoom"><svg width="72" height="72" viewBox="0 0 1024 1024" role="img" aria-label="放大检查"><use href="#fv5" /></svg><span>检查放大</span></div>
+          </div>
+          <div class="palette-row">
+            <span class="pch"><span class="sw" style="background: #0a0d14"></span>#0A0D14</span>
+            <span class="pch"><span class="sw" style="background: #475569"></span>#475569</span>
+            <span class="pch"><span class="sw" style="background: #94a3b8"></span>#94A3B8</span>
+            <span class="pch"><span class="sw" style="background: #f97316"></span>#F97316</span>
+            <span class="pch"><span class="sw" style="background: #fde68a"></span>#FDE68A</span>
+          </div>
+          <button class="zoom" data-zoom type="button">放大查看 ⤢</button>
+        </article>
+
+        <!-- ════════ 06 极光 ════════
+        规格：极光帘 ×3（远景帘 30% + 左右主帘：辉光层模糊 22 + 锐利帘体，5 段纵向渐变）；
+        上升尾迹 20px 渐显 + 四芒星 100×84 + 辉光 r90；山脊剪影 + 极光倒影；
+        favicon 单帘光带 132px + 白点 r58。 -->
+        <article
+          class="card"
+          data-zoom-target
+          data-num="06"
+          data-name="极光"
+          data-en="Aurora"
+          data-wm="wm6"
+          data-idea="双帘极光合成一道升空之门，一点白光正沿门中轴线上升。"
+          data-desc="极夜绿幕上的光学材质：左右两道极光帘各自「辉光层 + 锐利帘体」双层叠印，半透明渐变自下而上由幽绿入冰川青，两帘在顶端相合留出中轴缺口；一枚白热四芒星拖着渐显的尾迹沿缺口上升——被送上去的那个 app。地平线以暗色山脊剪影收底，倒映一抹极光。气质安静、辨识度高，与现有 UI 的深色基调最兼容。"
+          data-spec="画布 1024 · squircle | 极光帘：双主帘（辉光模糊 22 + 帘体 5 段渐变）+ 远景第三帘 | 上升尾迹 20px 渐显 · 星：四芒 100×84 + 辉光 r90 | 山脊剪影 + 倒影椭圆 | 层次：星场/天光 → 极光帘×3 → 山脊 → 上升光点（×4）| favicon：单帘光带 132px + 白点 r58 | wordmark：580 · 字距 -1.2%"
+          data-palette="#010A09 极夜,#04352E 幽绿,#10B981 极光绿,#67E8F9 冰川青,#F0FDFA 晨霜白"
+        >
+          <div class="card-head">
+            <span class="cnum">06</span>
+            <div>
+              <h2>极光<span class="en">Aurora</span></h2>
+              <p class="idea">双帘极光合成一道升空之门，一点白光正沿门中轴线上升。</p>
+            </div>
+          </div>
+          <div class="stage">
+            <svg class="src-icon" viewBox="0 0 1024 1024" role="img" aria-label="极光方向应用图标">
+              <use href="#mk6" />
+            </svg>
+          </div>
+          <div class="lockup" aria-label="横版 logo">
+            <svg viewBox="0 0 1024 1024" aria-hidden="true"><use href="#mk6" /></svg>
+            <span class="wordmark wm6"><b>app</b><i>lift</i></span>
+          </div>
+          <div class="fav-strip" aria-label="favicon 实尺寸验证">
+            <div class="fav-item"><svg width="48" height="48" viewBox="0 0 1024 1024" class="fav-src" role="img" aria-label="favicon 48"><use href="#fv6" /></svg><span class="px">48</span></div>
+            <div class="fav-item"><svg width="32" height="32" viewBox="0 0 1024 1024" role="img" aria-label="favicon 32"><use href="#fv6" /></svg><span class="px">32</span></div>
+            <div class="fav-item"><svg width="16" height="16" viewBox="0 0 1024 1024" role="img" aria-label="favicon 16"><use href="#fv6" /></svg><span class="px">16</span></div>
+            <div class="fav-sep" aria-hidden="true"></div>
+            <div class="fav-item fav-zoom"><svg width="72" height="72" viewBox="0 0 1024 1024" role="img" aria-label="放大检查"><use href="#fv6" /></svg><span>检查放大</span></div>
+          </div>
+          <div class="palette-row">
+            <span class="pch"><span class="sw" style="background: #010a09"></span>#010A09</span>
+            <span class="pch"><span class="sw" style="background: #04352e"></span>#04352E</span>
+            <span class="pch"><span class="sw" style="background: #10b981"></span>#10B981</span>
+            <span class="pch"><span class="sw" style="background: #67e8f9"></span>#67E8F9</span>
+            <span class="pch"><span class="sw" style="background: #f0fdfa"></span>#F0FDFA</span>
+          </div>
+          <button class="zoom" data-zoom type="button">放大查看 ⤢</button>
+        </article>
+      </main>
+
+      <!-- ══════════ 放大查看 ══════════ -->
+      <dialog id="viewer" aria-labelledby="vTitle">
+        <div class="v-inner">
+          <div class="v-head">
+            <div class="vt" id="vTitle">
+              <span class="vnum" id="vNum"></span>
+              <h3 id="vName"></h3>
+              <span class="ven" id="vEn"></span>
+            </div>
+            <div class="v-actions">
+              <button id="vGrid" type="button" aria-pressed="false" title="叠加 1024 网格与关键线">网格</button>
+              <button id="vPrev" type="button" aria-label="上一个方向">‹</button>
+              <button id="vNext" type="button" aria-label="下一个方向">›</button>
+              <button id="vClose" type="button" aria-label="关闭">×</button>
+            </div>
+          </div>
+          <p class="v-idea" id="vIdea"></p>
+          <div class="v-stage-wrap">
+            <div class="v-stage" id="vStage">
+              <svg class="main-mark" id="vIconSvg" viewBox="0 0 1024 1024" role="img" aria-label="当前方向大图">
+                <use id="vIconUse" href="#mk1" />
+              </svg>
+              <svg class="grid-overlay" viewBox="0 0 1024 1024" aria-hidden="true">
+                <g stroke="#7dd3fc" stroke-width="1.5" opacity="0.55">
+                  <path d="M128 0V1024M256 0V1024M384 0V1024M512 0V1024M640 0V1024M768 0V1024M896 0V1024" opacity="0.4" />
+                  <path d="M0 128H1024M0 256H1024M0 384H1024M0 512H1024M0 640H1024M0 768H1024M0 896H1024" opacity="0.4" />
+                  <path d="M0 0L1024 1024M1024 0L0 1024" opacity="0.3" />
+                  <circle cx="512" cy="512" r="352" fill="none" opacity="0.5" />
+                </g>
+                <rect x="88" y="88" width="848" height="848" fill="none" stroke="#f87171" stroke-width="3" stroke-dasharray="14 10" />
+                <path d="M492 512H532M512 492V532" stroke="#f87171" stroke-width="3" />
+              </svg>
+            </div>
+            <div class="v-side">
+              <div class="v-tiles" aria-label="明暗双底预览">
+                <div class="v-tile v-tile-d">
+                  <span>深色底</span>
+                  <svg viewBox="0 0 1024 1024" role="img" aria-label="深色底预览"><use id="vTileDUse" href="#mk1" /></svg>
+                </div>
+                <div class="v-tile v-tile-l">
+                  <span>浅色底</span>
+                  <svg viewBox="0 0 1024 1024" role="img" aria-label="浅色底预览"><use id="vTileLUse" href="#mk1" /></svg>
+                </div>
+              </div>
+              <div class="v-lock" aria-label="横版 wordmark">
+                <svg viewBox="0 0 1024 1024" aria-hidden="true"><use id="vLockUse" href="#mk1" /></svg>
+                <span class="wordmark wm1" id="vLockText"><b>app</b><i>lift</i></span>
+              </div>
+              <figure class="v-fig">
+                <figcaption>favicon · 16 / 32 / 48 实际尺寸 + 128 检查 · 右侧对照：正标直缩 16px（虚线框 ✗）vs 独立 favicon 16px（实线框 ✓）</figcaption>
+                <div class="v-fav-row" id="vFav"></div>
+              </figure>
+            </div>
+          </div>
+          <p class="v-desc" id="vDesc"></p>
+          <ul class="v-spec" id="vSpec"></ul>
+          <div class="v-palette" id="vPalette"></div>
+        </div>
+      </dialog>
+
+      <footer>
+        <h4>选定后的正式产出（对应产品触点）</h4>
+        <table class="matrix">
+          <thead>
+            <tr><th scope="col">触点</th><th scope="col">资产</th><th scope="col">说明</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>webui 头部 / favicon</td><td>横版 logo 明暗两态 + favicon 套件</td><td>SVG 组件内嵌；favicon 16 / 32 / 48 PNG 以本页独立简化版为源</td></tr>
+            <tr><td>Tauri 应用图标</td><td>1024px 主图标 → icns / ico</td><td>dmg 背景另出；托盘单色模板版自选定方向减法派生</td></tr>
+            <tr><td>README 徽标</td><td>横版 logo SVG + PNG @2x</td><td>可另派生 shields.io 风格静态徽标</td></tr>
+            <tr><td>CLI 启动画面</td><td>ASCII / 位图小尺寸版</td><td>复用 favicon 简化几何，保证终端低分辨率可辨</td></tr>
+            <tr><td>使用规范</td><td>最小尺寸 / 留白 / 禁用示例</td><td>含明暗两态、单色退化版；随正式源文件一并交付</td></tr>
+          </tbody>
+        </table>
+        <p class="colophon">
+          applift brand concepts v2.0 · 2026-11-15 · 全部图形为内联 SVG，无外部资源，双击即可打开 ·
+          画布 1024 squircle（超椭圆近似），主体位于光学边距框 88–936，坐标 2px 步进 ·
+          概念稿仅供评选，非最终交付物 · V1（docs/brand/logo-concepts.html）留档对照。
+        </p>
+      </footer>
+    </div>
+
+    <script>
+      (function () {
+        /* ---------- 主题 ---------- */
+        var root = document.documentElement;
+        var KEY = 'applift-brand-theme';
+        var saved = null;
+        try { saved = localStorage.getItem(KEY); } catch (e) {}
+        if (saved === 'light' || saved === 'dark') {
+          root.dataset.theme = saved;
+        } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+          root.dataset.theme = 'dark';
+        }
+        function syncThemeLabel() {
+          document.getElementById('themeLabel').textContent = root.dataset.theme === 'dark' ? '浅色' : '深色';
+        }
+        syncThemeLabel();
+        document.getElementById('themeBtn').addEventListener('click', function () {
+          var next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+          root.dataset.theme = next;
+          try { localStorage.setItem(KEY, next); } catch (e) {}
+          syncThemeLabel();
+        });
+
+        /* ---------- 放大视图 ---------- */
+        var viewer = document.getElementById('viewer');
+        var cards = Array.prototype.slice.call(document.querySelectorAll('[data-zoom-target]'));
+        var current = 0;
+        var favSizes = [16, 32, 48, 128];
+        var SVGNS = 'http://www.w3.org/2000/svg';
+
+        function makeUse(href, size) {
+          var sv = document.createElementNS(SVGNS, 'svg');
+          sv.setAttribute('width', size);
+          sv.setAttribute('height', size);
+          sv.setAttribute('viewBox', '0 0 1024 1024');
+          var use = document.createElementNS(SVGNS, 'use');
+          use.setAttribute('href', href);
+          sv.appendChild(use);
+          return sv;
+        }
+
+        function favHrefOf(card) {
+          var favSrc = card.querySelector('.fav-src use');
+          return favSrc ? favSrc.getAttribute('href') : '#fv1';
+        }
+        function markHrefOf(card) {
+          var icon = card.querySelector('.src-icon use');
+          return icon ? icon.getAttribute('href') : '#mk1';
+        }
+
+        function openCard(card) {
+          current = cards.indexOf(card);
+          var d = card.dataset;
+          document.getElementById('vNum').textContent = d.num + ' · ';
+          document.getElementById('vName').textContent = d.name;
+          document.getElementById('vEn').textContent = d.en;
+          document.getElementById('vIdea').textContent = d.idea;
+          document.getElementById('vDesc').textContent = d.desc;
+
+          var mark = markHrefOf(card);
+          var fav = favHrefOf(card);
+          document.getElementById('vIconUse').setAttribute('href', mark);
+          document.getElementById('vTileDUse').setAttribute('href', mark);
+          document.getElementById('vTileLUse').setAttribute('href', mark);
+          document.getElementById('vLockUse').setAttribute('href', mark);
+          document.getElementById('vLockText').className = 'wordmark ' + d.wm;
+
+          /* favicon 实尺寸 + 正标直缩对照 */
+          var favBox = document.getElementById('vFav');
+          favBox.innerHTML = '';
+          favSizes.forEach(function (s) {
+            var wrap = document.createElement('div');
+            wrap.className = 'fav-item';
+            wrap.appendChild(makeUse(fav, s));
+            var label = document.createElement('span');
+            label.className = 'px';
+            label.textContent = s === 128 ? '128 检查' : String(s);
+            wrap.appendChild(label);
+            favBox.appendChild(wrap);
+          });
+          var bad = document.createElement('div');
+          bad.className = 'fav-item';
+          var badSvg = makeUse(mark, 16);
+          badSvg.classList.add('ring-bad');
+          bad.appendChild(badSvg);
+          bad.insertAdjacentHTML('beforeend', '<span>正标直缩 ✗</span>');
+          favBox.appendChild(bad);
+          var good = document.createElement('div');
+          good.className = 'fav-item';
+          var goodSvg = makeUse(fav, 16);
+          goodSvg.classList.add('ring-ok');
+          good.appendChild(goodSvg);
+          good.insertAdjacentHTML('beforeend', '<span>独立 favicon ✓</span>');
+          favBox.appendChild(good);
+
+          var specUl = document.getElementById('vSpec');
+          specUl.innerHTML = '';
+          (d.spec || '').split('|').forEach(function (line) {
+            if (!line.trim()) return;
+            var li = document.createElement('li');
+            li.textContent = line.trim();
+            specUl.appendChild(li);
+          });
+
+          var palBox = document.getElementById('vPalette');
+          palBox.innerHTML = '';
+          (d.palette || '').split(',').forEach(function (pair) {
+            var bits = pair.trim().split(' ');
+            var hex = bits[0];
+            var name = bits.slice(1).join(' ') || '';
+            if (!/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(hex)) return;
+            var chip = document.createElement('span');
+            chip.className = 'pch';
+            chip.innerHTML = '<span class="sw" style="background:' + hex + '"></span>' + hex.toUpperCase() + (name ? ' · ' + name : '');
+            palBox.appendChild(chip);
+          });
+
+          /* 重置网格叠加 */
+          document.getElementById('vStage').classList.remove('grid-on');
+          document.getElementById('vGrid').setAttribute('aria-pressed', 'false');
+
+          if (!viewer.open) viewer.showModal();
+        }
+
+        document.querySelectorAll('[data-zoom]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            var card = btn.closest('[data-zoom-target]');
+            if (card) openCard(card);
+          });
+        });
+
+        function step(delta) {
+          var next = (current + delta + cards.length) % cards.length;
+          openCard(cards[next]);
+        }
+        document.getElementById('vPrev').addEventListener('click', function () { step(-1); });
+        document.getElementById('vNext').addEventListener('click', function () { step(1); });
+        document.getElementById('vClose').addEventListener('click', function () { viewer.close(); });
+        viewer.addEventListener('click', function (e) {
+          if (e.target === viewer) viewer.close();
+        });
+        viewer.addEventListener('keydown', function (e) {
+          if (e.key === 'ArrowRight') { step(1); e.preventDefault(); }
+          if (e.key === 'ArrowLeft') { step(-1); e.preventDefault(); }
+        });
+        document.getElementById('vGrid').addEventListener('click', function () {
+          var on = document.getElementById('vStage').classList.toggle('grid-on');
+          this.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+      })();
+    </script>
+  </body>
+</html>

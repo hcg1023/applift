@@ -1,0 +1,1317 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="applift 品牌标识概念稿：6 个方向，含应用图标、横版 logo、favicon 验证与配色板。" />
+    <title>applift · 品牌标识概念稿</title>
+    <!--
+      applift 品牌标识概念稿 v0.1（2026-11-15）
+      目标路径：docs/brand/logo-concepts.html（由主代理从会话产物复制）。
+      · 本页所有图形均为内联 SVG，无任何外部资源；双击即可打开。
+      · 画布约定：应用图标 1024×1024，圆角 rx=230（≈22.5%，iOS squircle 近似）；坐标 2px 步进对齐。
+      · wordmark 使用系统字体栈（-apple-system / PingFang SC），概念阶段以 text 呈现；
+        正式稿将描边为矢量路径，消除跨平台字体差异。
+      · 各方向规格标注见每张卡片内的 HTML 注释。
+    -->
+    <style>
+      :root {
+        --bg: #f5f5f7;
+        --surface: #ffffff;
+        --surface-2: #f2f2f4;
+        --label: #1d1d1f;
+        --label-2: #6e6e73;
+        --label-3: #aeaeb2;
+        --separator: rgba(60, 60, 67, 0.12);
+        --blue: #0071e3;
+        --blue-sys: #007aff;
+        --fill: rgba(120, 120, 128, 0.12);
+        --fill-2: rgba(120, 120, 128, 0.06);
+        --shadow: 0 8px 26px rgba(0, 0, 0, 0.07), 0 1px 2px rgba(0, 0, 0, 0.04);
+        --shadow-lg: 0 16px 44px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.06);
+      }
+      [data-theme="dark"] {
+        --bg: #1e1e20;
+        --surface: #2a2a2c;
+        --surface-2: #232325;
+        --label: #f5f5f7;
+        --label-2: #98989e;
+        --label-3: #636366;
+        --separator: rgba(84, 84, 88, 0.5);
+        --blue: #0a84ff;
+        --blue-sys: #0a84ff;
+        --fill: rgba(120, 120, 128, 0.24);
+        --fill-2: rgba(120, 120, 128, 0.14);
+        --shadow: 0 8px 26px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.3);
+        --shadow-lg: 0 16px 44px rgba(0, 0, 0, 0.6), 0 2px 6px rgba(0, 0, 0, 0.4);
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html {
+        font-size: 16px;
+      }
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC",
+          "Segoe UI", Microsoft YaHei, sans-serif;
+        background: var(--bg);
+        color: var(--label);
+        min-height: 100vh;
+        transition: background 0.35s ease, color 0.35s ease;
+      }
+      .mono {
+        font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      button {
+        font: inherit;
+        color: inherit;
+      }
+      :focus-visible {
+        outline: 2px solid var(--blue-sys);
+        outline-offset: 2px;
+      }
+
+      .page {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 52px 28px 72px;
+      }
+
+      /* ---------- 页头 ---------- */
+      .eyebrow {
+        font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--blue);
+      }
+      h1 {
+        margin-top: 12px;
+        font-size: 34px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .sub {
+        margin-top: 10px;
+        max-width: 780px;
+        font-size: 15px;
+        line-height: 1.65;
+        color: var(--label-2);
+      }
+      .notice {
+        margin-top: 18px;
+        max-width: 880px;
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        background: var(--fill-2);
+        border: 1px solid var(--separator);
+        border-radius: 12px;
+        padding: 13px 16px;
+        font-size: 13px;
+        line-height: 1.6;
+        color: var(--label-2);
+      }
+      .notice .tag {
+        flex: none;
+        margin-top: 1px;
+        font-weight: 600;
+        color: var(--blue);
+      }
+      .toolbar {
+        margin-top: 22px;
+        display: flex;
+        justify-content: flex-end;
+      }
+      .theme-btn {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        border: 1px solid var(--separator);
+        background: var(--surface);
+        color: var(--label-2);
+        cursor: pointer;
+        display: grid;
+        place-items: center;
+        transition: background 0.2s, color 0.2s, transform 0.15s;
+      }
+      .theme-btn:hover {
+        background: var(--fill);
+        color: var(--label);
+      }
+      .theme-btn:active {
+        transform: scale(0.94);
+      }
+      .theme-btn .ic-moon {
+        display: none;
+      }
+      [data-theme="dark"] .theme-btn .ic-sun {
+        display: none;
+      }
+      [data-theme="dark"] .theme-btn .ic-moon {
+        display: block;
+      }
+
+      /* ---------- 卡片网格 ---------- */
+      .grid {
+        margin-top: 30px;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(370px, 1fr));
+        gap: 22px;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--separator);
+        border-radius: 20px;
+        padding: 22px;
+        box-shadow: var(--shadow);
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        transition: transform 0.25s cubic-bezier(0.2, 0.7, 0.3, 1), box-shadow 0.25s;
+      }
+      .card:hover {
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-lg);
+      }
+      .card-head {
+        display: flex;
+        gap: 14px;
+        align-items: flex-start;
+      }
+      .cnum {
+        font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--label-2);
+        padding-top: 4px;
+      }
+      .card-head h2 {
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+      .card-head h2 .en {
+        margin-left: 7px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--label-2);
+        letter-spacing: 0.02em;
+      }
+      .idea {
+        margin-top: 5px;
+        font-size: 13px;
+        line-height: 1.55;
+        color: var(--label-2);
+      }
+
+      .icon-row {
+        display: flex;
+        gap: 14px;
+        align-items: center;
+      }
+      .appicon {
+        width: 128px;
+        height: 128px;
+        flex: none;
+        filter: drop-shadow(0 12px 26px rgba(8, 42, 120, 0.22));
+      }
+      [data-theme="dark"] .appicon {
+        filter: drop-shadow(0 12px 26px rgba(0, 0, 0, 0.5));
+      }
+      .logos {
+        flex: 1;
+        min-width: 0;
+        display: grid;
+        gap: 10px;
+      }
+      .slot {
+        position: relative;
+        border-radius: 12px;
+        padding: 10px 14px;
+        min-height: 76px;
+        display: flex;
+        align-items: center;
+      }
+      .slot svg {
+        height: 56px;
+        width: auto;
+        max-width: 100%;
+      }
+      .slot .slot-tag {
+        position: absolute;
+        top: 7px;
+        right: 10px;
+        font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+        font-size: 10px;
+        color: var(--label-3);
+      }
+      .slot.light {
+        background: #ffffff;
+        border: 1px solid var(--separator);
+        color: #1d1d1f;
+        /* 明色环境下 mark 用品牌蓝系 */
+        --mk1-c: #0a6ee8;
+        --mk2-c: #0a6ee8;
+        --mk3-p: #1d1d1f;
+        --mk4-c: #0a84ff;
+        --mk5-s: #1d1d1f;
+        --mk5-a: #0a84ff;
+        --mk6-c: #0a6ee8;
+        --mk6-a: #0a84ff;
+      }
+      .slot.dark {
+        background: #17171a;
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        color: #f5f5f7;
+        /* 暗色环境下 mark 反白 */
+        --mk1-c: #ffffff;
+        --mk2-c: #ffffff;
+        --mk3-p: #f5f5f7;
+        --mk4-c: #9be8ff;
+        --mk5-s: #f5f5f7;
+        --mk5-a: #0a84ff;
+        --mk6-c: #ffffff;
+        --mk6-a: #a5e3ff;
+      }
+
+      .fav-strip {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        background: var(--surface-2);
+        border: 1px solid var(--separator);
+        border-radius: 12px;
+        padding: 12px 16px;
+      }
+      .fav-item {
+        display: grid;
+        justify-items: center;
+        gap: 7px;
+      }
+      .fav-item span {
+        font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+        font-size: 10px;
+        color: var(--label-2);
+      }
+      .fav-sep {
+        width: 1px;
+        height: 44px;
+        background: var(--separator);
+      }
+      .fav-zoom {
+        margin-left: auto;
+      }
+
+      .palette-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .pch {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: var(--fill-2);
+        border-radius: 999px;
+        padding: 4px 9px 4px 5px;
+        font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        color: var(--label-2);
+      }
+      .sw {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        display: inline-block;
+        border: 1px solid rgba(0, 0, 0, 0.1);
+      }
+      [data-theme="dark"] .sw {
+        border-color: rgba(255, 255, 255, 0.16);
+      }
+      .zoom-btn {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12.5px;
+        font-weight: 600;
+        color: var(--blue);
+        background: var(--fill-2);
+        border: 1px solid transparent;
+        border-radius: 999px;
+        padding: 7px 13px;
+        cursor: pointer;
+        transition: background 0.2s, transform 0.15s;
+      }
+      .zoom-btn:hover {
+        background: var(--fill);
+      }
+      .zoom-btn:active {
+        transform: scale(0.96);
+      }
+
+      /* ---------- 放大查看（dialog） ---------- */
+      dialog {
+        border: none;
+        border-radius: 22px;
+        padding: 0;
+        width: calc(100vw - 48px);
+        max-width: 940px;
+        background: var(--surface);
+        color: var(--label);
+        box-shadow: 0 40px 120px rgba(0, 0, 0, 0.4);
+      }
+      dialog::backdrop {
+        background: rgba(0, 0, 0, 0.42);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+      }
+      .v-inner {
+        padding: 26px 30px 30px;
+        max-height: 84vh;
+        overflow: auto;
+      }
+      .v-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+      }
+      .v-head h3 {
+        font-size: 21px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+      .v-head h3 .en {
+        margin-left: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--label-2);
+      }
+      .v-close {
+        flex: none;
+        width: 32px;
+        height: 32px;
+        border-radius: 9px;
+        border: none;
+        background: var(--fill-2);
+        color: var(--label-2);
+        cursor: pointer;
+        display: grid;
+        place-items: center;
+        transition: background 0.2s, color 0.2s;
+      }
+      .v-close:hover {
+        background: var(--fill);
+        color: var(--label);
+      }
+      .v-idea {
+        margin-top: 8px;
+        font-size: 14px;
+        line-height: 1.6;
+        color: var(--label-2);
+      }
+      .v-grid {
+        margin-top: 20px;
+        display: grid;
+        grid-template-columns: 210px 1fr;
+        gap: 16px;
+      }
+      .v-fig {
+        background: var(--surface-2);
+        border: 1px solid var(--separator);
+        border-radius: 14px;
+        padding: 14px;
+        display: grid;
+        gap: 12px;
+        align-content: start;
+      }
+      .v-fig figcaption {
+        font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        color: var(--label-2);
+      }
+      .v-fig .appicon {
+        width: 170px;
+        height: 170px;
+      }
+      .v-fig .slot svg {
+        height: 72px;
+      }
+      .v-fav-row {
+        display: flex;
+        align-items: flex-end;
+        gap: 20px;
+        flex-wrap: wrap;
+      }
+      .v-fav-row .fav-item span {
+        font-size: 11px;
+      }
+      .v-desc {
+        margin-top: 20px;
+        font-size: 13.5px;
+        line-height: 1.75;
+      }
+      .v-spec {
+        margin-top: 14px;
+        padding-left: 18px;
+      }
+      .v-spec li {
+        font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        line-height: 1.9;
+        color: var(--label-2);
+      }
+      .v-palette {
+        margin-top: 16px;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      /* ---------- 页脚 ---------- */
+      footer {
+        margin-top: 56px;
+        border-top: 1px solid var(--separator);
+        padding-top: 26px;
+        color: var(--label-2);
+        font-size: 13px;
+        line-height: 1.65;
+      }
+      footer h4 {
+        font-size: 14px;
+        color: var(--label);
+        margin-bottom: 10px;
+      }
+      .matrix {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 6px;
+      }
+      .matrix th,
+      .matrix td {
+        text-align: left;
+        padding: 9px 12px 9px 0;
+        border-bottom: 1px solid var(--separator);
+        vertical-align: top;
+      }
+      .matrix th {
+        font-weight: 600;
+        color: var(--label);
+        font-size: 12.5px;
+      }
+      .matrix td {
+        font-size: 12.5px;
+      }
+      .colophon {
+        margin-top: 22px;
+        font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+        font-size: 11.5px;
+        color: var(--label-3);
+      }
+
+      @media (max-width: 720px) {
+        .page {
+          padding: 36px 18px 56px;
+        }
+        h1 {
+          font-size: 26px;
+        }
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .icon-row {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .appicon {
+          margin: 0 auto;
+        }
+        .v-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          transition: none !important;
+          animation: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      ══════════ 共享矢量定义（所有方向的渐变 / 图形 / favicon 复用） ══════════
+      mark（mk1–mk6）在 1024 网格上绘制，通过 CSS 自定义属性控制明暗两态取色：
+      浅色环境用品牌蓝系，深色环境反白；favicon（fav1–fav6）为独立的减法简化版。
+    -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <defs>
+        <clipPath id="sq"><rect width="1024" height="1024" rx="230" /></clipPath>
+        <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#ffffff" stop-opacity=".14" />
+          <stop offset=".45" stop-color="#ffffff" stop-opacity=".04" />
+          <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
+        </linearGradient>
+        <linearGradient id="rimL" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#ffffff" stop-opacity=".30" />
+          <stop offset="1" stop-color="#ffffff" stop-opacity=".06" />
+        </linearGradient>
+        <linearGradient id="rimD" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#1d1d1f" stop-opacity=".10" />
+          <stop offset="1" stop-color="#1d1d1f" stop-opacity=".03" />
+        </linearGradient>
+        <radialGradient id="glowT" cx=".5" cy=".24" r=".55">
+          <stop offset="0" stop-color="#ffffff" stop-opacity=".12" />
+          <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
+        </radialGradient>
+        <radialGradient id="glowC" cx=".68" cy=".26" r=".5">
+          <stop offset="0" stop-color="#64d2ff" stop-opacity=".20" />
+          <stop offset="1" stop-color="#64d2ff" stop-opacity="0" />
+        </radialGradient>
+        <filter id="fblur16" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="16" />
+        </filter>
+        <filter id="fblur10" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="10" />
+        </filter>
+
+        <!-- ① 升轨 Ascend -->
+        <linearGradient id="d1bg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#1e9bff" />
+          <stop offset=".55" stop-color="#0a6ee8" />
+          <stop offset="1" stop-color="#0047b8" />
+        </linearGradient>
+        <!-- ② 离地 Liftoff -->
+        <linearGradient id="d2bg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#7ecbff" />
+          <stop offset=".5" stop-color="#2e9bff" />
+          <stop offset="1" stop-color="#0a5fd8" />
+        </linearGradient>
+        <!-- ③ 托举 Pallet -->
+        <linearGradient id="d3bg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#ffffff" />
+          <stop offset="1" stop-color="#e5ecf8" />
+        </linearGradient>
+        <linearGradient id="d3tile" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#2e9bff" />
+          <stop offset="1" stop-color="#0a5fd8" />
+        </linearGradient>
+        <!-- ④ 管线 Pipeline -->
+        <linearGradient id="d4bg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#0d3170" />
+          <stop offset=".65" stop-color="#071c42" />
+          <stop offset="1" stop-color="#04122b" />
+        </linearGradient>
+        <linearGradient id="d4tr" gradientUnits="userSpaceOnUse" x1="330" y1="784" x2="686" y2="240">
+          <stop offset="0" stop-color="#0a84ff" />
+          <stop offset="1" stop-color="#64d2ff" />
+        </linearGradient>
+        <pattern id="d4dots" width="52" height="52" patternUnits="userSpaceOnUse">
+          <circle cx="10" cy="10" r="3.2" fill="#ffffff" />
+        </pattern>
+        <!-- ⑤ 纯字 Wordmark -->
+        <linearGradient id="d5bg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#ffffff" />
+          <stop offset="1" stop-color="#f0f1f4" />
+        </linearGradient>
+        <!-- ⑥ 分发 Relay -->
+        <linearGradient id="d6bg" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#0450c2" />
+          <stop offset="1" stop-color="#14a0ff" />
+        </linearGradient>
+
+        <!-- 图形 mark：颜色由 --mkN-* 变量驱动（浅色蓝 / 深色白） -->
+        <g id="mk1">
+          <path d="M316 742 L512 284 L708 742" fill="none" stroke="var(--mk1-c,#0a6ee8)" stroke-width="78" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M372 612 L716 496" fill="none" stroke="var(--mk1-c,#0a6ee8)" stroke-width="66" stroke-linecap="round" />
+          <circle cx="760" cy="482" r="46" fill="var(--mk1-c,#0a6ee8)" />
+        </g>
+        <g id="mk2">
+          <path d="M380 556 L512 408 L644 556" fill="none" stroke="var(--mk2-c,#0a6ee8)" stroke-width="80" stroke-linecap="round" stroke-linejoin="round" />
+          <rect x="470" y="606" width="84" height="20" rx="10" fill="var(--mk2-c,#0a6ee8)" />
+          <path d="M336 716 H688" fill="none" stroke="var(--mk2-c,#0a6ee8)" stroke-width="46" stroke-linecap="round" />
+        </g>
+        <g id="mk3">
+          <ellipse cx="512" cy="654" rx="150" ry="14" fill="var(--mk3-p,#1d1d1f)" opacity=".16" filter="url(#fblur10)" />
+          <path d="M456 830 L512 776 L568 830" fill="none" stroke="var(--mk3-p,#1d1d1f)" stroke-width="40" stroke-linecap="round" stroke-linejoin="round" />
+          <rect x="296" y="672" width="432" height="58" rx="29" fill="var(--mk3-p,#1d1d1f)" />
+          <rect x="352" y="232" width="320" height="320" rx="84" fill="url(#d3tile)" />
+          <rect x="352" y="232" width="320" height="180" rx="84" fill="url(#sheen)" opacity=".55" />
+        </g>
+        <g id="mk4">
+          <circle cx="686" cy="240" r="60" fill="#5ac8fa" opacity=".30" filter="url(#fblur16)" />
+          <path d="M330 784 V588 H508 V392 H686 V240" fill="none" stroke="url(#d4tr)" stroke-width="62" stroke-linecap="round" stroke-linejoin="round" />
+          <rect x="302" y="756" width="56" height="56" rx="16" fill="#0a84ff" />
+          <circle cx="686" cy="240" r="84" fill="none" stroke="#64d2ff" stroke-width="8" opacity=".5" />
+          <circle cx="686" cy="240" r="44" fill="var(--mk4-c,#0a84ff)" />
+        </g>
+        <g id="mk5">
+          <rect x="486" y="348" width="52" height="420" rx="26" fill="var(--mk5-s,#1d1d1f)" />
+          <path d="M398 430 L512 316 L626 430" fill="none" stroke="var(--mk5-a,#0a84ff)" stroke-width="80" stroke-linecap="round" stroke-linejoin="round" />
+        </g>
+        <g id="mk6">
+          <path d="M468 560 Q346 470 306 350" fill="none" stroke="var(--mk6-c,#0a6ee8)" stroke-width="46" stroke-linecap="round" />
+          <path d="M512 556 V330" fill="none" stroke="var(--mk6-c,#0a6ee8)" stroke-width="46" stroke-linecap="round" />
+          <path d="M556 560 Q674 470 714 350" fill="none" stroke="var(--mk6-c,#0a6ee8)" stroke-width="46" stroke-linecap="round" />
+          <circle cx="292" cy="326" r="44" fill="var(--mk6-c,#0a6ee8)" />
+          <circle cx="732" cy="326" r="44" fill="var(--mk6-c,#0a6ee8)" />
+          <circle cx="512" cy="306" r="48" fill="var(--mk6-a,#0a84ff)" />
+          <rect x="396" y="556" width="232" height="232" rx="56" fill="url(#d3tile)" />
+        </g>
+
+        <!-- favicon：减法简化版（去渐变 / 加粗笔画 / 删次要素） -->
+        <g id="fav1">
+          <rect width="1024" height="1024" rx="230" fill="#0a6ee8" />
+          <path d="M316 742 L512 284 L708 742" fill="none" stroke="#ffffff" stroke-width="104" stroke-linecap="round" stroke-linejoin="round" />
+          <circle cx="760" cy="478" r="60" fill="#ffffff" />
+        </g>
+        <g id="fav2">
+          <rect width="1024" height="1024" rx="230" fill="#2e9bff" />
+          <path d="M372 564 L512 404 L652 564" fill="none" stroke="#ffffff" stroke-width="110" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M336 780 H688" fill="none" stroke="#ffffff" stroke-width="60" stroke-linecap="round" />
+        </g>
+        <g id="fav3">
+          <rect width="1024" height="1024" rx="230" fill="#f5f7fc" />
+          <rect x="352" y="300" width="320" height="320" rx="84" fill="#0a6ee8" />
+          <rect x="288" y="706" width="448" height="66" rx="33" fill="#1d1d1f" />
+        </g>
+        <g id="fav4">
+          <rect width="1024" height="1024" rx="230" fill="#0b2a5e" />
+          <path d="M330 776 V592 H506 V408 H682 V256" fill="none" stroke="#4fc3ff" stroke-width="96" stroke-linecap="round" stroke-linejoin="round" />
+          <circle cx="682" cy="256" r="56" fill="#b7efff" />
+        </g>
+        <g id="fav5">
+          <rect width="1024" height="1024" rx="230" fill="#1d1d1f" />
+          <rect x="482" y="368" width="60" height="392" rx="30" fill="#ffffff" />
+          <path d="M388 452 L512 328 L636 452" fill="none" stroke="#0a84ff" stroke-width="100" stroke-linecap="round" stroke-linejoin="round" />
+        </g>
+        <g id="fav6">
+          <rect width="1024" height="1024" rx="230" fill="#0a6ae8" />
+          <path d="M470 596 Q356 516 316 400" fill="none" stroke="#ffffff" stroke-width="66" stroke-linecap="round" />
+          <path d="M512 592 V372" fill="none" stroke="#ffffff" stroke-width="66" stroke-linecap="round" />
+          <path d="M554 596 Q668 516 708 400" fill="none" stroke="#ffffff" stroke-width="66" stroke-linecap="round" />
+          <circle cx="306" cy="376" r="56" fill="#ffffff" />
+          <circle cx="718" cy="376" r="56" fill="#ffffff" />
+          <circle cx="512" cy="348" r="60" fill="#ffffff" />
+          <rect x="386" y="596" width="252" height="252" rx="60" fill="#ffffff" />
+        </g>
+      </defs>
+    </svg>
+
+    <div class="page">
+      <header>
+        <p class="eyebrow">applift · brand identity concepts</p>
+        <h1>applift 品牌标识概念稿</h1>
+        <p class="sub">
+          applift = app + lift：把构建产物「抬升 / 发射」到各应用商店的多框架发版工具。以下
+          6 个方向围绕「一个动作把应用送上去」展开，覆盖应用图标、横版 logo 与 favicon
+          小尺寸验证，均为内联矢量、明暗两态可切换预览。
+        </p>
+        <p class="notice">
+          <span class="tag">概念稿</span>
+          <span
+            >本页为供内部评选的概念稿（v0.1），非最终交付物。选定方向后将基于该方向产出正式源文件：SVG /
+            AI 源、1024px 主图标、macOS icns 与 dmg 背景、Windows ico、favicon 套件、明暗两态横版
+            logo 及使用规范。点击每个方案右下角「放大查看」可查看大图与完整规格。</span
+          >
+        </p>
+        <div class="toolbar">
+          <button class="theme-btn" id="themeBtn" title="切换明暗外观" aria-label="切换明暗外观">
+            <svg class="ic-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+              <circle cx="12" cy="12" r="4.2" />
+              <path d="M12 2.5v2.4M12 19.1v2.4M2.5 12h2.4M19.1 12h2.4M5.2 5.2l1.7 1.7M17.1 17.1l1.7 1.7M18.8 5.2l-1.7 1.7M6.9 17.1l-1.7 1.7" />
+            </svg>
+            <svg class="ic-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20.2 14.2A8.3 8.3 0 0 1 9.8 3.8a8.3 8.3 0 1 0 10.4 10.4Z" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="grid">
+        <!-- ══════════ ① 升轨 Ascend ══════════
+          规格：画布 1024 · 圆角 230（≈22.5%）；A 支架笔画 78px 圆头，发射轨 66px、倾角约 18.6°，
+          脱离圆点 Ø92；背景三段纵向渐变 #1E9BFF→#0A6EE8→#0047B8 + 顶部辉光 + 玻璃高光；
+          favicon：笔画加粗至 104px、圆点 Ø120，≤32px 省略发射轨仅存 A + 圆点；
+          wordmark：-apple-system 700，字距 -1.8%，mark 缩放 0.205。 -->
+        <article
+          class="card"
+          data-zoom-target
+          data-num="01"
+          data-name="升轨"
+          data-en="Ascend"
+          data-idea="A 即 app：横杠化作上升轨道，一颗应用脱离字身升空。"
+          data-desc="以字标 A 的最简骨架——两笔支架——承载横杠：横杠被抬升为约 18.6° 的发射轨道，末端一颗圆点（应用）已越过右腿、脱离字身，脱离的一刻即「发版完成」。全部几何落在 1024 网格，笔画 78px，识别性优先；配色延续系统蓝 #0A84FF 家群，由浅入深三段渐变，顶缘一道玻璃高光。"
+          data-spec="画布 1024 · 圆角 230（≈22.5%，squircle 近似）| 图形：支架 78px 圆头 · 发射轨 66px / 18.6° · 圆点 Ø92 | favicon：笔画 104px · 圆点 Ø120 · ≤32px 省略发射轨 | wordmark：-apple-system 700 · 字距 -1.8% · mark 缩放 0.205"
+          data-palette="#1E9BFF 天空蓝,#0A6EE8 主蓝,#0047B8 深海蓝,#FFFFFF 云白"
+        >
+          <div class="card-head">
+            <span class="cnum">01</span>
+            <div>
+              <h2>升轨<span class="en">Ascend</span></h2>
+              <p class="idea">A 即 app：横杠化作上升轨道，一颗应用脱离字身升空。</p>
+            </div>
+          </div>
+          <div class="icon-row">
+            <svg class="appicon src-icon" viewBox="0 0 1024 1024" role="img" aria-label="方向一：升轨 应用图标" style="--mk1-c: #ffffff">
+              <g clip-path="url(#sq)">
+                <rect width="1024" height="1024" fill="url(#d1bg)" />
+                <rect width="1024" height="1024" fill="url(#glowT)" />
+                <use href="#mk1" />
+                <rect width="1024" height="1024" fill="url(#sheen)" opacity=".55" />
+              </g>
+              <rect x="2" y="2" width="1020" height="1020" rx="228" fill="none" stroke="url(#rimL)" stroke-width="4" />
+            </svg>
+            <div class="logos">
+              <div class="slot light">
+                <span class="slot-tag">浅色</span>
+                <svg class="src-logo-l" viewBox="0 0 720 208" role="img" aria-label="升轨 横版 logo · 浅色">
+                  <use href="#mk1" transform="translate(-15,-1.5) scale(0.205)" />
+                  <text x="192" y="152" font-size="124" font-weight="700" fill="currentColor" style="letter-spacing: -0.018em" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', 'PingFang SC', sans-serif">applift</text>
+                </svg>
+              </div>
+              <div class="slot dark">
+                <span class="slot-tag">深色</span>
+                <svg class="src-logo-d" viewBox="0 0 720 208" role="img" aria-label="升轨 横版 logo · 深色">
+                  <use href="#mk1" transform="translate(-15,-1.5) scale(0.205)" />
+                  <text x="192" y="152" font-size="124" font-weight="700" fill="currentColor" style="letter-spacing: -0.018em" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', 'PingFang SC', sans-serif">applift</text>
+                </svg>
+              </div>
+            </div>
+          </div>
+          <div class="fav-strip" aria-label="小尺寸可读性验证">
+            <div class="fav-item"><svg width="48" height="48" viewBox="0 0 1024 1024" class="fav-src" role="img" aria-label="favicon 48"><use href="#fav1" /></svg><span>48</span></div>
+            <div class="fav-item"><svg width="32" height="32" viewBox="0 0 1024 1024" role="img" aria-label="favicon 32"><use href="#fav1" /></svg><span>32</span></div>
+            <div class="fav-item"><svg width="16" height="16" viewBox="0 0 1024 1024" role="img" aria-label="favicon 16"><use href="#fav1" /></svg><span>16</span></div>
+            <div class="fav-sep" aria-hidden="true"></div>
+            <div class="fav-item fav-zoom"><svg width="96" height="96" viewBox="0 0 1024 1024" role="img" aria-label="放大检查"><use href="#fav1" /></svg><span>检查放大</span></div>
+          </div>
+          <div class="palette-row">
+            <span class="pch"><span class="sw" style="background: #1e9bff"></span>#1E9BFF</span>
+            <span class="pch"><span class="sw" style="background: #0a6ee8"></span>#0A6EE8</span>
+            <span class="pch"><span class="sw" style="background: #0047b8"></span>#0047B8</span>
+            <span class="pch"><span class="sw" style="background: #ffffff"></span>#FFFFFF</span>
+            <button class="zoom-btn" data-zoom>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5 21 21" /></svg>
+              放大查看
+            </button>
+          </div>
+        </article>
+
+        <!-- ══════════ ② 离地 Liftoff ══════════
+          规格：画布 1024 · 圆角 230；上折角笔画 80px、地面线 46px、速度残影 84×20 圆角条；
+          背景纵向「大气层」渐变 #7ECBFF→#2E9BFF→#0A5FD8（上浅下深）；
+          favicon：折角加粗至 110px、地面线 60px，省略速度残影；
+          wordmark：-apple-system 700；logo mark 缩放 0.35。 -->
+        <article
+          class="card"
+          data-zoom-target
+          data-num="02"
+          data-name="离地"
+          data-en="Liftoff"
+          data-idea="不画火箭，只留升空的事实：地面、抬升、一道速度残影。"
+          data-desc="发射意象的纯抽象：一条圆角底线是地面，一枚上折角是抬升动作，中间一段渐隐的圆角短条是速度残影。三层元素自上而下构成「离开地面那一瞬」的叙事，不出现任何具象火箭；蓝色由浅入深如大气层，玻璃高光收束顶缘。相比常见的「上传」符号，折角更高、残影更克制，重心明显在上升而非存放。"
+          data-spec="画布 1024 · 圆角 230 | 图形：折角 80px 圆头 · 地面线 46px · 残影 84×20 rx10 | 背景：#7ECBFF→#2E9BFF→#0A5FD8 纵向渐变 | favicon：折角 110px · 地面线 60px · 省略残影 | wordmark：-apple-system 700 · mark 缩放 0.35"
+          data-palette="#7ECBFF 高层大气,#2E9BFF 中层蓝,#0A5FD8 深空蓝,#FFFFFF 云白"
+        >
+          <div class="card-head">
+            <span class="cnum">02</span>
+            <div>
+              <h2>离地<span class="en">Liftoff</span></h2>
+              <p class="idea">不画火箭，只留升空的事实：地面、抬升、一道速度残影。</p>
+            </div>
+          </div>
+          <div class="icon-row">
+            <svg class="appicon src-icon" viewBox="0 0 1024 1024" role="img" aria-label="方向二：离地 应用图标" style="--mk2-c: #ffffff">
+              <g clip-path="url(#sq)">
+                <rect width="1024" height="1024" fill="url(#d2bg)" />
+                <rect width="1024" height="1024" fill="url(#glowT)" />
+                <use href="#mk2" />
+                <rect width="1024" height="1024" fill="url(#sheen)" opacity=".5" />
+              </g>
+              <rect x="2" y="2" width="1020" height="1020" rx="228" fill="none" stroke="url(#rimL)" stroke-width="4" />
+            </svg>
+            <div class="logos">
+              <div class="slot light">
+                <span class="slot-tag">浅色</span>
+                <svg class="src-logo-l" viewBox="0 0 720 208" role="img" aria-label="离地 横版 logo · 浅色">
+                  <use href="#mk2" transform="translate(-83,-92.5) scale(0.35)" />
+                  <text x="192" y="152" font-size="124" font-weight="700" fill="currentColor" style="letter-spacing: -0.018em" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', 'PingFang SC', sans-serif">applift</text>
+                </svg>
+              </div>
+              <div class="slot dark">
+                <span class="slot-tag">深色</span>
+                <svg class="src-logo-d" viewBox="0 0 720 208" role="img" aria-label="离地 横版 logo · 深色">
+                  <use href="#mk2" transform="translate(-83,-92.5) scale(0.35)" />
+                  <text x="192" y="152" font-size="124" font-weight="700" fill="currentColor" style="letter-spacing: -0.018em" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', 'PingFang SC', sans-serif">applift</text>
+                </svg>
+              </div>
+            </div>
+          </div>
+          <div class="fav-strip" aria-label="小尺寸可读性验证">
+            <div class="fav-item"><svg width="48" height="48" viewBox="0 0 1024 1024" class="fav-src" role="img" aria-label="favicon 48"><use href="#fav2" /></svg><span>48</span></div>
+            <div class="fav-item"><svg width="32" height="32" viewBox="0 0 1024 1024" role="img" aria-label="favicon 32"><use href="#fav2" /></svg><span>32</span></div>
+            <div class="fav-item"><svg width="16" height="16" viewBox="0 0 1024 1024" role="img" aria-label="favicon 16"><use href="#fav2" /></svg><span>16</span></div>
+            <div class="fav-sep" aria-hidden="true"></div>
+            <div class="fav-item fav-zoom"><svg width="96" height="96" viewBox="0 0 1024 1024" role="img" aria-label="放大检查"><use href="#fav2" /></svg><span>检查放大</span></div>
+          </div>
+          <div class="palette-row">
+            <span class="pch"><span class="sw" style="background: #7ecbff"></span>#7ECBFF</span>
+            <span class="pch"><span class="sw" style="background: #2e9bff"></span>#2E9BFF</span>
+            <span class="pch"><span class="sw" style="background: #0a5fd8"></span>#0A5FD8</span>
+            <span class="pch"><span class="sw" style="background: #ffffff"></span>#FFFFFF</span>
+            <button class="zoom-btn" data-zoom>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5 21 21" /></svg>
+              放大查看
+            </button>
+          </div>
+        </article>
+
+        <!-- ══════════ ③ 托举 Pallet ══════════
+          规格：画布 1024 · 圆角 230；产物方块 320×320 rx84（系统蓝渐变，自相似呼应应用图标），
+          托板 432×58 rx29 石墨色，下方上折角 40px（仍在上升），方块投影椭圆 rx150 模糊 10；
+          背景近白 #FFFFFF→#E5ECF8，深色 rim；横版中托板/折角随明暗反转，产物恒为系统蓝；
+          favicon：省略折角与投影，方块 320 + 托板 448×66；
+          wordmark：-apple-system 700（几何较轻盈，字重可降 600 试比）；mark 缩放 0.2。 -->
+        <article
+          class="card"
+          data-zoom-target
+          data-num="03"
+          data-name="托举"
+          data-en="Pallet"
+          data-idea="应用是产物，applift 是把它送上去的托板，而且仍在上升。"
+          data-desc="把「抬举」还原为最朴素的机械关系：一枚圆角方块（构建产物，形态自相似地呼应应用图标本身）悬停在托板上方，方块在托板上投下柔影；托板之下还有一枚向上的折角——托板自身仍在上升。近白底 + 石墨托板的「纸感」与其它方向的浓蓝形成气质差异；横版中托板随明暗环境在石墨与云白间反转，产物方块恒为系统蓝。"
+          data-spec="画布 1024 · 圆角 230 | 图形：产物 320×320 rx84 · 托板 432×58 rx29 · 折角 40px · 投影模糊 10 | 背景：#FFFFFF→#E5ECF8 · 深色 rim | favicon：方块 + 托板两要素（省略折角 / 投影） | wordmark：-apple-system 700（可试 600） · mark 缩放 0.2"
+          data-palette="#2E9BFF 产物蓝,#0A5FD8 产物深蓝,#1D1D1F 石墨,#E5ECF8 雾白"
+        >
+          <div class="card-head">
+            <span class="cnum">03</span>
+            <div>
+              <h2>托举<span class="en">Pallet</span></h2>
+              <p class="idea">应用是产物，applift 是把它送上去的托板，而且仍在上升。</p>
+            </div>
+          </div>
+          <div class="icon-row">
+            <svg class="appicon src-icon" viewBox="0 0 1024 1024" role="img" aria-label="方向三：托举 应用图标">
+              <g clip-path="url(#sq)">
+                <rect width="1024" height="1024" fill="url(#d3bg)" />
+                <use href="#mk3" />
+                <rect width="1024" height="1024" fill="url(#sheen)" opacity=".45" />
+              </g>
+              <rect x="2" y="2" width="1020" height="1020" rx="228" fill="none" stroke="url(#rimD)" stroke-width="4" />
+            </svg>
+            <div class="logos">
+              <div class="slot light">
+                <span class="slot-tag">浅色</span>
+                <svg class="src-logo-l" viewBox="0 0 720 208" role="img" aria-label="托举 横版 logo · 浅色">
+                  <use href="#mk3" transform="translate(-6.5,-3) scale(0.2)" />
+                  <text x="192" y="152" font-size="124" font-weight="700" fill="currentColor" style="letter-spacing: -0.018em" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', 'PingFang SC', sans-serif">applift</text>
+                </svg>
+              </div>
+              <div class="slot dark">
+                <span class="slot-tag">深色</span>
+                <svg class="src-logo-d" viewBox="0 0 720 208" role="img" aria-label="托举 横版 logo · 深色">
+                  <use href="#mk3" transform="translate(-6.5,-3) scale(0.2)" />
+                  <text x="192" y="152" font-size="124" font-weight="700" fill="currentColor" style="letter-spacing: -0.018em" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', 'PingFang SC', sans-serif">applift</text>
+                </svg>
+              </div>
+            </div>
+          </div>
+          <div class="fav-strip" aria-label="小尺寸可读性验证">
+            <div class="fav-item"><svg width="48" height="48" viewBox="0 0 1024 1024" class="fav-src" role="img" aria-label="favicon 48"><use href="#fav3" /></svg><span>48</span></div>
+            <div class="fav-item"><svg width="32" height="32" viewBox="0 0 1024 1024" role="img" aria-label="favicon 32"><use href="#fav3" /></svg><span>32</span></div>
+            <div class="fav-item"><svg width="16" height="16" viewBox="0 0 1024 1024" role="img" aria-label="favicon 16"><use href="#fav3" /></svg><span>16</span></div>
+            <div class="fav-sep" aria-hidden="true"></div>
+            <div class="fav-item fav-zoom"><svg width="96" height="96" viewBox="0 0 1024 1024" role="img" aria-label="放大检查"><use href="#fav3" /></svg><span>检查放大</span></div>
+          </div>
+          <div class="palette-row">
+            <span class="pch"><span class="sw" style="background: #2e9bff"></span>#2E9BFF</span>
+            <span class="pch"><span class="sw" style="background: #0a5fd8"></span>#0A5FD8</span>
+            <span class="pch"><span class="sw" style="background: #1d1d1f"></span>#1D1D1F</span>
+            <span class="pch"><span class="sw" style="background: #e5ecf8"></span>#E5ECF8</span>
+            <button class="zoom-btn" data-zoom>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5 21 21" /></svg>
+              放大查看
+            </button>
+          </div>
+        </article>
+
+        <!-- ══════════ ④ 管线 Pipeline ══════════
+          规格：画布 1024 · 圆角 230；折线等宽 62px 圆角，三级台阶（拾级而上 = 抬升），
+          起点 56×56 rx16 产物节点，终点 Ø168 光环 + Ø120 光晕（模糊 16）+ Ø88 实心核；
+          背景深空蓝 #0D3170→#04122B + 52px 点阵网格（蓝图质感，不透明度 7%）；
+          折线渐变 #0A84FF→#64D2FF（userSpaceOnUse 沿路径方向）；
+          favicon：折线 96px、终点 Ø112，省略光环 / 点阵；
+          wordmark：ui-monospace（SF Mono）600，呼应 CLI 工具气质；mark 缩放 0.2。 -->
+        <article
+          class="card"
+          data-zoom-target
+          data-num="04"
+          data-name="管线"
+          data-en="Pipeline"
+          data-idea="构建→产物→校验→上架：一条点亮的管线，拾级而上，终点即商店。"
+          data-desc="面向「从构建到发版一条龙」的全流程野心：一条电路板式等宽折线自左下拾级而上——台阶即抬升，折线即管线；起点是产物节点，终点亮起一圈光环（商店）。深空蓝底上铺 52px 点阵网格，蓝图质感；折线由信号蓝渐变为冰青，末端最亮，寓意「正在点亮」。wordmark 特意用等宽字体，与 CLI 工具的气质互文。这是六个方向里工程感最强的一支。"
+          data-spec="画布 1024 · 圆角 230 | 图形：折线 62px 圆角 · 起点节点 56×56 rx16 · 终点 Ø168 光环 + 光晕（模糊 16）+ Ø88 实心核 | 背景：#0D3170→#04122B · 52px 点阵 7% | 折线渐变 #0A84FF→#64D2FF | favicon：折线 96px · 终点 Ø112 · 省略光环 / 点阵 | wordmark：ui-monospace 600 · mark 缩放 0.2"
+          data-palette="#0D3170 深空蓝,#04122B 深底,#0A84FF 信号蓝,#64D2FF 冰青"
+        >
+          <div class="card-head">
+            <span class="cnum">04</span>
+            <div>
+              <h2>管线<span class="en">Pipeline</span></h2>
+              <p class="idea">构建→产物→校验→上架：一条点亮的管线，拾级而上，终点即商店。</p>
+            </div>
+          </div>
+          <div class="icon-row">
+            <svg class="appicon src-icon" viewBox="0 0 1024 1024" role="img" aria-label="方向四：管线 应用图标" style="--mk4-c: #b7efff">
+              <g clip-path="url(#sq)">
+                <rect width="1024" height="1024" fill="url(#d4bg)" />
+                <rect width="1024" height="1024" fill="url(#d4dots)" opacity=".07" />
+                <rect width="1024" height="1024" fill="url(#glowC)" />
+                <use href="#mk4" />
+                <rect width="1024" height="1024" fill="url(#sheen)" opacity=".35" />
+              </g>
+              <rect x="2" y="2" width="1020" height="1020" rx="228" fill="none" stroke="url(#rimL)" stroke-width="4" />
+            </svg>
+            <div class="logos">
+              <div class="slot light">
+                <span class="slot-tag">浅色</span>
+                <svg class="src-logo-l" viewBox="0 0 720 208" role="img" aria-label="管线 横版 logo · 浅色">
+                  <use href="#mk4" transform="translate(-10.5,-1) scale(0.2)" />
+                  <text x="192" y="150" font-size="106" font-weight="600" fill="currentColor" style="letter-spacing: -0.01em" font-family="ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace">applift</text>
+                </svg>
+              </div>
+              <div class="slot dark">
+                <span class="slot-tag">深色</span>
+                <svg class="src-logo-d" viewBox="0 0 720 208" role="img" aria-label="管线 横版 logo · 深色">
+                  <use href="#mk4" transform="translate(-10.5,-1) scale(0.2)" />
+                  <text x="192" y="150" font-size="106" font-weight="600" fill="currentColor" style="letter-spacing: -0.01em" font-family="ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace">applift</text>
+                </svg>
+              </div>
+            </div>
+          </div>
+          <div class="fav-strip" aria-label="小尺寸可读性验证">
+            <div class="fav-item"><svg width="48" height="48" viewBox="0 0 1024 1024" class="fav-src" role="img" aria-label="favicon 48"><use href="#fav4" /></svg><span>48</span></div>
+            <div class="fav-item"><svg width="32" height="32" viewBox="0 0 1024 1024" role="img" aria-label="favicon 32"><use href="#fav4" /></svg><span>32</span></div>
+            <div class="fav-item"><svg width="16" height="16" viewBox="0 0 1024 1024" role="img" aria-label="favicon 16"><use href="#fav4" /></svg><span>16</span></div>
+            <div class="fav-sep" aria-hidden="true"></div>
+            <div class="fav-item fav-zoom"><svg width="96" height="96" viewBox="0 0 1024 1024" role="img" aria-label="放大检查"><use href="#fav4" /></svg><span>检查放大</span></div>
+          </div>
+          <div class="palette-row">
+            <span class="pch"><span class="sw" style="background: #0d3170"></span>#0D3170</span>
+            <span class="pch"><span class="sw" style="background: #04122b"></span>#04122B</span>
+            <span class="pch"><span class="sw" style="background: #0a84ff"></span>#0A84FF</span>
+            <span class="pch"><span class="sw" style="background: #64d2ff"></span>#64D2FF</span>
+            <button class="zoom-btn" data-zoom>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5 21 21" /></svg>
+              放大查看
+            </button>
+          </div>
+        </article>
+
+        <!-- ══════════ ⑤ 纯字 Wordmark ══════════
+          规格：画布 1024 · 圆角 230；单字 mark = 竖干 52×420 rx26（石墨）+ 上折角 80px（品牌蓝），
+          即「lift 的 l」独立成标；背景 #FFFFFF→#F0F1F4，深色 rim；
+          横版 logo 不另配图形——干预发生在词内：applift 的 l 被替换为 竖干 22px + 蓝色折角 22px，
+          其余字母石墨 / 云白随明暗反转；favicon 反转为深底反白（浏览器标签多为浅色）；
+          概念稿以系统字体 + 手绘字形拼排，正式稿全部描边为路径。 -->
+        <article
+          class="card"
+          data-zoom-target
+          data-num="05"
+          data-name="纯字"
+          data-en="Wordmark"
+          data-idea="最小的品牌干预：lift 的 l 长成一枚上箭头。"
+          data-desc="字体即标识：单词 applift 本身就是 logo，唯一的动作是把 lift 中的 l 换成一枚上箭头——箭头取品牌蓝，其余字母保持石墨色，明暗环境下仅石墨反白、蓝不变。图标版为同一枚「箭头 l」单字 mark，近白底 + 深色描边，是六支中最克制、最 Apple 的一支；favicon 反转为深底反白以保证在浅色标签栏中可见。概念稿以系统字体拼排，正式稿将全部字形描边为矢量路径。"
+          data-spec="画布 1024 · 圆角 230 | 图标 mark：竖干 52×420 rx26 石墨 · 折角 80px 品牌蓝 | 背景 #FFFFFF→#F0F1F4 · 深色 rim | 横版：l → 竖干 22px + 折角 22px（蓝），其余 -apple-system 700 | favicon：深底反白（#1D1D1F 底） | 正式稿：全部字形描边为路径"
+          data-palette="#1D1D1F 石墨,#F5F5F7 云白,#0A84FF 品牌蓝"
+        >
+          <div class="card-head">
+            <span class="cnum">05</span>
+            <div>
+              <h2>纯字<span class="en">Wordmark</span></h2>
+              <p class="idea">最小的品牌干预：lift 的 l 长成一枚上箭头。</p>
+            </div>
+          </div>
+          <div class="icon-row">
+            <svg class="appicon src-icon" viewBox="0 0 1024 1024" role="img" aria-label="方向五：纯字 应用图标">
+              <g clip-path="url(#sq)">
+                <rect width="1024" height="1024" fill="url(#d5bg)" />
+                <use href="#mk5" />
+                <rect width="1024" height="1024" fill="url(#sheen)" opacity=".3" />
+              </g>
+              <rect x="2" y="2" width="1020" height="1020" rx="228" fill="none" stroke="url(#rimD)" stroke-width="4" />
+            </svg>
+            <div class="logos">
+              <div class="slot light">
+                <span class="slot-tag">浅色</span>
+                <!-- 竖干/折角为手绘字形，与系统字体字重对齐（概念稿拼排） -->
+                <svg class="src-logo-l" viewBox="0 0 470 208" role="img" aria-label="纯字 横版 logo · 浅色">
+                  <text x="24" y="152" font-size="126" font-weight="700" fill="currentColor" style="letter-spacing: -0.018em" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', 'PingFang SC', sans-serif">app</text>
+                  <rect x="244" y="66" width="22" height="86" rx="11" fill="var(--mk5-s,#1d1d1f)" />
+                  <path d="M207 94 L255 48 L303 94" fill="none" stroke="var(--mk5-a,#0a84ff)" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" />
+                  <text x="282" y="152" font-size="126" font-weight="700" fill="currentColor" style="letter-spacing: -0.018em" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', 'PingFang SC', sans-serif">ift</text>
+                </svg>
+              </div>
+              <div class="slot dark">
+                <span class="slot-tag">深色</span>
+                <svg class="src-logo-d" viewBox="0 0 470 208" role="img" aria-label="纯字 横版 logo · 深色">
+                  <text x="24" y="152" font-size="126" font-weight="700" fill="currentColor" style="letter-spacing: -0.018em" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', 'PingFang SC', sans-serif">app</text>
+                  <rect x="244" y="66" width="22" height="86" rx="11" fill="var(--mk5-s,#1d1d1f)" />
+                  <path d="M207 94 L255 48 L303 94" fill="none" stroke="var(--mk5-a,#0a84ff)" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" />
+                  <text x="282" y="152" font-size="126" font-weight="700" fill="currentColor" style="letter-spacing: -0.018em" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', 'PingFang SC', sans-serif">ift</text>
+                </svg>
+              </div>
+            </div>
+          </div>
+          <div class="fav-strip" aria-label="小尺寸可读性验证">
+            <div class="fav-item"><svg width="48" height="48" viewBox="0 0 1024 1024" class="fav-src" role="img" aria-label="favicon 48"><use href="#fav5" /></svg><span>48</span></div>
+            <div class="fav-item"><svg width="32" height="32" viewBox="0 0 1024 1024" role="img" aria-label="favicon 32"><use href="#fav5" /></svg><span>32</span></div>
+            <div class="fav-item"><svg width="16" height="16" viewBox="0 0 1024 1024" role="img" aria-label="favicon 16"><use href="#fav5" /></svg><span>16</span></div>
+            <div class="fav-sep" aria-hidden="true"></div>
+            <div class="fav-item fav-zoom"><svg width="96" height="96" viewBox="0 0 1024 1024" role="img" aria-label="放大检查"><use href="#fav5" /></svg><span>检查放大</span></div>
+          </div>
+          <div class="palette-row">
+            <span class="pch"><span class="sw" style="background: #1d1d1f"></span>#1D1D1F</span>
+            <span class="pch"><span class="sw" style="background: #f5f5f7"></span>#F5F5F7</span>
+            <span class="pch"><span class="sw" style="background: #0a84ff"></span>#0A84FF</span>
+            <button class="zoom-btn" data-zoom>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5 21 21" /></svg>
+              放大查看
+            </button>
+          </div>
+        </article>
+
+        <!-- ══════════ ⑥ 分发 Relay ══════════
+          规格：画布 1024 · 圆角 230；产物方块 232×232 rx56，三条弧线 46px 圆头（Q 贝塞尔），
+          渠道节点 Ø88×2 + 中点 Ø96（冰蓝点亮）；背景横向渐变 #0450C2→#14A0FF（自深而亮，仓库→货架）；
+          「三为多」：以三点示意十渠道，避免噪杂；
+          favicon：弧线 66px、节点 Ø112–120，省略冰蓝中点强调；
+          wordmark：-apple-system 700；mark 缩放 0.205。 -->
+        <article
+          class="card"
+          data-zoom-target
+          data-num="06"
+          data-name="分发"
+          data-en="Relay"
+          data-idea="一次抬升，十店抵达：一枚产物散射为满天渠道。"
+          data-desc="直指产品的差异化——多渠道：底部一枚产物（圆角方块），三条弧线向上散射至三颗渠道节点（以三示意多，十点则噪杂），中点以冰蓝点亮，表示「此刻正在分发」。背景取横向渐变，自深而亮，如从私仓走向公开货架。与④的单线管线互为表里：④讲全流程，⑥讲多通道，可视为同一系统的两种叙事。"
+          data-spec="画布 1024 · 圆角 230 | 图形：产物 232×232 rx56 · 弧线 46px（Q 贝塞尔）· 节点 Ø88 / 中点 Ø96 冰蓝 | 背景：#0450C2→#14A0FF 横向渐变 | favicon：弧线 66px · 节点 Ø112–120 · 省略冰蓝强调 | wordmark：-apple-system 700 · mark 缩放 0.205"
+          data-palette="#0450C2 深航蓝,#14A0FF 亮播蓝,#FFFFFF 云白,#A5E3FF 冰晶蓝"
+        >
+          <div class="card-head">
+            <span class="cnum">06</span>
+            <div>
+              <h2>分发<span class="en">Relay</span></h2>
+              <p class="idea">一次抬升，十店抵达：一枚产物散射为满天渠道。</p>
+            </div>
+          </div>
+          <div class="icon-row">
+            <svg class="appicon src-icon" viewBox="0 0 1024 1024" role="img" aria-label="方向六：分发 应用图标" style="--mk6-c: #ffffff; --mk6-a: #a5e3ff">
+              <g clip-path="url(#sq)">
+                <rect width="1024" height="1024" fill="url(#d6bg)" />
+                <rect width="1024" height="1024" fill="url(#glowT)" />
+                <use href="#mk6" />
+                <rect width="1024" height="1024" fill="url(#sheen)" opacity=".5" />
+              </g>
+              <rect x="2" y="2" width="1020" height="1020" rx="228" fill="none" stroke="url(#rimL)" stroke-width="4" />
+            </svg>
+            <div class="logos">
+              <div class="slot light">
+                <span class="slot-tag">浅色</span>
+                <svg class="src-logo-l" viewBox="0 0 720 208" role="img" aria-label="分发 横版 logo · 浅色">
+                  <use href="#mk6" transform="translate(-9,-3.2) scale(0.205)" />
+                  <text x="192" y="152" font-size="124" font-weight="700" fill="currentColor" style="letter-spacing: -0.018em" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', 'PingFang SC', sans-serif">applift</text>
+                </svg>
+              </div>
+              <div class="slot dark">
+                <span class="slot-tag">深色</span>
+                <svg class="src-logo-d" viewBox="0 0 720 208" role="img" aria-label="分发 横版 logo · 深色">
+                  <use href="#mk6" transform="translate(-9,-3.2) scale(0.205)" />
+                  <text x="192" y="152" font-size="124" font-weight="700" fill="currentColor" style="letter-spacing: -0.018em" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', 'PingFang SC', sans-serif">applift</text>
+                </svg>
+              </div>
+            </div>
+          </div>
+          <div class="fav-strip" aria-label="小尺寸可读性验证">
+            <div class="fav-item"><svg width="48" height="48" viewBox="0 0 1024 1024" class="fav-src" role="img" aria-label="favicon 48"><use href="#fav6" /></svg><span>48</span></div>
+            <div class="fav-item"><svg width="32" height="32" viewBox="0 0 1024 1024" role="img" aria-label="favicon 32"><use href="#fav6" /></svg><span>32</span></div>
+            <div class="fav-item"><svg width="16" height="16" viewBox="0 0 1024 1024" role="img" aria-label="favicon 16"><use href="#fav6" /></svg><span>16</span></div>
+            <div class="fav-sep" aria-hidden="true"></div>
+            <div class="fav-item fav-zoom"><svg width="96" height="96" viewBox="0 0 1024 1024" role="img" aria-label="放大检查"><use href="#fav6" /></svg><span>检查放大</span></div>
+          </div>
+          <div class="palette-row">
+            <span class="pch"><span class="sw" style="background: #0450c2"></span>#0450C2</span>
+            <span class="pch"><span class="sw" style="background: #14a0ff"></span>#14A0FF</span>
+            <span class="pch"><span class="sw" style="background: #ffffff"></span>#FFFFFF</span>
+            <span class="pch"><span class="sw" style="background: #a5e3ff"></span>#A5E3FF</span>
+            <button class="zoom-btn" data-zoom>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5 21 21" /></svg>
+              放大查看
+            </button>
+          </div>
+        </article>
+      </main>
+
+      <!-- ══════════ 放大查看 ══════════ -->
+      <dialog id="viewer" aria-labelledby="vTitle">
+        <div class="v-inner">
+          <div class="v-head">
+            <div>
+              <h3 id="vTitle"><span id="vNum"></span><span id="vName"></span><span class="en" id="vEn"></span></h3>
+            </div>
+            <button class="v-close" id="vClose" title="关闭" aria-label="关闭">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19" /></svg>
+            </button>
+          </div>
+          <p class="v-idea" id="vIdea"></p>
+          <div class="v-grid">
+            <figure class="v-fig">
+              <figcaption>应用图标 · 1024 网格</figcaption>
+              <div id="vIcon"></div>
+            </figure>
+            <figure class="v-fig">
+              <figcaption>横版 logo · 明 / 暗</figcaption>
+              <div class="slot light" id="vLogoL"></div>
+              <div class="slot dark" id="vLogoD"></div>
+            </figure>
+          </div>
+          <figure class="v-fig" style="margin-top: 16px">
+            <figcaption>favicon · 16 / 32 / 48 实际尺寸 + 128 检查放大</figcaption>
+            <div class="v-fav-row" id="vFav"></div>
+          </figure>
+          <p class="v-desc" id="vDesc"></p>
+          <ul class="v-spec" id="vSpec"></ul>
+          <div class="v-palette" id="vPalette"></div>
+        </div>
+      </dialog>
+
+      <footer>
+        <h4>选定后的正式产出（对应产品触点）</h4>
+        <table class="matrix">
+          <thead>
+            <tr><th scope="col">触点</th><th scope="col">资产</th><th scope="col">说明</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>webui 头部 / favicon</td><td>横版 logo 明暗两态 + favicon 套件</td><td>SVG 组件内嵌；favicon 16 / 32 / 48 PNG</td></tr>
+            <tr><td>Tauri 应用图标</td><td>1024px 主图标 → icns / ico</td><td>dmg 背景另出；托盘用单色模板版（自主图标减法派生，替换现有临时上箭头位图）</td></tr>
+            <tr><td>README 徽标</td><td>横版 logo SVG + PNG @2x</td><td>可另派生 shields.io 风格静态徽标</td></tr>
+            <tr><td>使用规范</td><td>最小尺寸 / 留白 / 禁用示例</td><td>随正式源文件一并交付</td></tr>
+          </tbody>
+        </table>
+        <p class="colophon">applift brand concepts v0.1 · 2026-11-15 · 全部图形为内联 SVG，无外部资源 · 概念稿仅供评选，非最终交付物</p>
+      </footer>
+    </div>
+
+    <script>
+      (function () {
+        var root = document.documentElement;
+        var KEY = 'applift-brand-theme';
+        var saved = null;
+        try { saved = localStorage.getItem(KEY); } catch (e) {}
+        if (saved === 'light' || saved === 'dark') {
+          root.dataset.theme = saved;
+        } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+          root.dataset.theme = 'dark';
+        }
+        document.getElementById('themeBtn').addEventListener('click', function () {
+          var next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+          root.dataset.theme = next;
+          try { localStorage.setItem(KEY, next); } catch (e) {}
+        });
+
+        var viewer = document.getElementById('viewer');
+        var favSizes = [16, 32, 48, 128];
+
+        function fillSlot(slotEl, svg) {
+          slotEl.innerHTML = '';
+          if (svg) { slotEl.appendChild(svg); }
+        }
+
+        document.querySelectorAll('[data-zoom]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            var card = btn.closest('[data-zoom-target]');
+            if (!card) return;
+            document.getElementById('vNum').textContent = card.dataset.num + ' · ';
+            document.getElementById('vName').textContent = card.dataset.name;
+            document.getElementById('vEn').textContent = card.dataset.en;
+            document.getElementById('vIdea').textContent = card.dataset.idea;
+            document.getElementById('vDesc').textContent = card.dataset.desc;
+
+            /* 注意：克隆需保留 style 上的 --mkN-* 图形配色变量 */
+            var icon = card.querySelector('.src-icon');
+            var iconBox = document.getElementById('vIcon');
+            iconBox.innerHTML = '';
+            if (icon) {
+              iconBox.appendChild(icon.cloneNode(true));
+            }
+
+            fillSlot(document.getElementById('vLogoL'), card.querySelector('.src-logo-l'));
+            document.getElementById('vLogoL').insertAdjacentHTML('beforeend', '<span class="slot-tag">浅色</span>');
+            fillSlot(document.getElementById('vLogoD'), card.querySelector('.src-logo-d'));
+            document.getElementById('vLogoD').insertAdjacentHTML('beforeend', '<span class="slot-tag">深色</span>');
+
+            var favBox = document.getElementById('vFav');
+            favBox.innerHTML = '';
+            var favSrc = card.querySelector('.fav-src');
+            var favHref = favSrc ? favSrc.querySelector('use').getAttribute('href') : '';
+            favSizes.forEach(function (s) {
+              var wrap = document.createElement('div');
+              wrap.className = 'fav-item';
+              var sv = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+              sv.setAttribute('width', s);
+              sv.setAttribute('height', s);
+              sv.setAttribute('viewBox', '0 0 1024 1024');
+              sv.setAttribute('role', 'img');
+              var use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+              use.setAttribute('href', favHref);
+              sv.appendChild(use);
+              var label = document.createElement('span');
+              label.textContent = s === 128 ? '128 检查' : String(s);
+              wrap.appendChild(sv);
+              wrap.appendChild(label);
+              favBox.appendChild(wrap);
+            });
+
+            var specUl = document.getElementById('vSpec');
+            specUl.innerHTML = '';
+            (card.dataset.spec || '').split('|').forEach(function (line) {
+              if (!line.trim()) return;
+              var li = document.createElement('li');
+              li.textContent = line.trim();
+              specUl.appendChild(li);
+            });
+
+            var palBox = document.getElementById('vPalette');
+            palBox.innerHTML = '';
+            (card.dataset.palette || '').split(',').forEach(function (pair) {
+              var bits = pair.trim().split(' ');
+              var hex = bits[0];
+              var name = bits.slice(1).join(' ') || '';
+              if (!/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(hex)) return;
+              var chip = document.createElement('span');
+              chip.className = 'pch';
+              chip.innerHTML = '<span class="sw" style="background:' + hex + '"></span>' + hex.toUpperCase() + (name ? ' · ' + name : '');
+              palBox.appendChild(chip);
+            });
+
+            viewer.showModal();
+          });
+        });
+
+        document.getElementById('vClose').addEventListener('click', function () { viewer.close(); });
+        viewer.addEventListener('click', function (e) { if (e.target === viewer) viewer.close(); });
+      })();
+    </script>
+  </body>
+</html>

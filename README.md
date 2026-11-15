@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/brand/assets/logo-mark.svg" width="128" alt="applift logo" /></p>
+
 # applift
 
 > 框架无关的多端 App 发版 CLI——React Native / Flutter / 原生（Android/iOS/鸿蒙）/ Electron / Tauri × 10 发布渠道，一套凭据、一套命令。
