@@ -28,6 +28,7 @@ import {
 } from "./runner.js";
 import { detectGlobalPackageManager, installCommand } from "./pm.js";
 import type { ValidateReport } from "./routes.js";
+import { createProjectHistoryRoutes } from "./history-routes.js";
 import { WsChannel } from "./ws.js";
 
 export { startUiServer } from "./http.js";
@@ -94,6 +95,8 @@ export interface CreateServerOptions {
   settingsPath?: string;
   /** 添加项目校验注入（e2e）；缺省 validateProject */
   validate?: (path: string) => Promise<ValidateReport>;
+  /** 发版历史文件路径；缺省全局 ~/.applift/history.jsonl。测试必须注入临时路径 */
+  historyPath?: string;
   /** npm 命令形态（e2e 桩注入；默认 PATH 上的 npm——安装任务与 npm view 共用） */
   npmBin?: string | string[];
 }
@@ -188,6 +191,8 @@ export async function createServer(opts: CreateServerOptions = {}): Promise<Comp
     extraApiHandlers: [
       // GET /api/fs/roots + /api/fs/list：服务端目录浏览器（webui 添加项目点选路径）
       createFsRoutes(),
+      // GET /api/projects/:id/history：项目发版历史（全局 history.jsonl 过滤 cwd，ts 倒序）
+      createProjectHistoryRoutes({ registry, historyPath: opts.historyPath }),
       createSettingsRoutes({
         setIntervals: (fg, bg) => aggregator.setIntervals(fg, bg),
         settingsPath,

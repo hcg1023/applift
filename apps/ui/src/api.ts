@@ -41,6 +41,17 @@ export interface ProjectEntry {
   addedAt: number;
 }
 
+/** 发版历史条目（GET /api/projects/:id/history） */
+export interface HistoryEntry {
+  ts: number;
+  channel: string;
+  action: "stage" | "submit";
+  ok: boolean;
+  artifactVersion: string | null;
+  phase: "beta" | "release" | null;
+  platform: string | null;
+}
+
 export type TaskEvent = { type?: string } & Record<string, unknown>;
 
 export interface ArchivedTask {
@@ -563,6 +574,14 @@ export class UiClient {
   async availability(path?: string): Promise<Availability> {
     const q = path === undefined || path === "" ? "" : `?path=${encodeURIComponent(path)}`;
     return this.json<Availability>(`/api/applift/availability${q}`);
+  }
+
+  /** 项目发版历史（ts 倒序；beta/release 区分） */
+  async projectHistory(projectId: string): Promise<HistoryEntry[]> {
+    const body = await this.json<{ entries: HistoryEntry[] }>(
+      `/api/projects/${encodeURIComponent(projectId)}/history`,
+    );
+    return body.entries ?? [];
   }
 
   /** 引导安装 / 更新全局（POST /api/applift/install | update-global）：返回 install: 前缀 taskId，

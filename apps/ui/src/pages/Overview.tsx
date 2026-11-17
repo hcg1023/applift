@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import AddProjectDialog from "../AddProjectDialog.js";
-import { classify } from "../api.js";
+import { classify, type HistoryEntry } from "../api.js";
 import { freshness, iconStyle, relTime, toast } from "../util.js";
 import { usePageCtx, useUiTick } from "../state.js";
 
@@ -112,6 +112,23 @@ export default function OverviewPage() {
       /* 存储拒绝：无信号语义 */
     }
   }, []);
+
+  /** 项目发版历史（总览卡「内测/正式」计数与最近发版行）：懒拉一次，N 个项目并行 */
+  const [histories, setHistories] = useState<Map<string, HistoryEntry[]>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all(
+      client.state.projects.map(async (p) => [p.id, await client.projectHistory(p.id)] as const),
+    )
+      .then((pairs) => {
+        if (cancelled) return;
+        setHistories(new Map(pairs));
+      })
+      .catch(() => {}); // 历史拉取失败：计数行不渲染（详情页有完整降级文案）
+    return () => {
+      cancelled = true;
+    };
+  }, [client, client.state.projects.length]);
 
   const projects = client.state.projects;
   const hasSnapshot =
@@ -281,6 +298,27 @@ export default function OverviewPage() {
                   <b className="c-err">{c.err}</b>被拒
                 </span>
               </div>
+              {(() => {
+                const h = histories.get(p.id);
+                if (h === undefined || h.length === 0) return null;
+                const betaN = h.filter((e) => e.phase === "beta").length;
+                const relN = h.filter((e) => e.phase === "release").length;
+                const last = h[0]!;
+                const ph =
+                  last.phase === "beta" ? "内测" : last.phase === "release" ? "正式" : "发版";
+                return (
+                  <div className="ov-hist">
+                    <span className="oh-count">
+                      <b className="c-blue">{betaN}</b>内测 · <b className="c-green">{relN}</b>正式
+                    </span>
+                    <span className="oh-last">
+                      最近发版 {ph}
+                      {last.artifactVersion !== null ? ` ${last.artifactVersion}` : ""} ·{" "}
+                      {relTime(last.ts)}
+                    </span>
+                  </div>
+                );
+              })()}
               <div className={`ov-fresh${fresh.warn ? " fresh-warn" : ""}`}>{fresh.text}</div>
               <div className="ov-latest">
                 <svg

@@ -232,6 +232,9 @@ importers:
 
   apps/ui-server:
     dependencies:
+      '@applift/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       package-manager-detector:
         specifier: ^1.9.0
         version: 1.9.0

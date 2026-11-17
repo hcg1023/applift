@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { classify, type ChannelSnapshot } from "../api.js";
+import { useEffect, useState } from "react";
+import { classify, type ChannelSnapshot, type HistoryEntry } from "../api.js";
 import { freshness, relTime, toast } from "../util.js";
 import { usePageCtx, useUiTick } from "../state.js";
 
@@ -39,6 +39,15 @@ export default function ProjectPage({ id }: { id: string }) {
   useUiTick();
   const [filter, setFilter] = useState("all");
   const [expandedKey, setExpandedKey] = useState<string | undefined>(undefined);
+  const [history, setHistory] = useState<HistoryEntry[] | null>(null);
+
+  useEffect(() => {
+    setHistory(null);
+    void client
+      .projectHistory(id)
+      .then(setHistory)
+      .catch(() => setHistory([])); // 拉取失败按空历史展示（不打断详情页）
+  }, [client, id]);
 
   const proj = client.state.projects.find((p) => p.id === id);
   const snap = client.state.snapshot(id);
@@ -194,7 +203,45 @@ export default function ProjectPage({ id }: { id: string }) {
         ))}
       </div>
       {list}
-      <p className="note">行内展开可看被拒原因。</p>
+      <div className="hist-head">
+        <h2>发版历史</h2>
+        {history !== null ? (
+          <span className="hist-counts">
+            <span className="hc">
+              <b className="c-blue">{history.filter((e) => e.phase === "beta").length}</b>内测
+            </span>
+            <span className="hc">
+              <b className="c-green">{history.filter((e) => e.phase === "release").length}</b>正式
+            </span>
+          </span>
+        ) : null}
+      </div>
+      {history === null ? (
+        <div className="hist-empty">加载中…</div>
+      ) : history.length === 0 ? (
+        <div className="hist-empty">
+          本项目还没有 applift 发版记录（用 applift 发的版才进历史；商店后台手动发的版看上方渠道状态）。
+        </div>
+      ) : (
+        <div className="hist-list" id="historyList">
+          {history.slice(0, 50).map((e, i) => (
+            <div key={`${e.ts}-${i}`} className="hist-row">
+              <span className={`hist-phase${e.phase === null ? " unknown" : ` ${e.phase}`}`}>
+                {e.phase === "beta" ? "内测" : e.phase === "release" ? "正式" : "发版"}
+              </span>
+              <span className="hist-channel mono">{e.channel}</span>
+              <span className="hist-version mono">{e.artifactVersion ?? "—"}</span>
+              <span className="hist-action">
+                {e.action === "stage" ? "上传" : "提审"}
+                {e.platform !== null ? ` · ${e.platform}` : ""}
+              </span>
+              <span className={`hist-ok${e.ok ? "" : " err"}`}>{e.ok ? "成功" : "失败"}</span>
+              <span className="hist-time">{relTime(e.ts)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="note">历史只记 applift 发起的发版；渠道状态是远端实时查询，二者互补。</p>
     </section>
   );
 }

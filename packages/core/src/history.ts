@@ -18,6 +18,10 @@ export interface HistoryEntry {
   /** 渠道返回的草稿/任务引用（如华为 releaseId） */
   ref?: string;
   cwd: string;
+  /** 发版阶段（beta 内测 / release 正式）；0.14 起记录，存量条目缺省由消费方按启发式推导 */
+  phase?: "beta" | "release";
+  /** 平台（android/harmony/ios）；provider 维度（rn-update）记录当时的平台 */
+  platform?: string;
 }
 
 /** pipeline → sink 的事件载荷（CLI 补 ts/cwd/artifactSha256 后 appendEntry） */

@@ -842,6 +842,8 @@ async function runBeta(platform: string | undefined, cmdOpts: BetaCmdOpts, event
         ok: true,
         ref: String(r.versionId),
         artifactVersion: r.versionName,
+        phase: "beta",
+        platform: platform,
       });
       await host?.broadcast(
         "notify",
@@ -1036,6 +1038,8 @@ async function runBeta(platform: string | undefined, cmdOpts: BetaCmdOpts, event
               ok: true,
               ref: r.ref,
               artifactVersion: readArtifactVersion(artifactPath)?.versionName,
+              phase: "beta",
+              platform: plat,
             });
             return `蒲公英 ${path.basename(artifactPath)} 发布成功，扫码即装`;
           },
@@ -1085,6 +1089,8 @@ async function runBeta(platform: string | undefined, cmdOpts: BetaCmdOpts, event
             ok: true,
             ref: r.ref,
             artifactVersion: readArtifactVersion(artifactPath)?.versionName,
+            phase: "beta",
+            platform: "harmony",
           });
           return agcCfg.submit
             ? `AGC 测试版本已提交审核（versionId: ${r.ref ?? "?"}）`
@@ -1122,6 +1128,8 @@ async function runBeta(platform: string | undefined, cmdOpts: BetaCmdOpts, event
             ok: true,
             ref: r.ref,
             artifactVersion: readArtifactVersion(artifactPath)?.versionName,
+            phase: "beta",
+            platform: "ios",
           });
           return `TestFlight 上传成功 ${path.basename(artifactPath)}（Apple 处理完成后 TestFlight 可见）`;
         },
@@ -1481,6 +1489,8 @@ program
         ok: true,
         artifactVersion: r.versionName,
         ref: r.rollout !== undefined ? `rollout:${r.rollout}%` : undefined,
+        phase: "release",
+        platform: platform,
       });
       await host?.broadcast(
         "notify",
@@ -1748,6 +1758,8 @@ program
         cwd: path.resolve(opts.cwd),
         artifactSha256: artifactSha256(),
         artifactVersion: e.artifactVersion ?? artifactVersionOf(),
+        phase: "release",
+        platform,
         ...ev,
       });
     };

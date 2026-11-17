@@ -1574,3 +1574,121 @@ kbd {
 .pp-act:hover {
   background: var(--fill-2);
 }
+
+/* 发版历史（详情页时间线 + 总览卡摘要行） */
+.ov-hist {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 11.5px;
+  margin: 4px 0 2px;
+}
+.oh-count {
+  color: var(--label-2);
+  white-space: nowrap;
+}
+.oh-count b {
+  font-size: 12.5px;
+}
+.oh-last {
+  color: var(--label-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hist-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 26px 0 10px;
+}
+.hist-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.hist-counts {
+  font-size: 12px;
+  color: var(--label-2);
+}
+.hist-counts .hc {
+  margin-right: 10px;
+}
+.hist-counts b {
+  font-size: 13px;
+  margin-right: 2px;
+}
+.c-blue {
+  color: var(--blue-sys);
+}
+.c-green {
+  color: var(--green);
+}
+.hist-list {
+  border: 1px solid var(--separator);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.hist-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--separator);
+}
+.hist-row:last-child {
+  border-bottom: none;
+}
+.hist-phase {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+.hist-phase.beta {
+  background: rgba(0, 122, 255, 0.12);
+  color: var(--blue-sys);
+}
+.hist-phase.release {
+  background: rgba(52, 199, 89, 0.12);
+  color: var(--green);
+}
+.hist-phase.unknown {
+  background: var(--fill);
+  color: var(--label-3);
+}
+.hist-channel,
+.hist-version {
+  color: var(--label-2);
+  min-width: 70px;
+}
+.hist-version {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hist-action {
+  color: var(--label-3);
+  white-space: nowrap;
+}
+.hist-ok {
+  color: var(--green);
+  flex-shrink: 0;
+}
+.hist-ok.err {
+  color: var(--red);
+}
+.hist-time {
+  color: var(--label-3);
+  font-size: 11.5px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.hist-empty,
+.hist-loading {
+  font-size: 12.5px;
+  color: var(--label-3);
+  padding: 14px 2px;
+}
