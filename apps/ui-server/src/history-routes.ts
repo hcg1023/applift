@@ -1,8 +1,8 @@
 /**
  * 项目发版历史 API：GET /api/projects/:id/history——读全局 ~/.applift/history.jsonl，
  * 过滤 cwd = 项目路径，按 ts 倒序返回（前端时间线消费）。
- * 存量条目无 phase（0.14 前记录）：按启发式推导——rn-update（热更 provider）+ artifactVersion
- * 含测试孪生基线（如 4.0.1000-patch.N）→ beta 热更；asc 提交 → release；推导不出 → undefined（前端按「发版」展示）。
+ * 存量条目无 phase（0.14 前记录）：按 action 推导（rn-update stage=内测热更/submit=正式热更；
+ * asc submit=正式提审）——见 derivePhase。
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { HistoryEntry } from "@applift/core";
@@ -20,17 +20,16 @@ export interface HistoryRow {
   platform: string | null;
 }
 
-/** 存量 phase 启发式：0.14 前的条目无 phase 字段——热更 provider 按版本名基线分（测试孪生=beta），asc 提交=release */
+/** 存量 phase 推导（0.14 前条目无 phase 字段）——按 action，可靠信号：
+ * - rn-update（热更 provider）：stage = publishToBeta（内测热更）、submit = promote/publishToProd（正式热更）。
+ *   版本基线只作旁证不作判据：双基线（4.0.1000 测试孪生）落地前的内测热更绑原生基线
+ *   （4.0.0-patch.N），按版本推导会把这批内测误标正式（实测 25 条全错）。
+ * - asc：submit = 提审（正式）；stage = 上传（TestFlight 内测 / 正式 stage 上传二义，不猜 → null）。
+ * - 其余渠道（pgyer/agc 上传）无确证 → null（前端按「发版」展示）。 */
 export function derivePhase(e: HistoryEntry): "beta" | "release" | null {
   if (e.phase === "beta" || e.phase === "release") return e.phase;
-  if (e.channel === "rn-update") {
-    // 测试孪生基线（patch+1000 形态，如 4.0.1000-patch.1）= beta 热更；正式线（4.0.0-patch.N）= release 热更
-    const m = /^(\d+)\.(\d+)\.(\d+)-patch\./.exec(e.artifactVersion ?? "");
-    if (m !== null) return Number(m[3]) >= 1000 ? "beta" : "release";
-    return null;
-  }
-  if (e.channel === "asc") return "release";
-  // pgyer/agc beta 段渠道（旧记录多为内测上传）；无法确证 → null
+  if (e.channel === "rn-update") return e.action === "stage" ? "beta" : "release";
+  if (e.channel === "asc") return e.action === "submit" ? "release" : null;
   return null;
 }
 

@@ -21,18 +21,24 @@ describe("derivePhase（存量条目启发式）", () => {
     expect(derivePhase(e({ phase: "beta" }))).toBe("beta");
     expect(derivePhase(e({ phase: "release" }))).toBe("release");
   });
-  it("存量热更：测试孪生基线（patch≥1000）→ beta；正式线 → release", () => {
-    expect(derivePhase(e({ channel: "rn-update", artifactVersion: "4.0.1000-patch.1" }))).toBe(
-      "beta",
-    );
-    expect(derivePhase(e({ channel: "rn-update", artifactVersion: "4.0.0-patch.22" }))).toBe(
-      "release",
-    );
-    expect(derivePhase(e({ channel: "rn-update" }))).toBeNull();
+  it("存量热更按 action：stage=publishToBeta=内测（含双基线落地前绑原生基线的），submit=正式", () => {
+    // 双基线（4.0.1000 测试孪生）落地前的内测热更绑原生基线 4.0.0-patch.N——按版本推导会误标正式（实测 25 条全错）
+    expect(
+      derivePhase(e({ channel: "rn-update", action: "stage", artifactVersion: "4.0.0-patch.31" })),
+    ).toBe("beta");
+    expect(
+      derivePhase(
+        e({ channel: "rn-update", action: "stage", artifactVersion: "4.0.1000-patch.1" }),
+      ),
+    ).toBe("beta");
+    expect(
+      derivePhase(e({ channel: "rn-update", action: "submit", artifactVersion: "4.0.0-patch.5" })),
+    ).toBe("release");
   });
-  it("存量 asc 提交 → release；其余推导不出 → null", () => {
-    expect(derivePhase(e({ channel: "asc" }))).toBe("release");
-    expect(derivePhase(e({ channel: "pgyer" }))).toBeNull();
+  it("存量 asc：submit=正式提审；stage 上传二义（TestFlight/正式 stage）不猜 → null；其余渠道 → null", () => {
+    expect(derivePhase(e({ channel: "asc", action: "submit" }))).toBe("release");
+    expect(derivePhase(e({ channel: "asc", action: "stage" }))).toBeNull();
+    expect(derivePhase(e({ channel: "pgyer", action: "stage" }))).toBeNull();
   });
 });
 
