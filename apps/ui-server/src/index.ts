@@ -19,7 +19,13 @@ import {
   sendJson,
 } from "./routes.js";
 import { createAvailabilityProber } from "./applift-install.js";
-import { AppliftRunner, findGlobalApplift, resolveAppliftBin } from "./runner.js";
+import {
+  AppliftRunner,
+  findGlobalApplift,
+  resolveAppliftBin,
+  resolveCapableBin,
+  type CapableBin,
+} from "./runner.js";
 import { detectGlobalPackageManager, installCommand } from "./pm.js";
 import type { ValidateReport } from "./routes.js";
 import { WsChannel } from "./ws.js";
@@ -97,8 +103,24 @@ export function defaultStaticDir(): string {
   return fileURLToPath(new URL("./public", import.meta.url));
 }
 
+/** 能力门禁缓存（cwd → 解析结果；resolveCapableBin 60s TTL 之外的进程级渐进层）：
+ *  miss 即触发后台解析并退回同步检索链（下一轮轮询起生效）——工厂同步签名不变 */
+const capableByCwd = new Map<string, CapableBin>();
+
+function trackCapability(cwd: string): void {
+  void resolveCapableBin(cwd)
+    .then((res) => capableByCwd.set(cwd, res))
+    .catch(() => {});
+}
+
 export function defaultRunnerFactory(cwd: string): AppliftRunner {
-  // 调用点收敛到检索链：env > 工程 node_modules/.bin > PATH；全缺（开发直跑且未装）回落仓库 dist
+  // 能力门禁：命中缓存的 capable bin 直接用（工程内旧版 0.12/0.13 自动降级全局）；
+  // 未命中/不足退回同步检索链 + 触发后台解析（下轮生效）
+  const cached = capableByCwd.get(cwd);
+  if (cached !== undefined && cached.capable) {
+    return new AppliftRunner({ cwd, bin: cached.bin });
+  }
+  trackCapability(cwd);
   const resolved = resolveAppliftBin(cwd);
   const bin = resolved.bin ?? [process.execPath, cliBinPath()];
   return new AppliftRunner({ cwd, bin });

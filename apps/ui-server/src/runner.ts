@@ -77,6 +77,90 @@ export interface RunResult {
   stderr: string;
 }
 
+// -- 能力门禁（工程内旧版 CLI 自动降级全局）---------------------------------
+
+/** UI 机读面最低版本：doctor --json / status --json wrapped / beta --dry-run --json 全集 */
+export const MIN_CAPABLE_VERSION = "0.14.0";
+
+/** 三段语义版本比较：a<b 负 / 相等 0 / a>b 正（版本格式受控，无 prerelease 场景；非版本串按最小处理） */
+export function compareSemver(a: string, b: string): number {
+  const pa = /^(\d+)\.(\d+)\.(\d+)/.exec(a.trim())?.slice(1).map(Number) ?? [0, 0, 0];
+  const pb = /^(\d+)\.(\d+)\.(\d+)/.exec(b.trim())?.slice(1).map(Number) ?? [0, 0, 0];
+  for (let i = 0; i < 3; i++) {
+    if (pa[i]! !== pb[i]!) return (pa[i] ?? 0) < (pb[i] ?? 0) ? -1 : 1;
+  }
+  return 0;
+}
+
+export interface CapableBin {
+  bin: string[];
+  source: "env" | "project" | "global" | "fallback";
+  version: string | null;
+  capable: boolean;
+  /** 候选中因能力不足被跳过的（诊断/引导文案用） */
+  skipped: Array<{ source: "env" | "project" | "global"; version: string | null }>;
+}
+
+/** 检索链全部候选（存在性）：env > project > global（与 resolveAppliftBin 同序） */
+export function binCandidates(
+  cwd?: string,
+  env: ResolveEnv = {},
+): Array<{ bin: string[]; source: "env" | "project" | "global" }> {
+  const out: Array<{ bin: string[]; source: "env" | "project" | "global" }> = [];
+  const fromEnv = env.cliBinEnv ?? process.env.APPLIFT_CLI_BIN;
+  if (fromEnv !== undefined && fromEnv.trim() !== "")
+    out.push({ bin: [process.execPath, fromEnv.trim()], source: "env" });
+  if (cwd !== undefined) {
+    const project = findProjectApplift(cwd);
+    if (project !== null) out.push({ bin: [project], source: "project" });
+  }
+  const global = findGlobalApplift(env.pathEnv);
+  if (global !== null) out.push({ bin: [global], source: "global" });
+  return out;
+}
+
+/** 能力解析缓存：候选集为键（bin 路径变 = 失效），TTL 内复用（轮询每轮免重复 spawn --version） */
+const capableCache = new Map<string, { at: number; res: CapableBin }>();
+const CAPABLE_TTL_MS = 60_000;
+
+/**
+ * 能力门禁检索链：候选逐个 `--version`（3s 超时），首个 ≥ MIN_CAPABLE_VERSION 胜出——
+ * 工程内 0.12/0.13 等无 UI 机读面的旧版不再阻塞状态查询，自动降级 PATH 全局；
+ * 全部不足时返回首个候选（维持现状跑真命令暴露真实错误）+ capable:false + skipped 明细。
+ * env 候选视为显式用户意图，不做版本门禁（注入什么用什么）。
+ */
+export async function resolveCapableBin(cwd?: string, env: ResolveEnv = {}): Promise<CapableBin> {
+  const candidates = binCandidates(cwd, env);
+  const key = JSON.stringify([cwd ?? "", process.execPath, candidates.map((c) => c.bin.join(" "))]);
+  const hit = capableCache.get(key);
+  if (hit !== undefined && Date.now() - hit.at < CAPABLE_TTL_MS) return hit.res;
+  const skipped: CapableBin["skipped"] = [];
+  for (const c of candidates) {
+    const runner = new AppliftRunner({ bin: c.bin });
+    const { stdout } = await runner.run(["--version"], { timeoutMs: 3_000 });
+    const version = /^v?(\d+\.\d+\.\d+.*)$/m.exec(stdout.trim())?.[1] ?? null;
+    if (c.source === "env") {
+      // env = 显式意图：直接采用（版本仅记录）
+      const res: CapableBin = { bin: c.bin, source: "env", version, capable: true, skipped };
+      capableCache.set(key, { at: Date.now(), res });
+      return res;
+    }
+    if (version !== null && compareSemver(version, MIN_CAPABLE_VERSION) >= 0) {
+      const res: CapableBin = { bin: c.bin, source: c.source, version, capable: true, skipped };
+      capableCache.set(key, { at: Date.now(), res });
+      return res;
+    }
+    skipped.push({ source: c.source, version });
+  }
+  // 全候选不足：无候选返回空 bin（调用方自行兜底）；有候选给首个（真命令真错误）
+  const res: CapableBin =
+    candidates.length > 0
+      ? { ...candidates[0]!, version: null, capable: false, skipped: skipped.slice(1) }
+      : { bin: [], source: "fallback", version: null, capable: false, skipped: [] };
+  capableCache.set(key, { at: Date.now(), res });
+  return res;
+}
+
 /** 超时终止的退出码（GNU timeout(1) 惯例） */
 const EXIT_TIMEOUT = 124;
 /** 启动失败的退出码（shell 惯例：command not found） */

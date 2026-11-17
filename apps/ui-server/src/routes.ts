@@ -1,4 +1,9 @@
-import { AppliftRunner, findProjectApplift, resolveAppliftBin } from "./runner.js";
+import {
+  AppliftRunner,
+  findProjectApplift,
+  resolveAppliftBin,
+  resolveCapableBin,
+} from "./runner.js";
 import { fileURLToPath } from "node:url";
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -78,8 +83,10 @@ export async function validateProject(
   path: string,
   opts: { timeoutMs?: number } = {},
 ): Promise<ValidateReport> {
-  // CLI 定位走检索链（工程 > 全局；env 短路）：bin 数组直接执行（不经 npx）——路径含空格不被切分
-  const runner = new AppliftRunner({ bin: validateBin(path) });
+  // 能力门禁：工程内旧版（<0.14 无 validate --json）自动降级全局 capable bin（env 短路语义不变）
+  const capable = await resolveCapableBin(path);
+  const bin = capable.bin.length > 0 ? capable.bin : validateBin(path);
+  const runner = new AppliftRunner({ bin });
   const { code, stdout, stderr } = await runner.run(["validate", path, "--json"], {
     timeoutMs: opts.timeoutMs ?? VALIDATE_TIMEOUT_MS,
   });
