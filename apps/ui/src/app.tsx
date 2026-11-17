@@ -270,16 +270,6 @@ export default function App() {
           </button>
           <div className="sidebar-foot">
             <button
-              className={`icon-btn${route.page === "settings" ? " active" : ""}`}
-              id="settingsBtn"
-              data-nav="settings"
-              title="通用设置"
-              aria-label="通用设置"
-              onClick={() => navigate("#/settings")}
-            >
-              {NAV_ICONS.settings}
-            </button>
-            <button
               className="icon-btn"
               id="themeBtn"
               title="切换外观"
@@ -289,6 +279,16 @@ export default function App() {
               }
             >
               <SunIcon />
+            </button>
+            <button
+              className={`icon-btn${route.page === "settings" ? " active" : ""}`}
+              id="settingsBtn"
+              data-nav="settings"
+              title="通用设置"
+              aria-label="通用设置"
+              onClick={() => navigate("#/settings")}
+            >
+              {NAV_ICONS.settings}
             </button>
           </div>
           </nav>

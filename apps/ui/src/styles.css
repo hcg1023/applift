@@ -192,7 +192,8 @@ body {
 .sidebar-foot {
   margin-top: auto;
   display: flex;
-  gap: 4px;
+  justify-content: space-between; /* 主题贴左下、设置贴右下 */
+  align-items: center;
   padding: 8px 4px 4px;
 }
 .sidebar-foot .icon-btn {
