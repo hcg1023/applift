@@ -155,9 +155,6 @@ body {
   padding: 12px 8px 4px;
   font-weight: 600;
 }
-.nav-settings-label {
-  margin-top: auto;
-}
 .nav-item.nav-proj {
   font-size: 13px;
   font-weight: 400;
@@ -192,10 +189,25 @@ body {
 .sidebar .conn-pill[hidden] {
   display: none;
 }
-.sidebar .icon-btn.sidebar-foot {
+.sidebar-foot {
   margin-top: auto;
-  align-self: flex-start;
-  margin-left: 4px;
+  display: flex;
+  gap: 4px;
+  padding: 8px 4px 4px;
+}
+.sidebar-foot .icon-btn {
+  color: var(--label-2);
+}
+.sidebar-foot .icon-btn:hover {
+  background: var(--fill-2);
+}
+.sidebar-foot .icon-btn.active {
+  background: var(--blue-sys);
+  color: #fff;
+}
+.sidebar-foot .icon-btn svg {
+  width: 16px;
+  height: 16px;
 }
 .nav-item {
   display: flex;

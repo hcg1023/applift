@@ -268,17 +268,19 @@ export default function App() {
             <span className="nav-add-plus">＋</span>
             <span className="lbl">添加项目</span>
           </button>
-          <div className="nav-group-label nav-settings-label">设置</div>
-          <button
-            className={`nav-item${route.page === "settings" ? " active" : ""}`}
-            data-nav="settings"
-            onClick={() => navigate("#/settings")}
-          >
-            {NAV_ICONS.settings}
-            <span className="lbl">通用设置</span>
-          </button>
+          <div className="sidebar-foot">
             <button
-              className="icon-btn sidebar-foot"
+              className={`icon-btn${route.page === "settings" ? " active" : ""}`}
+              id="settingsBtn"
+              data-nav="settings"
+              title="通用设置"
+              aria-label="通用设置"
+              onClick={() => navigate("#/settings")}
+            >
+              {NAV_ICONS.settings}
+            </button>
+            <button
+              className="icon-btn"
               id="themeBtn"
               title="切换外观"
               aria-label="切换深浅外观"
@@ -288,6 +290,7 @@ export default function App() {
             >
               <SunIcon />
             </button>
+          </div>
           </nav>
           <main className="content" id="content">
             {route.page === "project" ? (
