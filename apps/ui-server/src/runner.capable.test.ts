@@ -50,7 +50,10 @@ describe("resolveCapableBin 端到端（真 spawn 桩 shim）", () => {
       await writeFile(join(globBin, "applift"), "#!/bin/sh\necho 0.14.0\n");
       await chmod(join(projBin, "applift"), 0o755);
       await chmod(join(globBin, "applift"), 0o755);
-      const res = await resolveCapableBin(join(dir, "proj"), { pathEnv: globBin });
+      const res = await resolveCapableBin(join(dir, "proj"), {
+        pathEnv: globBin,
+        nodeDirEnv: join(dir, "no-node"),
+      });
       expect(res.source).toBe("global"); // 降级命中全局
       expect(res.capable).toBe(true);
       expect(res.version).toBe("0.14.0");

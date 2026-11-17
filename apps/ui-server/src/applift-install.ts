@@ -59,6 +59,8 @@ export interface AvailabilityProberOptions {
   versionCacheMs?: number;
   /** 测试注入：PATH 覆盖（不污染全局 process.env）；缺省用真实 PATH */
   pathEnv?: string;
+  /** findGlobalApplift 的 nodeDir 前置注入（测试隔离本机全局用） */
+  nodeDir?: string;
 }
 export function createAvailabilityProber(opts: AvailabilityProberOptions = {}): {
   get(cwd?: string): Promise<Availability>;
@@ -85,7 +87,7 @@ export function createAvailabilityProber(opts: AvailabilityProberOptions = {}): 
         const project = findProjectApplift(cwd);
         if (project !== null) found.push({ kind: "project", path: project, bin: [project] });
       }
-      const global = findGlobalApplift(opts.pathEnv);
+      const global = findGlobalApplift(opts.pathEnv, opts.nodeDir);
       if (global !== null) found.push({ kind: "global", path: global, bin: [global] });
       // 各源版本探测与 npm view 全并行（互不阻塞；任一失败不拖垮整体，latest null = 离线降级）
       const [latest, ...versions] = await Promise.all([

@@ -35,20 +35,28 @@ export interface ResolveEnv {
   cliBinEnv?: string;
   /** PATH 值；undefined = process.env.PATH */
   pathEnv?: string;
+  /** findGlobalApplift 的 nodeDir 前置注入（undefined = node 自身 bin 目录）；测试隔离本机全局用 */
+  nodeDirEnv?: string;
 }
 
-/** PATH 上找 applift（不 spawn，直接扫目录；找不到 = null） */
-export function findGlobalApplift(pathEnv?: string): string | null {
+/** PATH 上找 applift（不 spawn，直接扫目录；找不到 = null）。
+ *  nodeDir 前置（缺省 node 自身 bin 目录）：GUI 宿主（launchd/托盘）瘦 PATH 常缺包管理器目录，
+ *  但 node 在哪全局 npm bin 就在哪（fnm/nvm/volta/homebrew 通例）——ui-server 由该 node 起则
+ *  同目录的全局 applift 必被扫到。测试注入空目录隔离本机全局。 */
+export function findGlobalApplift(
+  pathEnv?: string,
+  nodeDir: string = dirname(process.execPath),
+): string | null {
   const path = pathEnv ?? process.env.PATH ?? "";
-  for (const dir of path.split(process.platform === "win32" ? ";" : ":")) {
+  const sep = process.platform === "win32" ? ";" : ":";
+  const dirs = [nodeDir, ...path.split(sep)];
+  for (const dir of dirs) {
     if (dir.trim() === "") continue;
     const found = firstExisting(dir, "applift");
     if (found !== null) return found;
   }
   return null;
 }
-
-/** 工程目录内找 node_modules/.bin/applift；不存在 = null */
 export function findProjectApplift(cwd: string): string | null {
   return firstExisting(join(cwd, "node_modules", ".bin"), "applift");
 }
@@ -66,7 +74,7 @@ export function resolveAppliftBin(cwd?: string, env: ResolveEnv = {}): ResolvedB
     const project = findProjectApplift(cwd);
     if (project !== null) return { bin: [project], source: "project" };
   }
-  const global = findGlobalApplift(env.pathEnv);
+  const global = findGlobalApplift(env.pathEnv, env.nodeDirEnv);
   if (global !== null) return { bin: [global], source: "global" };
   return { bin: null, source: null };
 }
@@ -114,7 +122,7 @@ export function binCandidates(
     const project = findProjectApplift(cwd);
     if (project !== null) out.push({ bin: [project], source: "project" });
   }
-  const global = findGlobalApplift(env.pathEnv);
+  const global = findGlobalApplift(env.pathEnv, env.nodeDirEnv);
   if (global !== null) out.push({ bin: [global], source: "global" });
   return out;
 }

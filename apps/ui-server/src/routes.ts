@@ -1,5 +1,6 @@
 import {
   AppliftRunner,
+  compareSemver,
   findProjectApplift,
   resolveAppliftBin,
   resolveCapableBin,
@@ -418,6 +419,26 @@ export function createAppliftRoutes(opts: AppliftRoutesOptions): ApiHandler {
     }
     const body = await readJsonBody(req, res);
     if (body !== null && typeof body === "object" && "tooLarge" in body) return true; // 已回 413
+    // 防降级守护：registry latest ≤ 现有可用版本（能力门禁解出的 env/global bin）→ 拒绝安装。
+    // 过渡期真实场景：npm 未发 0.14 时 latest=0.13，一键安装会把 0.14 本地构建降级覆盖（实测踩坑）。
+    try {
+      const latest = (await availability(undefined)).latest;
+      const current = await resolveCapableBin();
+      if (
+        latest !== null &&
+        current.capable &&
+        current.version !== null &&
+        compareSemver(latest, current.version) <= 0
+      ) {
+        sendJson(res, 409, {
+          ok: false,
+          error: `已是最新（现用 ${current.version} ≥ registry latest ${latest}），安装会降级——请等 registry 发布后更新`,
+        });
+        return true;
+      }
+    } catch {
+      // 守护探测失败不阻塞安装（离线时 latest 未知，走原路径）
+    }
     try {
       const taskId = startInstallTask({ update: path === "/api/applift/update-global" });
       sendJson(res, 200, { ok: true, taskId });

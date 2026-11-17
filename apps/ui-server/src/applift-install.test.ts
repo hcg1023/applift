@@ -41,36 +41,72 @@ describe("resolveAppliftBin 检索链", () => {
     const envBin = join(root, "cli", "dist", "bin.mjs");
 
     // 全空 → null（cwd 无工程 bin 且 PATH 无 applift；env 未设）
-    expect(resolveAppliftBin(root, { cliBinEnv: "", pathEnv: root })).toEqual({
+    expect(
+      resolveAppliftBin(root, {
+        cliBinEnv: "",
+        pathEnv: root,
+        nodeDirEnv: "/nonexistent-node-dir",
+      }),
+    ).toEqual({
       bin: null,
       source: null,
     });
 
     // 仅全局（cwd 仍无工程 bin）
-    expect(resolveAppliftBin(root, { cliBinEnv: "", pathEnv: globalBin })).toEqual({
+    expect(
+      resolveAppliftBin(root, {
+        cliBinEnv: "",
+        pathEnv: globalBin,
+        nodeDirEnv: "/nonexistent-node-dir",
+      }),
+    ).toEqual({
       bin: [globalPath],
       source: "global",
     });
 
     // 工程 > 全局
-    expect(resolveAppliftBin(proj, { cliBinEnv: "", pathEnv: globalBin })).toEqual({
+    expect(
+      resolveAppliftBin(proj, {
+        cliBinEnv: "",
+        pathEnv: globalBin,
+        nodeDirEnv: "/nonexistent-node-dir",
+      }),
+    ).toEqual({
       bin: [projBin],
       source: "project",
     });
 
     // env 最高（cwd 有工程 bin 也压不过）；空串视为未设
-    expect(resolveAppliftBin(proj, { cliBinEnv: "  ", pathEnv: globalBin })).toEqual({
+    expect(
+      resolveAppliftBin(proj, {
+        cliBinEnv: "  ",
+        pathEnv: globalBin,
+        nodeDirEnv: "/nonexistent-node-dir",
+      }),
+    ).toEqual({
       bin: [projBin],
       source: "project",
     });
-    expect(resolveAppliftBin(proj, { cliBinEnv: envBin, pathEnv: globalBin })).toEqual({
+    expect(
+      resolveAppliftBin(proj, {
+        cliBinEnv: envBin,
+        pathEnv: globalBin,
+        nodeDirEnv: "/nonexistent-node-dir",
+      }),
+    ).toEqual({
       bin: [process.execPath, envBin],
       source: "env",
     });
   });
 
   it("findGlobalApplift：PATH 无 applift 时 null；可注入 pathEnv", async () => {
-    expect(findGlobalApplift(await tmpDir("empty-path-"))).toBeNull();
+    expect(findGlobalApplift(await tmpDir("empty-path-"), "/nonexistent-node-dir")).toBeNull();
+    // nodeDir 前置命中（GUI 宿主瘦 PATH 场景：node 同目录的全局 applift）
+    const nodeBinDir = await tmpDir("nodedir-");
+    await exeStub(nodeBinDir, "applift", "0.3.0");
+    expect(findGlobalApplift(await tmpDir("empty2-"), nodeBinDir)).toBe(
+      join(nodeBinDir, "applift"),
+    );
   });
 
   it("F2 toSpawnCommand：win32 下 .cmd/.bat 与裸 npm/npx 经 cmd.exe /c；其余平台原样 [未实机]", () => {
@@ -113,6 +149,7 @@ describe("createAvailabilityProber", () => {
       probeVersion: probe,
       fetchLatest: async () => "0.14.2",
       pathEnv: globalBin,
+      nodeDir: "/nonexistent-node-dir",
     });
 
     const a1 = await prober.get(proj);
@@ -132,6 +169,7 @@ describe("createAvailabilityProber", () => {
     const prober = createAvailabilityProber({
       fetchLatest: async () => null,
       pathEnv: await tmpDir("no-applift-path-"),
+      nodeDir: "/nonexistent-node-dir",
     });
     const a = await prober.get();
     expect(a.sources).toEqual([]);
