@@ -147,7 +147,7 @@ describe("Settings 轮询 clamp", () => {
   });
 });
 
-describe("AddProjectDialog 双路径", () => {
+describe("AddProjectDialog 目录浏览器（webui）", () => {
   const HOST = { notify: vi.fn(), pickDirectory: vi.fn(async () => null), setBadge: vi.fn(), isWindowVisible: () => true };
 
   function fsClient(
@@ -170,7 +170,7 @@ describe("AddProjectDialog 双路径", () => {
 
   it("浏览：roots 起始 → 子目录列表，applift 工程高亮 + 选择即 add", async () => {
     const client = fsClient();
-    render(withCtx(<AddProjectDialog host={HOST} onClose={vi.fn()} />, client));
+    render(withCtx(<AddProjectDialog onClose={vi.fn()} />, client));
     await screen.findByText("📁 proj");
     const row = document.querySelector('.fs-row[data-name="proj"]')!;
     expect(row.querySelector(".fs-badge")!.textContent).toBe("applift 工程");
@@ -180,20 +180,10 @@ describe("AddProjectDialog 双路径", () => {
 
   it("浏览：普通目录点击进入下一层（fsList 换目录）", async () => {
     const client = fsClient();
-    render(withCtx(<AddProjectDialog host={HOST} onClose={vi.fn()} />, client));
+    render(withCtx(<AddProjectDialog onClose={vi.fn()} />, client));
     await screen.findByText("📁 plain");
     fireEvent.click(screen.getByText("📁 plain"));
     await waitFor(() => expect(client.fsList).toHaveBeenCalledWith("/tmp/home/plain"));
-  });
-
-  it("手输：切 tab → 输入路径 → 添加", async () => {
-    const client = fsClient();
-    render(withCtx(<AddProjectDialog host={HOST} onClose={vi.fn()} />, client));
-    fireEvent.click(document.querySelector('button[data-tab="manual"]')!);
-    const input = document.querySelector<HTMLInputElement>("#manualPath")!;
-    fireEvent.change(input, { target: { value: "/tmp/home/proj" } });
-    fireEvent.click(document.querySelector("#manualAdd")!);
-    await waitFor(() => expect(client.addProject).toHaveBeenCalledWith("/tmp/home/proj"));
   });
 
   it("添加失败（validate 不通过）→ toast 报错且弹层不关", async () => {
@@ -212,33 +202,16 @@ describe("AddProjectDialog 双路径", () => {
       })),
     });
     const onClose = vi.fn();
-    render(withCtx(<AddProjectDialog host={HOST} onClose={onClose} />, client));
-    fireEvent.click(document.querySelector('button[data-tab="manual"]')!);
-    fireEvent.change(document.querySelector<HTMLInputElement>("#manualPath")!, {
-      target: { value: "/tmp/bad" },
-    });
-    fireEvent.click(document.querySelector("#manualAdd")!);
+    render(withCtx(<AddProjectDialog onClose={onClose} />, client));
+    // 浏览器点选 applift 工程的「选择」按钮 → add 失败
+    await screen.findByText("📁 proj");
+    fireEvent.click(document.querySelector('.fs-row[data-name="proj"] .fs-pick')!);
     await waitFor(() => expect(toastEl.textContent).toContain("no applift.config.ts"));
     expect(onClose).not.toHaveBeenCalled();
     expect(document.querySelector("#addProjectDlg")).not.toBeNull();
     toastEl.remove();
   });
 
-  it("Tauri 环境：浏览 tab 变原生选择器，pickDirectory 结果直达 add", async () => {
-    const w = window as unknown as { __TAURI_INTERNALS__?: { invoke: unknown } };
-    w.__TAURI_INTERNALS__ = { invoke: vi.fn(async () => true) };
-    try {
-      const host = { ...HOST, pickDirectory: vi.fn(async () => "/Users/x/proj") };
-      const client = fsClient();
-      render(withCtx(<AddProjectDialog host={host as never} onClose={vi.fn()} />, client));
-      // webui 目录浏览器被收起（无 fsRoots 消费）
-      expect(document.querySelector("#fsRoots")).toBeNull();
-      fireEvent.click(document.querySelector("#nativePick")!);
-      await waitFor(() => expect(client.addProject).toHaveBeenCalledWith("/Users/x/proj"));
-    } finally {
-      delete w.__TAURI_INTERNALS__;
-    }
-  });
 });
 
 describe("AddProjectDialog 加固（错误态/重试/竞态）", () => {
@@ -250,7 +223,7 @@ describe("AddProjectDialog 加固（错误态/重试/竞态）", () => {
       fsList: vi.fn().mockRejectedValueOnce(new Error("boom")).mockResolvedValue([]),
       addProject: vi.fn(),
     } as unknown as UiClient;
-    render(withCtx(<AddProjectDialog host={HOST} onClose={vi.fn()} />, client));
+    render(withCtx(<AddProjectDialog onClose={vi.fn()} />, client));
     await waitFor(() =>
       expect(document.querySelector("#fsList")!.textContent).toContain("目录读取失败：boom"),
     );
@@ -264,7 +237,7 @@ describe("AddProjectDialog 加固（错误态/重试/竞态）", () => {
       fsList: vi.fn(),
       addProject: vi.fn(),
     } as unknown as UiClient;
-    render(withCtx(<AddProjectDialog host={HOST} onClose={vi.fn()} />, client));
+    render(withCtx(<AddProjectDialog onClose={vi.fn()} />, client));
     await waitFor(() =>
       expect(document.querySelector("#rootsError")!.textContent).toContain("root down"),
     );
@@ -282,7 +255,7 @@ describe("AddProjectDialog 加固（错误态/重试/竞态）", () => {
       fsList: vi.fn((dir: string) => (dir === "/tmp/home" ? home.promise : subdir.promise)),
       addProject: vi.fn(),
     } as unknown as UiClient;
-    render(withCtx(<AddProjectDialog host={HOST} onClose={vi.fn()} />, client));
+    render(withCtx(<AddProjectDialog onClose={vi.fn()} />, client));
     home.resolve([{ name: "plain", path: "/tmp/home/plain", hasConfig: false }]);
     await screen.findByText("📁 plain");
     fireEvent.click(screen.getByText("📁 plain")); // /tmp/home/plain（seq 2，挂起）
@@ -366,8 +339,8 @@ describe("引导安装块（InstallBlock 三态 + 添加项目联动）", () => 
 
   it("添加失败且 sources 全空 → 未检测到 applift 块；安装成功自动重试 add", async () => {
     const client = installClient({
-      fsRoots: vi.fn(async () => []),
-      fsList: vi.fn(async () => []),
+      fsRoots: vi.fn(async () => [{ name: "主目录", path: "/tmp" }]),
+      fsList: vi.fn(async () => [{ name: "proj", path: "/tmp/proj", hasConfig: true }]),
       addProject: vi.fn().mockRejectedValueOnce(new Error("applift 不可用")).mockResolvedValueOnce({
         id: "p9",
         name: "proj",
@@ -380,12 +353,10 @@ describe("引导安装块（InstallBlock 三态 + 添加项目联动）", () => 
         latest: null,
       })),
     });
-    render(withCtx(<AddProjectDialog host={HOST} onClose={vi.fn()} />, client));
-    fireEvent.click(document.querySelector('button[data-tab="manual"]')!);
-    fireEvent.change(document.querySelector<HTMLInputElement>("#manualPath")!, {
-      target: { value: "/tmp/proj" },
-    });
-    fireEvent.click(document.querySelector("#manualAdd")!);
+    render(withCtx(<AddProjectDialog onClose={vi.fn()} />, client));
+    // 浏览器点选触发 add（fsList 返回一个 applift 工程）
+    await screen.findByText("📁 proj");
+    fireEvent.click(document.querySelector('.fs-row[data-name="proj"] .fs-pick')!);
 
     const hint = await waitFor(() => {
       const el = document.querySelector("#installHint");

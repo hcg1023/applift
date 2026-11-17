@@ -35,6 +35,10 @@ const { createServer, ProjectRegistry, AppliftRunner } =
 const registry = new ProjectRegistry(join(tmp, "projects.json"));
 const projDir = join(tmp, "stub-project");
 mkdirSync(projDir, { recursive: true });
+// 引导安装用例的浏览目标：有 config（hasConfig 高亮可点选）但 validate 桩失败（marker 机制）→ installHint
+const guidedDir = join(tmp, "e2e-guided-install");
+mkdirSync(guidedDir, { recursive: true });
+writeFileSync(join(guidedDir, "applift.config.ts"), "export default {}\n");
 await registry.add(projDir);
 writeFileSync(join(projDir, "applift.config.ts"), "export default {}\n");
 

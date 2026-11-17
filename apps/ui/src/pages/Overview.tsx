@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import AddProjectDialog from "../AddProjectDialog.js";
 import { classify, type HistoryEntry } from "../api.js";
 import { freshness, iconStyle, relTime, toast } from "../util.js";
+import { isTauriEnv } from "../host.tauri.js";
 import { usePageCtx, useUiTick } from "../state.js";
 
 function latestText(
@@ -99,8 +100,25 @@ export default function OverviewPage() {
   const { client, navigate, host } = usePageCtx();
   useUiTick();
   const [feedFilter, setFeedFilter] = useState("all");
-  const [menu, setMenu] = useState<{ anchor: HTMLElement; id: string; name: string } | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [menu, setMenu] = useState<{ anchor: HTMLElement; id: string; name: string } | null>(null);
+  /** 添加项目：Tauri 壳一步直达系统目录对话框（选完即加，无中间弹窗）；webui 打开目录浏览器弹层 */
+  const openAdd = (): void => {
+    if (isTauriEnv()) {
+      void (async () => {
+        const picked = await host.pickDirectory();
+        if (picked === null) return; // 取消
+        try {
+          await client.addProject(picked);
+          toast(`项目已添加：${picked.split("/").pop() ?? picked}`);
+        } catch (err) {
+          toast(err instanceof Error ? err.message : String(err));
+        }
+      })();
+      return;
+    }
+    setShowAdd(true);
+  };
   // 侧栏「添加项目」跳转信号：挂载即检查并清除（sessionStorage 一次性）
   useEffect(() => {
     try {
@@ -323,7 +341,7 @@ export default function OverviewPage() {
             </div>
           );
         })}
-        <button className="ov-card add" id="addProject" onClick={() => setShowAdd(true)}>
+        <button className="ov-card add" id="addProject" onClick={openAdd}>
           <div className="ov-add-plus">＋</div>
           <div className="ov-add-txt">添加项目</div>
         </button>
@@ -375,7 +393,7 @@ export default function OverviewPage() {
           onAction={(act) => void onMenuAction(act, menu.id, menu.name)}
         />
       ) : null}
-      {showAdd ? <AddProjectDialog host={host} onClose={() => setShowAdd(false)} /> : null}
+      {showAdd ? <AddProjectDialog onClose={() => setShowAdd(false)} /> : null}
     </section>
   );
 }

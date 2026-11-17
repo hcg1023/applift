@@ -92,9 +92,7 @@ test("添加项目：服务端目录浏览器点选可用（webui 路径）", as
   const crumb = dlg.locator("#fsCrumb button", { hasText: "stub-project" });
   await expect(crumb).toBeVisible();
 
-  // 手输路径备选入口
-  await dlg.locator('button[data-tab="manual"]').click();
-  await expect(dlg.locator("#manualPath")).toBeVisible();
+  // 手输已删（webui 纯浏览器）：面包屑回跳后直接关闭
 
   await dlg.locator("button[aria-label='关闭']").click();
   await expect(dlg).toBeHidden();
@@ -106,12 +104,10 @@ test("引导安装：未检测到 applift → 安装到全局 → validate 自�
   const dlg = page.locator("#addProjectDlg");
   await expect(dlg).toBeVisible();
 
-  // 手输一个 applift 不可用的路径（e2e 桩：marker 未写 → validate 失败）
-  await dlg.locator('button[data-tab="manual"]').click();
-  await dlg.locator("#manualPath").fill("/tmp/e2e-guided-install");
-  await dlg.locator("#manualAdd").click();
-
-  // availability sources 全空 → 「未检测到 applift」引导块
+  // 浏览点选（webui 纯浏览器，无手输）：主目录根 → e2e-guided-install（有 config 高亮，validate 桩失败触发引导）
+  const row = dlg.locator(".fs-row[data-name='e2e-guided-install']");
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  await row.locator(".fs-pick").click();
   const hint = dlg.locator("#installHint");
   await expect(hint).toBeVisible({ timeout: 15_000 });
   await expect(hint).toContainText("未检测到 applift");

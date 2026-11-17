@@ -2,8 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import InstallBlock from "./InstallBlock.js";
 import type { Availability, FsEntry, FsRoot } from "./api.js";
-import type { HostAdapter } from "./host.js";
-import { isTauriEnv } from "./host.tauri.js";
 import { toast } from "./util.js";
 import { usePageCtx } from "./state.js";
 
@@ -25,26 +23,16 @@ function Crumbs({ dir, onPick }: { dir: string; onPick: (p: string) => void }) {
 }
 
 /**
- * 添加项目弹层（双路径）：
- * - 浏览 tab：webui = 服务端目录浏览器（GET /api/fs/*：起始根 → 一层层点选，applift 工程高亮）；
- *   Tauri 壳 = 原生目录对话框（host.pickDirectory 真对话框语义）。
- * - 手输 tab：手敲绝对路径备选入口（服务端 add 时 validate）。
+ * 添加项目弹层（webui 专用）：服务端目录浏览器——起始根 → 一层层点选，applift 工程高亮，选完即加。
+ * Tauri 壳不走本组件：总览「＋ 添加项目」直接调系统目录对话框（Overview.openAdd）。
  */
-export default function AddProjectDialog({
-  host,
-  onClose,
-}: {
-  host: HostAdapter;
-  onClose: () => void;
-}) {
+export default function AddProjectDialog({ onClose }: { onClose: () => void }) {
   const { client } = usePageCtx();
-  const [tab, setTab] = useState<"browse" | "manual">("browse");
   const [roots, setRoots] = useState<FsRoot[]>([]);
   const [dir, setDir] = useState("");
   const [entries, setEntries] = useState<FsEntry[] | null>(null);
   const [rootsError, setRootsError] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
-  const [manualPath, setManualPath] = useState("");
   const [adding, setAdding] = useState(false);
   const [avail, setAvail] = useState<Availability | null>(null);
   const lastPath = useRef("");
@@ -96,12 +84,6 @@ export default function AddProjectDialog({
     }
   };
 
-  const nativePick = async (): Promise<void> => {
-    const picked = await host.pickDirectory();
-    if (picked === null) return;
-    await add(picked);
-  };
-
   return createPortal(
     <div className="dlg-overlay" onClick={onClose}>
       <div className="dlg" id="addProjectDlg" onClick={(e) => e.stopPropagation()}>
@@ -111,36 +93,7 @@ export default function AddProjectDialog({
             ✕
           </button>
         </div>
-        <div className="seg-wrap dlg-tabs" id="apTabs">
-          <button
-            className={`seg${tab === "browse" ? " active" : ""}`}
-            data-tab="browse"
-            onClick={() => setTab("browse")}
-          >
-            浏览
-          </button>
-          <button
-            className={`seg${tab === "manual" ? " active" : ""}`}
-            data-tab="manual"
-            onClick={() => setTab("manual")}
-          >
-            手动输入
-          </button>
-        </div>
-        {tab === "browse" ? (
-          <div className="dlg-body">
-            {isTauriEnv() ? (
-              <div className="state-box" style={{ padding: "24px" }}>
-                <button
-                  className="btn btn-primary"
-                  id="nativePick"
-                  onClick={() => void nativePick()}
-                >
-                  打开系统目录选择器
-                </button>
-              </div>
-            ) : (
-              <>
+        <div className="dlg-body">
                 {rootsError !== null ? (
                   <div className="state-box" id="rootsError">
                     <div>起始根读取失败：{rootsError}</div>
@@ -203,32 +156,8 @@ export default function AddProjectDialog({
                       </div>
                     ))
                   )}
-                </div>
-              </>
-            )}
-          </div>
-        ) : (
-          <div className="dlg-body">
-            <input
-              className="dlg-input"
-              id="manualPath"
-              placeholder="/absolute/path/to/project（需含 applift.config.ts）"
-              value={manualPath}
-              onChange={(e) => setManualPath(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && manualPath.trim() !== "") void add(manualPath.trim());
-              }}
-            />
-            <button
-              className="btn btn-primary"
-              id="manualAdd"
-              disabled={manualPath.trim() === "" || adding}
-              onClick={() => void add(manualPath.trim())}
-            >
-              添加
-            </button>
-          </div>
-        )}
+              </div>
+        </div>
         {avail !== null ? (
           <div className="dlg-install" id="installHint">
             <div className="dlg-install-title">未检测到 applift</div>
