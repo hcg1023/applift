@@ -1,4 +1,5 @@
 import { useEffect, useReducer, useRef, useState } from "react";
+import { isTauriEnv } from "./host.tauri.js";
 import { UiClient, classify } from "./api.js";
 import { pickHost } from "./host.js";
 import { PageCtxProvider, type PageCtx } from "./state.js";
@@ -269,12 +270,23 @@ export default function App() {
             className="nav-item nav-add"
             id="navAddProject"
             onClick={() => {
-              try {
-                sessionStorage.setItem("applift-ui:openAdd", "1");
-              } catch {
-                /* 存储拒绝：降级为仅跳总览 */
+              if (isTauriEnv()) {
+                // 与总览 openAdd 同款：系统目录对话框一步直达
+                void (async () => {
+                  const picked = await host.pickDirectory();
+                  if (picked === null) return;
+                  try {
+                    await client.addProject(picked);
+                    toast(`项目已添加：${picked.split("/").pop() ?? picked}`);
+                  } catch (err) {
+                    toast(err instanceof Error ? err.message : String(err));
+                  }
+                })();
+                return;
               }
+              // webui：跳总览 + 事件信号（已挂载的 Overview 实时响应——无重挂载依赖）
               navigate("#/overview");
+              window.dispatchEvent(new CustomEvent("applift-ui:add-project"));
             }}
           >
             <span className="nav-add-plus">＋</span>

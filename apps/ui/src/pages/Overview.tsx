@@ -119,16 +119,11 @@ export default function OverviewPage() {
     }
     setShowAdd(true);
   };
-  // 侧栏「添加项目」跳转信号：挂载即检查并清除（sessionStorage 一次性）
+  // 侧栏「添加项目」事件信号（app.tsx dispatch；已挂载实时响应，无 sessionStorage/重挂载依赖）
   useEffect(() => {
-    try {
-      if (sessionStorage.getItem("applift-ui:openAdd") === "1") {
-        sessionStorage.removeItem("applift-ui:openAdd");
-        setShowAdd(true);
-      }
-    } catch {
-      /* 存储拒绝：无信号语义 */
-    }
+    const open = (): void => setShowAdd(true);
+    window.addEventListener("applift-ui:add-project", open);
+    return () => window.removeEventListener("applift-ui:add-project", open);
   }, []);
 
   /** 项目发版历史（总览卡「内测/正式」计数与最近发版行）：懒拉一次，N 个项目并行 */
