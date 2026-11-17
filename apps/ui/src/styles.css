@@ -610,6 +610,13 @@ h2 {
   width: 1.5px;
   background: var(--separator);
 }
+/* 空态：没有事件点，脊线与缩进都无意义——隐藏（用户视角是「左边一条边框线」） */
+.tl.tl-empty {
+  padding-left: 0;
+}
+.tl.tl-empty::before {
+  content: none;
+}
 .tl-item {
   position: relative;
   padding: 8px 0 16px;
@@ -810,18 +817,11 @@ h2 {
   font-size: 17px;
   font-weight: 700;
 }
-.ov-latest {
+/* 卡片脚注：新鲜度时间（原 ov-latest 分隔线行已删——动态在总览时间线，卡内不重复） */
+.ov-foot {
+  margin-top: 10px;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11.5px;
-  color: var(--label-2);
-  border-top: 1px solid var(--separator);
-  padding-top: 9px;
-}
-.ov-latest svg {
-  color: var(--label-3);
-  flex-shrink: 0;
+  justify-content: flex-end;
 }
 .ov-card.add {
   display: flex;

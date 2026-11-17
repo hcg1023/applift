@@ -312,26 +312,13 @@ export default function OverviewPage() {
                       <b className="c-blue">{betaN}</b>内测 · <b className="c-green">{relN}</b>正式
                     </span>
                     <span className="oh-last">
-                      最近发版 {ph}
-                      {last.artifactVersion !== null ? ` ${last.artifactVersion}` : ""} ·{" "}
-                      {relTime(last.ts)}
+                      最近：{ph} {last.artifactVersion ?? ""}（{relTime(last.ts)}）
                     </span>
                   </div>
                 );
               })()}
-              <div className={`ov-fresh${fresh.warn ? " fresh-warn" : ""}`}>{fresh.text}</div>
-              <div className="ov-latest">
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
-                  <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-                </svg>
-                {latestText(client.state.feed, p.id)}
+              <div className="ov-foot">
+                <span className={`ov-fresh${fresh.warn ? " fresh-warn" : ""}`}>{fresh.text}</span>
               </div>
             </div>
           );
@@ -369,7 +356,7 @@ export default function OverviewPage() {
           正在获取项目与渠道状态…
         </div>
       ) : (
-        <div className="tl" id="ovFeed">
+        <div className={`tl${feedItems.length === 0 ? " tl-empty" : ""}`} id="ovFeed">
           {feedItems.length > 0 ? (
             feedItems
           ) : (
