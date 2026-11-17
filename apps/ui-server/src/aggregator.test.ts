@@ -504,6 +504,56 @@ describe("StatusAggregator", () => {
     expect(snapshots[0]!.ok).toBe(true);
   });
 
+  it("渠道发现：iOS 工程（bundleIds.ios 存在）补 asc——ios 段无 stores 声明，不补则 iOS 永远无状态", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agg-ios-"));
+    const registry = new ProjectRegistry(join(dir, "projects.json"));
+    registry.add("/tmp/iosproj");
+    const responses = new Map<string, () => RunResult>([
+      [
+        "status",
+        () => ({
+          code: 0,
+          stdout: statusJson([{ channel: "asc", platform: "ios", state: "approved", live: true }]),
+          stderr: "",
+        }),
+      ],
+    ]);
+    const doctor = new Map<string, () => RunResult>([
+      [
+        "/tmp/iosproj",
+        () => ({
+          code: 0,
+          stdout: JSON.stringify({
+            ok: true,
+            stores: [], // ios 段无 stores 声明 → doctor stores 恒空
+            channels: [],
+            bundleIds: { ios: "com.example.app" },
+          }),
+          stderr: "",
+        }),
+      ],
+    ]);
+    const statusArgs: string[][] = [];
+    const base = fakeRunnerFactory(responses, doctor);
+    const agg = new StatusAggregator({
+      registry,
+      runnerFactory: (cwd) => {
+        const r = base(cwd);
+        return {
+          run: async (args: string[] = []) => {
+            if (args[0] === "status") statusArgs.push(args);
+            return r.run(args);
+          },
+        } as unknown as AppliftRunner;
+      },
+      onSnapshot: () => {},
+      onFeed: () => {},
+      baselinePath: join(dir, "state-history.jsonl"),
+    });
+    await agg.refreshNow();
+    expect(statusArgs).toEqual([["status", "--json", "--stores", "asc"]]);
+  });
+
   it("doctor 渠道集为空 → ok=true 空 channels（纯无渠道工程不是错误）", async () => {
     const { dir, registry } = await setup("empty-chans", ["/tmp/none"]);
     let statusCalls = 0;

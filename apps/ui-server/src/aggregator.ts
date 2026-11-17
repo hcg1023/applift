@@ -272,6 +272,7 @@ export class StatusAggregator {
       const report = JSON.parse(text) as {
         stores?: Array<{ id?: string }>;
         channels?: unknown;
+        bundleIds?: { ios?: string | null };
       };
       const ids = [
         ...(report.stores ?? []).flatMap((s) => (typeof s?.id === "string" ? [s.id] : [])),
@@ -279,6 +280,9 @@ export class StatusAggregator {
           ? report.channels.filter((c): c is string => typeof c === "string")
           : []),
       ];
+      // iOS 工程的商店状态面 = ASC（ios 段无 stores 声明——iOS 商店只有 App Store，渠道固定）：
+      // doctor stores 只反映 android.stores，bundleIds.ios 存在即补 asc，否则 iOS 工程永远查不到状态
+      if (typeof report.bundleIds?.ios === "string" && report.bundleIds.ios !== "") ids.push("asc");
       return [...new Set(ids)];
     } catch {
       return null;
