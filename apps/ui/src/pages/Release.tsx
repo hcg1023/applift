@@ -367,7 +367,7 @@ function JudgeCard({
 }
 
 /** 发版向导：四步状态机（预览 → 确认方式 → 执行 → 完成） */
-export default function ReleasePage() {
+export default function ReleasePage({ preselectProjectId }: { preselectProjectId?: string }) {
   const { client, navigate, host } = usePageCtx();
   const [, force] = useReducer((n: number) => n + 1, 0);
   /** 向导可变状态（异步流程跨 await 读写，ref 承载 + force 重渲） */
@@ -434,9 +434,21 @@ export default function ReleasePage() {
     };
   }, [client]);
 
-  /** 默认选中：无记住选择（首次/失效）且项目列表到达 → 选第一个（发版页初始化即有上下文） */
+  /** 默认选中：来源预选（详情页「发版」跳转）> 记住的上次选择 > 第一个项目 */
   useEffect(() => {
     const state = stateRef.current;
+    if (
+      preselectProjectId !== undefined &&
+      preselectProjectId !== "" &&
+      client.state.projects.some((p) => p.id === preselectProjectId)
+    ) {
+      if (state.form.projectId !== preselectProjectId) {
+        state.form.projectId = preselectProjectId;
+        saveForm(state.form);
+        force();
+      }
+      return;
+    }
     const first = client.state.projects[0];
     if (first === undefined) return;
     if (state.form.projectId === "" || client.state.projects.every((p) => p.id !== state.form.projectId)) {
@@ -444,7 +456,7 @@ export default function ReleasePage() {
       saveForm(state.form);
       force();
     }
-  }, [client, client.state.projects]);
+  }, [client, client.state.projects, preselectProjectId]);
 
   /** ---------- 步骤1 交互 ---------- */
   const onPickProject = (projectId: string) => {

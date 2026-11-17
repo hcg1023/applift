@@ -175,7 +175,7 @@ export default function ProjectPage({ id }: { id: string }) {
           className="btn btn-primary"
           id="goRelease"
           style={{ padding: "6px 14px" }}
-          onClick={() => navigate("#/release")}
+          onClick={() => navigate(`#/release?project=${encodeURIComponent(id)}`)}
         >
           发版
         </button>

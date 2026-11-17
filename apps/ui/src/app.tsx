@@ -26,6 +26,8 @@ const TITLES: Record<string, string> = {
 interface Route {
   page: "overview" | "project" | "release" | "settings" | "popup";
   id?: string;
+  /** #/release?project=<id>：发版页预选项目（详情页「发版」直达携带） */
+  releaseProjectId?: string;
 }
 
 function parseRoute(hash: string): Route {
@@ -40,7 +42,17 @@ function parseRoute(hash: string): Route {
     if (id !== "") return { page: "project", id };
   }
   if (hash === "#/popup") return { page: "popup" };
-  if (hash === "#/release") return { page: "release" };
+  if (hash.startsWith("#/release")) {
+    let releaseProjectId: string | undefined;
+    try {
+      const q = new URLSearchParams(hash.split("?")[1] ?? "");
+      const p = q.get("project");
+      releaseProjectId = p !== null && p !== "" ? p : undefined;
+    } catch {
+      releaseProjectId = undefined;
+    }
+    return { page: "release", releaseProjectId };
+  }
   if (hash === "#/settings") return { page: "settings" };
   return { page: "overview" };
 }
@@ -296,7 +308,7 @@ export default function App() {
             {route.page === "project" ? (
               <ProjectPage key={route.id} id={route.id ?? ""} />
             ) : route.page === "release" ? (
-              <ReleasePage />
+              <ReleasePage key={route.releaseProjectId ?? "release"} preselectProjectId={route.releaseProjectId} />
             ) : route.page === "settings" ? (
               <SettingsPage theme={theme} onThemeChange={setTheme} />
             ) : (
