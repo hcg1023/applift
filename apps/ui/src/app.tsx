@@ -210,24 +210,73 @@ export default function App() {
             <span className="conn-pill" id="connPill" hidden={!off}>
               重连中…
             </span>
-            {(["overview", "release", "settings"] as const).map((nav) => (
-              <button
-                key={nav}
-                className={`nav-item${nav === route.page || (nav === "overview" && route.page === "project") ? " active" : ""}`}
-                data-nav={nav}
-                onClick={() => navigate(`#/${nav}`)}
-              >
-                {NAV_ICONS[nav]}
-                <span className="lbl">
-                  {nav === "overview" ? "总览" : nav === "release" ? "发版" : "通用设置"}
+          {(["overview", "release"] as const).map((nav) => (
+            <button
+              key={nav}
+              className={`nav-item${nav === route.page ? " active" : ""}`}
+              data-nav={nav}
+              onClick={() => navigate(`#/${nav}`)}
+            >
+              {NAV_ICONS[nav]}
+              <span className="lbl">{nav === "overview" ? "总览" : "发版"}</span>
+              {nav === "overview" ? (
+                <span className="nav-badge" id="unreadBadge" hidden={unread === 0}>
+                  {unread > 9 ? "9+" : String(unread)}
                 </span>
-                {nav === "overview" ? (
-                  <span className="nav-badge" id="unreadBadge" hidden={unread === 0}>
-                    {unread > 9 ? "9+" : String(unread)}
-                  </span>
-                ) : null}
+              ) : null}
+            </button>
+          ))}
+          <div className="nav-group-label">项目</div>
+          {client.state.projects.map((p) => {
+            const snap = client.state.snapshot(p.id);
+            const counts = snap?.ok === true ? client.state.counts(p.id) : null;
+            const dot =
+              snap === undefined || snap.ok !== true
+                ? "d-off"
+                : counts !== null && counts.err > 0
+                  ? "d-err"
+                  : counts !== null && counts.wait > 0
+                    ? "d-wait"
+                    : counts !== null && counts.ok > 0
+                      ? "d-ok"
+                      : "d-off";
+            return (
+              <button
+                key={p.id}
+                className={`nav-item nav-proj${route.page === "project" && route.id === p.id ? " active" : ""}`}
+                data-proj-nav={p.id}
+                onClick={() => navigate(`#/project/${encodeURIComponent(p.id)}`)}
+                title={p.path}
+              >
+                <span className={`dot ${dot}`} />
+                <span className="lbl">{p.name}</span>
               </button>
-            ))}
+            );
+          })}
+          <button
+            className="nav-item nav-add"
+            id="navAddProject"
+            onClick={() => {
+              try {
+                sessionStorage.setItem("applift-ui:openAdd", "1");
+              } catch {
+                /* 存储拒绝：降级为仅跳总览 */
+              }
+              navigate("#/overview");
+            }}
+          >
+            <span className="nav-add-plus">＋</span>
+            <span className="lbl">添加项目</span>
+          </button>
+          <div className="nav-group-label nav-settings-label">设置</div>
+          <button
+            className={`nav-item${route.page === "settings" ? " active" : ""}`}
+            data-nav="settings"
+            onClick={() => navigate("#/settings")}
+          >
+            {NAV_ICONS.settings}
+            <span className="lbl">通用设置</span>
+          </button>
             <button
               className="icon-btn sidebar-foot"
               id="themeBtn"

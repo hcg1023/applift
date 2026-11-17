@@ -101,6 +101,17 @@ export default function OverviewPage() {
   const [feedFilter, setFeedFilter] = useState("all");
   const [menu, setMenu] = useState<{ anchor: HTMLElement; id: string; name: string } | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  // 侧栏「添加项目」跳转信号：挂载即检查并清除（sessionStorage 一次性）
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem("applift-ui:openAdd") === "1") {
+        sessionStorage.removeItem("applift-ui:openAdd");
+        setShowAdd(true);
+      }
+    } catch {
+      /* 存储拒绝：无信号语义 */
+    }
+  }, []);
 
   const projects = client.state.projects;
   const hasSnapshot =

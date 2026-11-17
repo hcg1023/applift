@@ -149,6 +149,42 @@ body {
   padding: 14px 8px 4px;
   font-weight: 500;
 }
+.nav-group-label {
+  font-size: 11px;
+  color: var(--label-3);
+  padding: 12px 8px 4px;
+  font-weight: 600;
+}
+.nav-settings-label {
+  margin-top: auto;
+}
+.nav-item.nav-proj {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--label-2);
+}
+.nav-item.nav-proj .lbl {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nav-item.nav-proj.active {
+  color: #fff;
+}
+.nav-item.nav-add {
+  color: var(--label-3);
+  font-size: 13px;
+}
+.nav-add-plus {
+  width: 17px;
+  text-align: center;
+  flex-shrink: 0;
+  font-size: 15px;
+  line-height: 1;
+}
+.nav-item.nav-add:hover {
+  color: var(--blue-sys);
+}
 .sidebar .conn-pill {
   display: block;
   padding: 10px 8px 6px;
