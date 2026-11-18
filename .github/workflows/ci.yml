@@ -45,8 +45,9 @@ jobs:
       - name: Format Check
         run: pnpm run format:check
 
-      - name: Typecheck
+      - name: "Typecheck (build first: workspace deps' exports types point into dist)"
         run: |
+          pnpm -r build
           pnpm run typecheck
           pnpm run typecheck:examples
 
