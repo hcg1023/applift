@@ -268,7 +268,7 @@ export default function OverviewPage() {
                   </span>
                 </div>
                 <div className="row-sub" style={{ margin: "10px 0 0" }}>
-                  工程状态查不到（CLI 校验失败或依赖未安装）。
+                  工程状态查不到{snap.error !== undefined && snap.error !== "" ? `：${snap.error}` : "（CLI 校验失败或依赖未安装）"}。
                 </div>
               </div>
             );

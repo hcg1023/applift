@@ -22,6 +22,8 @@ export interface ProjectSnapshot {
   fetchedAt: string;
   /** false = CLI 不可用（工程查不到状态） */
   ok: boolean;
+  /** ok=false 真因（服务端透传） */
+  error?: string;
 }
 
 export interface FeedEvent {

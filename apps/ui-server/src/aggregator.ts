@@ -21,6 +21,8 @@ export interface ProjectSnapshot {
   fetchedAt: string;
   /** false = CLI 不可用（非零退出且 stdout 无法解析出 StatusReport） */
   ok: boolean;
+  /** ok=false 时的真因（status 原始输出尾段 / 探测异常信息）——UI 直显，不再静默 */
+  error?: string;
 }
 
 export type FeedEvent = {
@@ -50,7 +52,7 @@ const BG_MIN_MS = 15 * 60_000;
 const FG_DEFAULT_MS = 5 * 60_000;
 const BG_DEFAULT_MS = 60 * 60_000;
 /** 单项目 status 子进程超时 */
-const STATUS_TIMEOUT_MS = 120_000;
+const STATUS_TIMEOUT_MS = 30_000; // 真实 doctor/status 亚秒级；偶发挂死 30s 内暴露（120s 会让 UI 长时间停在加载中）
 
 const clamp = (v: number, min: number) => Math.max(v, min);
 
@@ -212,8 +214,18 @@ export class StatusAggregator {
         );
         report = this.parseReport(res);
         // exit 1 只是 CI 信号：错误渠道以 error 条目进 results，stdout 合法即采用（ok=true）；
-        // 仅 stdout 不可解析（report=null）才降级
+        // 仅 stdout 不可解析（report=null）才降级——error 带原始输出尾段（反复出现的「查不到」靠它定位真因）
         const ok = report !== null;
+        if (!ok) {
+          this.emitSnapshot({
+            projectId: entry.id,
+            channels: [],
+            fetchedAt: new Date().toISOString(),
+            ok: false,
+            error: `status 输出不可解析（code=${res.code}）：${(res.stderr || res.stdout || "").trim().slice(-300)}`,
+          });
+          continue;
+        }
         const channels = (report?.results ?? [])
           .map((r) => ({
             channel: r.channel ?? "unknown",
@@ -235,13 +247,16 @@ export class StatusAggregator {
         };
         if (ok) await this.diffAndPersist(snapshot);
         this.emitSnapshot(snapshot);
-      } catch {
-        // 子进程层异常（spawn 失败、落盘失败等）同样降级为 ok=false 快照；回调抛错不得炸进程
+      } catch (e) {
+        // 子进程层异常（spawn 失败、落盘失败等）同样降级为 ok=false 快照；error 透传异常信息（不再静默）
+        const msg = `探测异常：${e instanceof Error ? e.message : String(e)}`.slice(0, 300);
+        console.error(`[aggregator] ${entry.path} ${msg}`);
         this.emitSnapshot({
           projectId: entry.id,
           channels: [],
           fetchedAt: new Date().toISOString(),
           ok: false,
+          error: msg,
         });
       }
     }
