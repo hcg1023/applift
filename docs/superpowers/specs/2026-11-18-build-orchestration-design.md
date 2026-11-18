@@ -4,33 +4,37 @@
 
 ## 0. 决策记录（头脑风暴定稿）
 
-| 决策点 | 结论 |
-| --- | --- |
-| 触发形态 | **发版必构建**：向导/`--build` 每次发版都重新构建，永不用旧产物（CLI `--artifact` 显式逃生口保留） |
-| 声明形态 | **规则表**（按序首命中 + 可选 env 占位）——三代方案迭代的终版（枚举 recipes ✗ 矩阵爆炸；单命令纯 env ✗ 要求项目脚本适配） |
-| 项目脚本 | **零适配**：命令 = 项目现有命令原样写进 config；`$APPLIFT_*` 是给 config 作者的 shell 占位便利，不是对脚本的要求 |
-| 多平台 | **逐平台执行**规则（`$APPLIFT_PLATFORM` 恒单值；单端失败不连坐；产物逐端探测） |
-| 版本注入 | **一期不接管**（工程脚本自管 versionCode/孪生 versionName，双写现状保留）；env 接口一期定死（`APPLIFT_VERSION_NAME/CODE` 一期=当前值），二期接管时只改 config 命令字符串 |
-| CLI 范围 | UI 与 CLI 同步：`applift build` 独立命令 + `beta --build` 内联 + UI 向导构建步 |
-| bump GUI 化 | 二期实现向导「版本确认」步；一期 dry-run 报告带版本三态字段作数据源预留 |
+| 决策点      | 结论                                                                                                                                                                     |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 触发形态    | **发版必构建**：向导/`--build` 每次发版都重新构建，永不用旧产物（CLI `--artifact` 显式逃生口保留）                                                                       |
+| 声明形态    | **规则表**（按序首命中 + 可选 env 占位）——三代方案迭代的终版（枚举 recipes ✗ 矩阵爆炸；单命令纯 env ✗ 要求项目脚本适配）                                                 |
+| 项目脚本    | **零适配**：命令 = 项目现有命令原样写进 config；`$APPLIFT_*` 是给 config 作者的 shell 占位便利，不是对脚本的要求                                                         |
+| 多平台      | **逐平台执行**规则（`$APPLIFT_PLATFORM` 恒单值；单端失败不连坐；产物逐端探测）                                                                                           |
+| 版本注入    | **一期不接管**（工程脚本自管 versionCode/孪生 versionName，双写现状保留）；env 接口一期定死（`APPLIFT_VERSION_NAME/CODE` 一期=当前值），二期接管时只改 config 命令字符串 |
+| CLI 范围    | UI 与 CLI 同步：`applift build` 独立命令 + `beta --build` 内联 + UI 向导构建步                                                                                           |
+| bump GUI 化 | 二期实现向导「版本确认」步；一期 dry-run 报告带版本三态字段作数据源预留                                                                                                  |
 
 ## 1. 配置契约（core `ProjectConfigSchema.build`）
 
 ```ts
 build: z.object({
   /** 构建规则：按序首命中；匹配字段全可选（缺省 = 全匹配兜底） */
-  rules: z.array(z.object({
-    /** 匹配上下文（applift 已知的发版上下文；全字段可选） */
-    delivery: z.enum(["ota", "native"]).optional(),
-    stage: z.enum(["beta", "release"]).optional(),
-    channel: z.string().optional(),          // 渠道 id（pgyer/agc/asc/...）
-    platform: z.string().optional(),          // 单平台（android/harmony/ios）
-    /** 不透明命令：经 shell 执行（sh -c / win cmd /c），cwd=工程目录 */
-    command: z.string().min(1),
-    /** 超时分钟（缺省 60；上限 720） */
-    timeoutMinutes: z.number().int().min(1).max(720).optional(),
-  })).min(1),
-}).optional()
+  rules: z
+    .array(
+      z.object({
+        /** 匹配上下文（applift 已知的发版上下文；全字段可选） */
+        delivery: z.enum(["ota", "native"]).optional(),
+        stage: z.enum(["beta", "release"]).optional(),
+        channel: z.string().optional(), // 渠道 id（pgyer/agc/asc/...）
+        platform: z.string().optional(), // 单平台（android/harmony/ios）
+        /** 不透明命令：经 shell 执行（sh -c / win cmd /c），cwd=工程目录 */
+        command: z.string().min(1),
+        /** 超时分钟（缺省 60；上限 720） */
+        timeoutMinutes: z.number().int().min(1).max(720).optional(),
+      }),
+    )
+    .min(1),
+}).optional();
 ```
 
 - **整个 `build` 段不声明 → 一切行为与现状完全一致**（零侵入）
@@ -45,25 +49,25 @@ build: z.object({
 
 ### qy-driver 全矩阵验证（4 条封顶）
 
-| 场景 | 命中 | 说明 |
-| --- | --- | --- |
-| OTA 热更（任意平台） | 规则 1（delivery=ota） | `npm run ppk:$APPLIFT_PLATFORM` |
-| release 正式包 | 规则 2（stage=release） | `--app --skip-bundle --release` |
-| beta + 蒲公英 | 规则 3（channel=pgyer） | `SIGNING_CONFIG=internaltesting` 前缀（签名差异留在命令字符串） |
-| beta + AGC / 其余 | 规则 4（缺省） | `--platform $APPLIFT_PLATFORM --app` |
+| 场景                 | 命中                    | 说明                                                            |
+| -------------------- | ----------------------- | --------------------------------------------------------------- |
+| OTA 热更（任意平台） | 规则 1（delivery=ota）  | `npm run ppk:$APPLIFT_PLATFORM`                                 |
+| release 正式包       | 规则 2（stage=release） | `--app --skip-bundle --release`                                 |
+| beta + 蒲公英        | 规则 3（channel=pgyer） | `SIGNING_CONFIG=internaltesting` 前缀（签名差异留在命令字符串） |
+| beta + AGC / 其余    | 规则 4（缺省）          | `--platform $APPLIFT_PLATFORM --app`                            |
 
 newdriver-ios：单条缺省 `node scripts/export-ipa.js`（不看 env）。
 
 ## 3. 环境变量注入（构建执行时）
 
-| 变量 | 一期值 | 二期演进（版本接管后） |
-| --- | --- | --- |
-| `APPLIFT_PLATFORM` | 当前执行平台（恒单值：android/harmony/ios） | 不变 |
-| `APPLIFT_STAGE` | beta / release | 不变 |
-| `APPLIFT_DELIVERY` | ota / native（判定结果） | 不变 |
-| `APPLIFT_CHANNEL` | 目标渠道 id（pgyer/agc/…；多渠道发版=逐渠道值执行） | 不变 |
-| `APPLIFT_VERSION_NAME` | 当前工程版本（readProjectVersions） | **bump 后的目标版本** |
-| `APPLIFT_VERSION_CODE` | 当前工程版本号 | **bump 分配后的目标号** |
+| 变量                   | 一期值                                              | 二期演进（版本接管后）  |
+| ---------------------- | --------------------------------------------------- | ----------------------- |
+| `APPLIFT_PLATFORM`     | 当前执行平台（恒单值：android/harmony/ios）         | 不变                    |
+| `APPLIFT_STAGE`        | beta / release                                      | 不变                    |
+| `APPLIFT_DELIVERY`     | ota / native（判定结果）                            | 不变                    |
+| `APPLIFT_CHANNEL`      | 目标渠道 id（pgyer/agc/…；多渠道发版=逐渠道值执行） | 不变                    |
+| `APPLIFT_VERSION_NAME` | 当前工程版本（readProjectVersions）                 | **bump 后的目标版本**   |
+| `APPLIFT_VERSION_CODE` | 当前工程版本号                                      | **bump 分配后的目标号** |
 
 env 是给 config 命令字符串的 shell 占位便利；项目脚本收到的仍是普通 argv（`--platform $APPLIFT_PLATFORM` 展开后即脚本已有参数），**无任何适配要求**。
 
@@ -105,12 +109,12 @@ applift build --platform harmony --stage beta [--channel pgyer] [--delivery nati
 
 ## 5. 错误处理
 
-| 场景 | 行为 |
-| --- | --- |
-| 规则零命中 | CLI：stderr 列全部规则+当前上下文，exit 1；UI：构建步阻止 + 引导 |
-| 构建非零退出 | 终止发版；输出原样转发（不试图人话化——proposal 硬契约）；UI 停构建步可重试 |
-| 超时 | kill 进程组（复用 AppliftRunner 语义）+ 同失败路径 |
-| 产物校验失败 | 拒绝发布（沿用现有产物版本校验链路） |
+| 场景         | 行为                                                                              |
+| ------------ | --------------------------------------------------------------------------------- |
+| 规则零命中   | CLI：stderr 列全部规则+当前上下文，exit 1；UI：构建步阻止 + 引导                  |
+| 构建非零退出 | 终止发版；输出原样转发（不试图人话化——proposal 硬契约）；UI 停构建步可重试        |
+| 超时         | kill 进程组（复用 AppliftRunner 语义）+ 同失败路径                                |
+| 产物校验失败 | 拒绝发布（沿用现有产物版本校验链路）                                              |
 | shell 注入面 | 命令字符串经 `sh -c`：与 npm scripts 同信任级（用户自己的 config/机器），文档明示 |
 
 ## 6. 不变量 1 改写（AGENTS.md 同步）
