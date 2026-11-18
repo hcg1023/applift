@@ -17,7 +17,6 @@ pub fn is_main_visible(app: AppHandle) -> bool {
         .unwrap_or(false)
 }
 
-
 #[derive(Serialize)]
 pub struct ServerStatus {
     pub state: String,
@@ -37,7 +36,13 @@ pub fn server_status(app: AppHandle) -> ServerStatus {
     let state = app.state::<ShellState>();
     let sup = state.supervisor.lock().unwrap();
     match sup.as_ref().map(|s| (s.state().clone(), s.restarts())) {
-        Some((ServerState::Ready { port, reused_existing }, restarts)) => ServerStatus {
+        Some((
+            ServerState::Ready {
+                port,
+                reused_existing,
+            },
+            restarts,
+        )) => ServerStatus {
             state: "ready".into(),
             port: Some(port),
             reused_existing: Some(reused_existing),
@@ -69,7 +74,6 @@ fn with_supervisor<T>(
     let guard = state.supervisor.lock().unwrap();
     guard.as_ref().map(f)
 }
-
 
 /// 手动重试（startup.html 重试按钮）：Failed → 重走启动链；成功后重导航主窗并重启守护线程
 #[tauri::command]
@@ -129,8 +133,11 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
     }
     .map_err(|e| e.to_string())?;
     let settings = autostart_settings_path(&app).map_err(|e| e.to_string())?;
-    std::fs::write(&settings, serde_json::json!({ "autostart": enabled }).to_string())
-        .map_err(|e| e.to_string())?;
+    std::fs::write(
+        &settings,
+        serde_json::json!({ "autostart": enabled }).to_string(),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(enabled)
 }
 
@@ -142,7 +149,8 @@ fn apply_badge(app: &AppHandle, n: u32) -> Result<(), String> {
     let Some(tray) = app.tray_by_id(crate::tray::TRAY_ID) else {
         return Ok(()); // 托盘缺席（异常构建）静默：未读数仍有前端侧栏兜底
     };
-    tray.set_title(crate::tray::badge_title(n).as_deref()).map_err(|e| e.to_string())
+    tray.set_title(crate::tray::badge_title(n).as_deref())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -183,12 +191,34 @@ mod tests {
     #[test]
     fn sanitize_route_accepts_app_hashes_only() {
         assert_eq!(sanitize_route(None), None);
-        assert_eq!(sanitize_route(Some("#/project/p1")).as_deref(), Some("#/project/p1"));
-        assert_eq!(sanitize_route(Some("#/release")).as_deref(), Some("#/release"));
+        assert_eq!(
+            sanitize_route(Some("#/project/p1")).as_deref(),
+            Some("#/project/p1")
+        );
+        assert_eq!(
+            sanitize_route(Some("#/release")).as_deref(),
+            Some("#/release")
+        );
         assert_eq!(sanitize_route(Some("")).as_deref(), None, "空串拒绝");
-        assert_eq!(sanitize_route(Some("https://evil.example")).as_deref(), None, "外域拒绝");
-        assert_eq!(sanitize_route(Some("/local/path")).as_deref(), None, "非 hash 拒绝");
-        assert_eq!(sanitize_route(Some("#/x\u{0000}y")).as_deref(), None, "控制字符拒绝");
-        assert_eq!(sanitize_route(Some(&format!("#/{}", "a".repeat(600)))).as_deref(), None, "超长拒绝");
+        assert_eq!(
+            sanitize_route(Some("https://evil.example")).as_deref(),
+            None,
+            "外域拒绝"
+        );
+        assert_eq!(
+            sanitize_route(Some("/local/path")).as_deref(),
+            None,
+            "非 hash 拒绝"
+        );
+        assert_eq!(
+            sanitize_route(Some("#/x\u{0000}y")).as_deref(),
+            None,
+            "控制字符拒绝"
+        );
+        assert_eq!(
+            sanitize_route(Some(&format!("#/{}", "a".repeat(600)))).as_deref(),
+            None,
+            "超长拒绝"
+        );
     }
 }

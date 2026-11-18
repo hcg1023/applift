@@ -104,7 +104,9 @@ pub struct LocalHttp {
 
 impl Default for LocalHttp {
     fn default() -> Self {
-        Self { timeout: Duration::from_millis(1500) }
+        Self {
+            timeout: Duration::from_millis(1500),
+        }
     }
 }
 
@@ -204,7 +206,8 @@ impl ServerProcess for ChildProcess {
 impl Drop for ChildProcess {
     fn drop(&mut self) {
         // stdio 管道读端随句柄关闭，drain 线程自然退出
-        self.log.push("[shell] server process handle dropped".into());
+        self.log
+            .push("[shell] server process handle dropped".into());
     }
 }
 
@@ -242,7 +245,10 @@ impl ServerLauncher for NodeServerLauncher {
                 }
             });
         }
-        Ok(Box::new(ChildProcess { child, log: self.log.clone() }))
+        Ok(Box::new(ChildProcess {
+            child,
+            log: self.log.clone(),
+        }))
     }
 }
 
@@ -288,7 +294,6 @@ impl Default for SupervisorConfig {
         }
     }
 }
-
 
 /// ~/.applift/ui.port（APPLIFT_HOME 可覆盖——与 CLI ui-command 同一约定）
 pub fn default_port_file() -> PathBuf {
@@ -379,7 +384,10 @@ impl Supervisor {
     /// 进入 Ready：统一落状态/计时/端口文件（复用与 spawn 两条路共用）
     fn enter_ready(&mut self, port: u16, reused_existing: bool) {
         self.owns_server = !reused_existing;
-        self.state = ServerState::Ready { port, reused_existing };
+        self.state = ServerState::Ready {
+            port,
+            reused_existing,
+        };
         self.health_misses = 0;
         self.ready_since = Some(Instant::now());
         if !reused_existing {
@@ -487,7 +495,9 @@ impl Supervisor {
             return None; // 首次失联：下一 tick 复核（M2）
         }
         if self.restarts >= MAX_RESTARTS {
-            self.state = ServerState::Failed { reason: "ui-server 崩溃且重启次数用尽".into() };
+            self.state = ServerState::Failed {
+                reason: "ui-server 崩溃且重启次数用尽".into(),
+            };
             return None;
         }
         self.restarts += 1;
@@ -499,7 +509,9 @@ impl Supervisor {
         for next in ports.iter_mut().flatten() {
             match self.launcher.launch(*next) {
                 Err(_) => {
-                    self.state = ServerState::Failed { reason: "ui-server 重启失败".into() };
+                    self.state = ServerState::Failed {
+                        reason: "ui-server 重启失败".into(),
+                    };
                     return None;
                 }
                 Ok(child) => {
@@ -511,7 +523,9 @@ impl Supervisor {
                 }
             }
         }
-        self.state = ServerState::Failed { reason: "ui-server 重启后未就绪".into() };
+        self.state = ServerState::Failed {
+            reason: "ui-server 重启后未就绪".into(),
+        };
         None
     }
 
@@ -600,27 +614,35 @@ mod tests {
 
     #[test]
     fn augmented_path_appends_missing_common_dirs() {
-        let p = augmented_path(Some("/usr/bin:/bin"));
+        // 输入/断言均按平台分隔符构造（Windows 是 ';'，Unix 是 ':'——写死 ':' 会在 win 上被
+        // split_paths 当单个路径，join 回来后断言错位）
+        let input = std::env::join_paths(["/usr/bin", "/bin"])
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let p = augmented_path(Some(&input));
         if cfg!(target_os = "macos") {
-            // 探测型目录（fnm/volta，视机器而定）存在才加——断言用包含式
-            assert!(p.starts_with("/usr/bin:/bin"), "got {p}");
-            assert!(p.contains("/opt/homebrew/bin") || p.split(':').count() >= 2, "got {p}");
+            assert!(p.starts_with(&input), "got {p}");
         } else {
-            assert_eq!(p, "/usr/bin;/bin"); // join_paths 按平台分隔符；非 macOS 无增补
+            assert_eq!(p, input, "非 macOS 无增补，原样返回");
         }
     }
 
     #[test]
     fn augmented_path_dedupes_existing_entries() {
-        let p = augmented_path(Some("/usr/local/bin:/usr/bin"));
+        let input = std::env::join_paths(["/usr/local/bin", "/usr/bin"])
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let p = augmented_path(Some(&input));
         if cfg!(target_os = "macos") {
             // 已存在的不重复：/usr/local/bin 只出现一次，且保持原序在前
             let first_local = p.find("/usr/local/bin").expect("kept original entry");
             let last_local = p.rfind("/usr/local/bin").expect("kept original entry");
             assert_eq!(first_local, last_local, "duplicated entry in {p}");
-            assert!(p.starts_with("/usr/local/bin:/usr/bin"), "got {p}");
+            assert!(p.starts_with(&input), "got {p}");
         } else {
-            assert_eq!(p, "/usr/local/bin;/usr/bin");
+            assert_eq!(p, input);
         }
     }
 
@@ -713,7 +735,10 @@ mod tests {
 
     fn temp_port_file(tag: &str) -> PathBuf {
         let mut p = std::env::temp_dir();
-        p.push(format!("applift-shell-test-{tag}-{}.port", std::process::id()));
+        p.push(format!(
+            "applift-shell-test-{tag}-{}.port",
+            std::process::id()
+        ));
         let _ = fs::remove_file(&p);
         p
     }
@@ -781,12 +806,20 @@ mod tests {
         assert_eq!(shared.lock().unwrap().launches, 0, "复用不 spawn");
         assert_eq!(
             sup.state(),
-            &ServerState::Ready { port: 47999, reused_existing: true }
+            &ServerState::Ready {
+                port: 47999,
+                reused_existing: true
+            }
         );
         // 复用实例退出不杀、不删端口文件
         sup.shutdown();
         assert!(pf.exists());
-        assert!(shared.lock().unwrap().events.iter().all(|e| !e.starts_with("shutdown")));
+        assert!(shared
+            .lock()
+            .unwrap()
+            .events
+            .iter()
+            .all(|e| !e.starts_with("shutdown")));
     }
 
     #[test]
@@ -798,8 +831,18 @@ mod tests {
         let port = sup.ensure_started().unwrap();
         assert!(port > 0);
         assert_eq!(shared.lock().unwrap().launches, 1);
-        assert!(matches!(sup.state(), ServerState::Ready { reused_existing: false, .. }));
-        assert_eq!(fs::read_to_string(&pf).unwrap(), port.to_string(), "就绪后补写端口文件");
+        assert!(matches!(
+            sup.state(),
+            ServerState::Ready {
+                reused_existing: false,
+                ..
+            }
+        ));
+        assert_eq!(
+            fs::read_to_string(&pf).unwrap(),
+            port.to_string(),
+            "就绪后补写端口文件"
+        );
     }
 
     #[test]
@@ -847,8 +890,14 @@ mod tests {
             .iter()
             .position(|e| e == &format!("shutdown:{port}"))
             .expect("POST /api/shutdown 先行");
-        let kill_at = events.iter().position(|e| e == "kill").expect("未就绪则 kill 兜底");
-        assert!(shutdown_at < kill_at, "调用序：shutdown → kill（events={events:?}）");
+        let kill_at = events
+            .iter()
+            .position(|e| e == "kill")
+            .expect("未就绪则 kill 兜底");
+        assert!(
+            shutdown_at < kill_at,
+            "调用序：shutdown → kill（events={events:?}）"
+        );
         assert!(!pf.exists(), "关停后清理端口文件");
     }
 
@@ -865,7 +914,11 @@ mod tests {
 
         // 模拟进程被杀：连续 2 次失联（M2）→ 同端口重启恢复
         shared.lock().unwrap().healthy.remove(&port);
-        assert_eq!(two_miss_ticks(&mut sup), Some(port), "同端口恢复，URL 不变免再导航");
+        assert_eq!(
+            two_miss_ticks(&mut sup),
+            Some(port),
+            "同端口恢复，URL 不变免再导航"
+        );
         assert_eq!(sup.restarts(), 1);
 
         // 再次崩溃：额度用尽 → Failed
@@ -898,7 +951,9 @@ mod tests {
         let pf = temp_port_file("stable");
         let mut sup = Supervisor::new(
             Box::new(StubHttp(shared.clone())),
-            Box::new(StubLauncher { shared: shared.clone() }),
+            Box::new(StubLauncher {
+                shared: shared.clone(),
+            }),
             SupervisorConfig {
                 stable_reset: Duration::from_millis(20),
                 ..fast_cfg(pf)
@@ -952,7 +1007,10 @@ mod tests {
         fs::write(&pf, "1").unwrap();
         sup.shutdown();
         let events = shared.lock().unwrap().events.clone();
-        assert!(events.iter().any(|e| e == "kill"), "启动窗口期退出 kill 兜底");
+        assert!(
+            events.iter().any(|e| e == "kill"),
+            "启动窗口期退出 kill 兜底"
+        );
         assert!(!pf.exists(), "自己写的端口文件被清理");
     }
 
@@ -1015,12 +1073,16 @@ mod tests {
             let mut buf = [0u8; 1024];
             let n = sock.read(&mut buf).unwrap();
             let req = String::from_utf8_lossy(&buf[..n]).to_string();
-            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}").unwrap();
+            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+                .unwrap();
             req
         });
         assert!(LocalHttp::default().post_refresh(port));
         let req = handle.join().unwrap();
-        assert!(req.starts_with("POST /api/refresh HTTP/1.1"), "请求行：{req}");
+        assert!(
+            req.starts_with("POST /api/refresh HTTP/1.1"),
+            "请求行：{req}"
+        );
 
         let dead = pick_free_port().unwrap(); // 短暂绑定后已释放：连接必拒
         assert!(!LocalHttp::default().post_refresh(dead));

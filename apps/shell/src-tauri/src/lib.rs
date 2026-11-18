@@ -9,12 +9,12 @@ mod tray;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tauri::{AppHandle, Manager, WebviewWindow};
-use tauri_plugin_autostart::MacosLauncher;
 use supervisor::{
-    detect_node, default_port_file, LocalHttp, NodeServerLauncher, ServerLog, ServerState,
+    default_port_file, detect_node, LocalHttp, NodeServerLauncher, ServerLog, ServerState,
     Supervisor, SupervisorConfig, SysNodeProbe,
 };
+use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri_plugin_autostart::MacosLauncher;
 
 /// 壳侧共享状态：supervisor 单线程持有（monitor 线程），退出时由主事件循环取走清理
 struct ShellState {
@@ -24,7 +24,10 @@ struct ShellState {
 /// 解析 ui-server 入口（dist/main.mjs）：
 ///   env 覆盖 > 相对 cwd 候选（dev：本仓 dist，防 resource_dir 内旧装配快照静默胜出）
 ///   > resource_dir 打包布局（release：cwd 无仓库，bundle resources 内 ui-server/dist 必中）
-fn resolve_server_entry(cwd: Option<&std::path::Path>, resource_dir: Option<&std::path::Path>) -> String {
+fn resolve_server_entry(
+    cwd: Option<&std::path::Path>,
+    resource_dir: Option<&std::path::Path>,
+) -> String {
     if let Some(p) = std::env::var_os("APPLIFT_UI_SERVER_ENTRY") {
         return p.to_string_lossy().into_owned();
     }
@@ -155,7 +158,6 @@ fn urlencoding_min(s: &str) -> String {
 pub fn run() {
     let supervisor: Arc<Mutex<Option<Supervisor>>> = Arc::new(Mutex::new(None));
 
-
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // 二次启动：唤起既有主窗口
@@ -232,7 +234,13 @@ pub fn run() {
         .run(move |app, event| {
             match event {
                 tauri::RunEvent::Exit => {
-                    if let Some(sup) = app.state::<ShellState>().supervisor.lock().unwrap().as_mut() {
+                    if let Some(sup) = app
+                        .state::<ShellState>()
+                        .supervisor
+                        .lock()
+                        .unwrap()
+                        .as_mut()
+                    {
                         sup.shutdown();
                     }
                 }
@@ -252,7 +260,8 @@ mod tests {
 
     /// 空临时目录作 cwd：cwd 候选必然全 miss（隔离仓库真实 dist，测优先级本身）
     fn empty_cwd(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("applift-shell-cwd-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("applift-shell-cwd-{tag}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

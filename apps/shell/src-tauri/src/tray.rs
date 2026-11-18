@@ -26,7 +26,11 @@ const TRAY_ICON_PX: u32 = 44;
 
 /// 右键菜单规格：(id, label)。注册与展示分离，命令 id 即分发键
 pub fn menu_spec() -> [(&'static str, &'static str); 3] {
-    [("open_main", "打开主窗口"), ("refresh_now", "立即刷新"), ("quit", "退出 applift")]
+    [
+        ("open_main", "打开主窗口"),
+        ("refresh_now", "立即刷新"),
+        ("quit", "退出 applift"),
+    ]
 }
 
 /// 未读数 → 托盘数字文案：0=清空（None）；1..=99 直显；>99 折叠 99+
@@ -56,8 +60,16 @@ pub fn tray_icon_rgba(size: u32) -> Vec<u8> {
     };
     // brand 1024 坐标 → 归一化（留 6% 边距让剪影不顶满格子）
     let n = |v: f64| (v / 1024.0 - 0.06) / 0.88;
-    let outer = [(n(512.0), n(232.0)), (n(268.0), n(792.0)), (n(756.0), n(792.0))];
-    let counter = [(n(512.0), n(396.0)), (n(580.0), n(566.0)), (n(444.0), n(566.0))];
+    let outer = [
+        (n(512.0), n(232.0)),
+        (n(268.0), n(792.0)),
+        (n(756.0), n(792.0)),
+    ];
+    let counter = [
+        (n(512.0), n(396.0)),
+        (n(580.0), n(566.0)),
+        (n(444.0), n(566.0)),
+    ];
     // 横梁内衬：字腔中补回的横杠（brand y 512-592 区间、腿内侧之间）
     let bar = |nx: f64, ny: f64| -> bool {
         let (bx, by) = ((nx * 0.88 + 0.06) * 1024.0, (ny * 0.88 + 0.06) * 1024.0); // 归一化 → brand
@@ -107,7 +119,11 @@ pub fn popup_origin(
 
 /// tauri Rect → 物理像素四元组（x, y, w, h）；Logical 分量按 scale 折算
 pub fn rect_to_physical(rect: tauri::Rect, scale: f64) -> (f64, f64, f64, f64) {
-    let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
     match (rect.position, rect.size) {
         (Position::Physical(p), Size::Physical(s)) => {
             (p.x as f64, p.y as f64, s.width as f64, s.height as f64)
@@ -132,7 +148,8 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
     for (id, label) in menu_spec() {
         menu.append(&MenuItem::with_id(app, id, label, true, None::<&str>)?)?;
     }
-    let icon = tauri::image::Image::new_owned(tray_icon_rgba(TRAY_ICON_PX), TRAY_ICON_PX, TRAY_ICON_PX);
+    let icon =
+        tauri::image::Image::new_owned(tray_icon_rgba(TRAY_ICON_PX), TRAY_ICON_PX, TRAY_ICON_PX);
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
         .tooltip("applift")
@@ -194,7 +211,12 @@ pub(crate) fn request_refresh(app: &AppHandle) {
 
 fn current_port(app: &AppHandle) -> Option<u16> {
     let state = app.state::<ShellState>();
-    let port = state.supervisor.lock().unwrap().as_ref().and_then(|s| s.port());
+    let port = state
+        .supervisor
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|s| s.port());
     port
 }
 
@@ -261,8 +283,12 @@ fn position_and_show(app: &AppHandle, win: &WebviewWindow, rect: Option<tauri::R
     let (pw, ph) = (POPUP_SIZE.0 * scale, POPUP_SIZE.1 * scale);
     let monitor = app.primary_monitor().ok().flatten();
     // 屏幕本地坐标 + 显示器原点（多屏时主屏原点通常即全局原点）
-    let screen = monitor.as_ref().map(|m| (m.size().width as f64, m.size().height as f64));
-    let origin = monitor.as_ref().map(|m| (m.position().x as f64, m.position().y as f64));
+    let screen = monitor
+        .as_ref()
+        .map(|m| (m.size().width as f64, m.size().height as f64));
+    let origin = monitor
+        .as_ref()
+        .map(|m| (m.position().x as f64, m.position().y as f64));
     let (x, y) = match rect.map(|r| rect_to_physical(r, scale)) {
         Some(tray) => {
             let (mut lx, ly) = popup_origin(tray, (pw, ph), screen);
@@ -280,12 +306,12 @@ fn position_and_show(app: &AppHandle, win: &WebviewWindow, rect: Option<tauri::R
             _ => (0.0, 0.0),
         },
     };
-    let _ = win.set_position(Position::Physical(PhysicalPosition::new(x as i32, y as i32)));
+    let _ = win.set_position(Position::Physical(PhysicalPosition::new(
+        x as i32, y as i32,
+    )));
     let _ = win.show();
     let _ = win.set_focus();
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -339,13 +365,19 @@ mod tests {
         let (sx, sy) = p(512.0, 208.0); // 顶部脱离四芒火花中心
         assert!(px(sx, sy) > 0, "四芒火花中心实心");
         // RGB 全 0（macOS template 按 alpha 取形）
-        assert!(rgba.chunks_exact(4).all(|c| c[0] == 0 && c[1] == 0 && c[2] == 0));
+        assert!(rgba
+            .chunks_exact(4)
+            .all(|c| c[0] == 0 && c[1] == 0 && c[2] == 0));
     }
 
     #[test]
     fn popup_origin_centers_below_tray() {
         // macOS 菜单栏：托盘在屏幕顶部 → popup 正下方
-        let (x, y) = popup_origin((500.0, 0.0, 44.0, 44.0), (360.0, 480.0), Some((1920.0, 1080.0)));
+        let (x, y) = popup_origin(
+            (500.0, 0.0, 44.0, 44.0),
+            (360.0, 480.0),
+            Some((1920.0, 1080.0)),
+        );
         assert!((x - (500.0 + 22.0 - 180.0)).abs() < 1e-9);
         assert!((y - (44.0 + EDGE_GAP)).abs() < 1e-9);
     }
@@ -353,10 +385,18 @@ mod tests {
     #[test]
     fn popup_origin_clamps_left_and_flips_above() {
         // 托盘贴左缘：x 夹取到 EDGE_GAP
-        let (x, _) = popup_origin((0.0, 1040.0, 44.0, 44.0), (360.0, 480.0), Some((1920.0, 1080.0)));
+        let (x, _) = popup_origin(
+            (0.0, 1040.0, 44.0, 44.0),
+            (360.0, 480.0),
+            Some((1920.0, 1080.0)),
+        );
         assert!((x - EDGE_GAP).abs() < 1e-9);
         // Windows 底部任务栏托盘：下方放不下 → 翻转到托盘上方
-        let (_, y) = popup_origin((1000.0, 1040.0, 44.0, 44.0), (360.0, 480.0), Some((1920.0, 1080.0)));
+        let (_, y) = popup_origin(
+            (1000.0, 1040.0, 44.0, 44.0),
+            (360.0, 480.0),
+            Some((1920.0, 1080.0)),
+        );
         assert!((y - (1040.0 - 480.0 - EDGE_GAP)).abs() < 1e-9);
         // 无屏幕信息：不夹取不翻转
         let (x, y) = popup_origin((0.0, 1040.0, 44.0, 44.0), (360.0, 480.0), None);
@@ -380,11 +420,27 @@ mod tests {
 
     #[test]
     fn popup_url_fresh_requires_exact_kv() {
-        assert!(popup_url_fresh(Some("/popup"), Some("serverPort=47600"), 47600));
-        assert!(popup_url_fresh(Some("/popup"), Some("a=1&serverPort=5&b=2"), 5), "多键精确命中");
-        assert!(!popup_url_fresh(Some("/popup"), Some("serverPort=12"), 123), "前缀误判拒绝");
-        assert!(!popup_url_fresh(Some("/popup"), Some("xserverPort=123"), 123), "伪键拒绝");
-        assert!(!popup_url_fresh(Some("/overview"), Some("serverPort=123"), 123), "fragment 不符");
+        assert!(popup_url_fresh(
+            Some("/popup"),
+            Some("serverPort=47600"),
+            47600
+        ));
+        assert!(
+            popup_url_fresh(Some("/popup"), Some("a=1&serverPort=5&b=2"), 5),
+            "多键精确命中"
+        );
+        assert!(
+            !popup_url_fresh(Some("/popup"), Some("serverPort=12"), 123),
+            "前缀误判拒绝"
+        );
+        assert!(
+            !popup_url_fresh(Some("/popup"), Some("xserverPort=123"), 123),
+            "伪键拒绝"
+        );
+        assert!(
+            !popup_url_fresh(Some("/overview"), Some("serverPort=123"), 123),
+            "fragment 不符"
+        );
         assert!(!popup_url_fresh(None, Some("serverPort=123"), 123));
         assert!(!popup_url_fresh(Some("/popup"), None, 123));
     }
