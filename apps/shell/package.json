@@ -1,0 +1,16 @@
+{
+  "name": "@applift/shell",
+  "version": "0.1.0",
+  "private": true,
+  "description": "applift-ui Tauri 桌面壳（不进 pnpm workspace：仅 tauri CLI devDependency）",
+  "scripts": {
+    "tauri": "tauri",
+    "prepare:frontend": "node scripts/prepare-frontend.mjs",
+    "prepare:bundle": "node scripts/prepare-server-bundle.mjs",
+    "dev": "npm run prepare:frontend && npm run prepare:bundle && tauri dev",
+    "build": "npm run prepare:frontend && npm run prepare:bundle && tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

@@ -1,0 +1,425 @@
+import { afterAll, describe, expect, it } from "vitest";
+import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { request } from "node:http";
+import { join } from "node:path";
+import { startUiServer } from "./http.js";
+import { createSettingsRoutes, createTaskRoutes, type BetaDryRunReport } from "./routes.js";
+import { ProjectRegistry } from "./registry.js";
+import { AppliftRunner, type RunResult } from "./runner.js";
+import { clampIntervalSettings } from "./aggregator.js";
+
+const tmpDirs: string[] = [];
+afterAll(async () => {
+  await Promise.all(tmpDirs.map((d) => rm(d, { recursive: true, force: true })));
+});
+
+/** dry-run 桩：断言入参形状（beta <platform> --dry-run --json）并回固定报告 */
+const DRY_RUN_REPORT: BetaDryRunReport = {
+  platform: "android",
+  provider: "stub-update",
+  recommendation: "ota",
+  confidence: "high",
+  evidence: [{ path: "src/a.ts", rule: "JS 层" }],
+  note: "判定：ota（high）",
+};
+
+/** runner 桩：不 spawn，直接回放 run 结果并记录调用 */
+function recordingRunner(
+  calls: Array<{ args: string[]; cwd?: string }>,
+  cwd: string,
+  result: RunResult,
+): AppliftRunner {
+  const r = new AppliftRunner({ cwd });
+  r.run = (args) => {
+    calls.push({ args, cwd });
+    return Promise.resolve(result);
+  };
+  return r;
+}
+
+describe("任务路由（POST /api/tasks/beta + /api/tasks/dry-run）", () => {
+  it("dry-run：runner 收 [beta,platform,--dry-run,--json] + 项目 cwd；报告透传", async () => {
+    const calls: Array<{ args: string[]; cwd?: string }> = [];
+    const storeDir = await mkdtemp(join(tmpdir(), "tasks-test-"));
+    tmpDirs.push(storeDir);
+    const projDir = join(storeDir, "my-app");
+    await mkdir(projDir, { recursive: true });
+    const registry = new ProjectRegistry(join(storeDir, "projects.json"));
+    const entry = await registry.add(projDir);
+
+    const okResult: RunResult = {
+      code: 0,
+      stdout: JSON.stringify(DRY_RUN_REPORT),
+      stderr: "",
+    };
+    const runnerFactory = (cwd: string): AppliftRunner => recordingRunner(calls, cwd, okResult);
+
+    const staticDir = await mkdtemp(join(tmpdir(), "tasks-static-"));
+    tmpDirs.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<html>t</html>", "utf8");
+    const srv = await startUiServer({
+      staticDir,
+      registry,
+      extraApiHandlers: [
+        createTaskRoutes({ registry, runnerFactory, startBetaTask: () => "never" }),
+      ],
+    });
+
+    const res = await fetch(`http://127.0.0.1:${srv.port}/api/tasks/dry-run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId: entry.id, platform: "android" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; report: BetaDryRunReport };
+    expect(body.ok).toBe(true);
+    expect(body.report.recommendation).toBe("ota");
+    expect(body.report.evidence[0]?.path).toBe("src/a.ts");
+    expect(calls).toEqual([{ args: ["beta", "android", "--dry-run", "--json"], cwd: projDir }]);
+    await srv.close();
+  });
+
+  it("beta：cwd 解析 + --delivery 白名单透传（旗标自动补）；其余 args 400", async () => {
+    const storeDir = await mkdtemp(join(tmpdir(), "tasks-test2-"));
+    tmpDirs.push(storeDir);
+    const projDir = join(storeDir, "app2");
+    await mkdir(projDir, { recursive: true });
+    const registry = new ProjectRegistry(join(storeDir, "projects.json"));
+    const entry = await registry.add(projDir);
+
+    const started: Array<{ projectId: string; platform: string; cwd: string; args?: string[] }> =
+      [];
+    const staticDir = await mkdtemp(join(tmpdir(), "tasks-static2-"));
+    tmpDirs.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<html>t</html>", "utf8");
+    const srv = await startUiServer({
+      staticDir,
+      registry,
+      extraApiHandlers: [
+        createTaskRoutes({
+          registry,
+          runnerFactory: (cwd) => new AppliftRunner({ cwd }),
+          startBetaTask: (projectId, platform, opts) => {
+            started.push({ projectId, platform, ...opts });
+            return `task-${started.length}`;
+          },
+        }),
+      ],
+    });
+    const base = `http://127.0.0.1:${srv.port}`;
+
+    // 白名单内：--delivery native → 旗标前缀拼接透传
+    const res = await fetch(`${base}/api/tasks/beta`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        projectId: entry.id,
+        platform: "harmony",
+        args: ["--delivery", "native"],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; taskId: string };
+    expect(body).toEqual({ ok: true, taskId: "task-1" });
+    expect(started).toEqual([
+      {
+        projectId: entry.id,
+        platform: "harmony",
+        cwd: projDir,
+        args: ["--interactive-events", "--delivery", "native"],
+      },
+    ]);
+
+    // 白名单外（--yes / --note / 未知旗标）→ 400，任务不发起
+    for (const bad of [
+      ["--yes"],
+      ["--note", "x"],
+      ["--delivery", "uncertain"],
+      ["--cwd", "/etc"],
+    ]) {
+      const r = await fetch(`${base}/api/tasks/beta`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectId: entry.id, platform: "android", args: bad }),
+      });
+      expect(r.status, `args=${bad.join(",")}`).toBe(400);
+    }
+    expect(started).toHaveLength(1);
+    await srv.close();
+  });
+
+  it("Host 校验：非本机 Host → 403 不发起（与 shutdown 同款）", async () => {
+    const storeDir = await mkdtemp(join(tmpdir(), "tasks-test5-"));
+    tmpDirs.push(storeDir);
+    const registry = new ProjectRegistry(join(storeDir, "projects.json"));
+    const entry = await registry.add(join(storeDir, "app5"));
+    const started: string[] = [];
+    const staticDir = await mkdtemp(join(tmpdir(), "tasks-static5-"));
+    tmpDirs.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<html>t</html>", "utf8");
+    const srv = await startUiServer({
+      staticDir,
+      registry,
+      extraApiHandlers: [
+        createTaskRoutes({
+          registry,
+          runnerFactory: (cwd) => new AppliftRunner({ cwd }),
+          startBetaTask: (_p, plat) => {
+            started.push(plat);
+            return "t";
+          },
+        }),
+      ],
+    });
+
+    // fetch 按 spec 静默丢弃 Host 禁改头——用 node:http 原生请求带伪造 Host
+    const evil = await new Promise<{ status: number; body: { ok: boolean } }>((resolve) => {
+      const req = request(
+        {
+          host: "127.0.0.1",
+          port: srv.port,
+          path: "/api/tasks/beta",
+          method: "POST",
+          headers: { host: "evil.com", "content-type": "application/json" },
+        },
+        (r) => {
+          let d = "";
+          r.on("data", (c) => (d += c));
+          r.on("end", () => resolve({ status: r.statusCode ?? 0, body: JSON.parse(d) }));
+        },
+      );
+      req.end(JSON.stringify({ projectId: entry.id, platform: "android" }));
+    });
+    expect(evil.status).toBe(403);
+    expect(evil.body.ok).toBe(false);
+    // dry-run 同款防护
+    const evil2 = await new Promise<number>((resolve) => {
+      const req = request(
+        {
+          host: "127.0.0.1",
+          port: srv.port,
+          path: "/api/tasks/dry-run",
+          method: "POST",
+          headers: { host: "evil.example", "content-type": "application/json" },
+        },
+        (r) => resolve(r.statusCode ?? 0),
+      );
+      req.end(JSON.stringify({ projectId: entry.id, platform: "android" }));
+    });
+    expect(evil2).toBe(403);
+    expect(started).toHaveLength(0);
+    await srv.close();
+  });
+
+  it("未知项目 404；非法平台 400；非 POST 405", async () => {
+    const storeDir = await mkdtemp(join(tmpdir(), "tasks-test3-"));
+    tmpDirs.push(storeDir);
+    const registry = new ProjectRegistry(join(storeDir, "projects.json"));
+    const entry = await registry.add(join(storeDir, "app3"));
+
+    const staticDir = await mkdtemp(join(tmpdir(), "tasks-static3-"));
+    tmpDirs.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<html>t</html>", "utf8");
+    const srv = await startUiServer({
+      staticDir,
+      registry,
+      extraApiHandlers: [
+        createTaskRoutes({
+          registry,
+          runnerFactory: (cwd) => new AppliftRunner({ cwd }),
+          startBetaTask: () => "x",
+        }),
+      ],
+    });
+    const base = `http://127.0.0.1:${srv.port}`;
+
+    const miss = await fetch(`${base}/api/tasks/beta`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId: "nope", platform: "android" }),
+    });
+    expect(miss.status).toBe(404);
+
+    const badPlat = await fetch(`${base}/api/tasks/beta`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId: entry.id, platform: "windows" }),
+    });
+    expect(badPlat.status).toBe(400);
+
+    const get = await fetch(`${base}/api/tasks/beta`);
+    expect(get.status).toBe(405);
+    await srv.close();
+  });
+
+  it("dry-run 输出不可解析 → 502 带 error", async () => {
+    const storeDir = await mkdtemp(join(tmpdir(), "tasks-test4-"));
+    tmpDirs.push(storeDir);
+    const projDir = join(storeDir, "app4");
+    await mkdir(projDir, { recursive: true });
+    const registry = new ProjectRegistry(join(storeDir, "projects.json"));
+    const entry = await registry.add(projDir);
+
+    const staticDir = await mkdtemp(join(tmpdir(), "tasks-static4-"));
+    tmpDirs.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<html>t</html>", "utf8");
+    const srv = await startUiServer({
+      staticDir,
+      registry,
+      extraApiHandlers: [
+        createTaskRoutes({
+          registry,
+          runnerFactory: () =>
+            new AppliftRunner({
+              bin: [process.execPath, "-e", 'process.stdout.write("not json");process.exit(1)'],
+            }),
+          startBetaTask: () => "x",
+        }),
+      ],
+    });
+
+    const res = await fetch(`http://127.0.0.1:${srv.port}/api/tasks/dry-run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId: entry.id, platform: "ios" }),
+    });
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("无法解析");
+    await srv.close();
+  });
+});
+
+describe("任务去重（POST /api/tasks/beta 409）", () => {
+  it("ws 桥拒绝同项目同平台重复任务 → 409 且 error 带既有 taskId", async () => {
+    const storeDir = await mkdtemp(join(tmpdir(), "tasks-dedupe-"));
+    tmpDirs.push(storeDir);
+    const projDir = join(storeDir, "app");
+    await mkdir(projDir, { recursive: true });
+    const registry = new ProjectRegistry(join(storeDir, "projects.json"));
+    const entry = await registry.add(projDir);
+    const staticDir = await mkdtemp(join(tmpdir(), "tasks-dedupe-static-"));
+    tmpDirs.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<html>t</html>", "utf8");
+    const srv = await startUiServer({
+      staticDir,
+      registry,
+      extraApiHandlers: [
+        createTaskRoutes({
+          registry,
+          runnerFactory: (cwd) => new AppliftRunner({ cwd }),
+          startBetaTask: (projectId, platform) => {
+            if (projectId === entry.id && platform === "android")
+              throw new Error(`该项目 android 平台已有进行中的任务（taskId: existed-1）`);
+            return "new-1";
+          },
+        }),
+      ],
+    });
+    const res = await fetch(`http://127.0.0.1:${srv.port}/api/tasks/beta`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId: entry.id, platform: "android" }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("existed-1");
+    await srv.close();
+  });
+});
+
+describe("PUT /api/settings（轮询档位热接入）", () => {
+  it("clamp 护栏 + aggregator.setIntervals 生效 + settings.json 持久化", async () => {
+    const storeDir = await mkdtemp(join(tmpdir(), "settings-test-"));
+    tmpDirs.push(storeDir);
+    const settingsPath = join(storeDir, "settings.json");
+    const applied: Array<{ fg: number; bg: number }> = [];
+    const staticDir = await mkdtemp(join(tmpdir(), "settings-static-"));
+    tmpDirs.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<html>t</html>", "utf8");
+    const srv = await startUiServer({
+      staticDir,
+      extraApiHandlers: [
+        createSettingsRoutes({
+          setIntervals: (fg, bg) => applied.push({ fg, bg }),
+          settingsPath,
+        }),
+      ],
+    });
+    const base = `http://127.0.0.1:${srv.port}`;
+
+    // 正常值：毫秒直传
+    const ok = await fetch(`${base}/api/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ foregroundMs: 120_000, backgroundMs: 3_600_000 }),
+    });
+    expect(ok.status).toBe(200);
+    expect(applied).toEqual([{ fg: 120_000, bg: 3_600_000 }]);
+    expect(JSON.parse(await readFile(settingsPath, "utf8"))).toEqual({
+      foregroundMs: 120_000,
+      backgroundMs: 3_600_000,
+    });
+
+    // 低于护栏：clamp 到最短档（前台 1min / 后台 15min）
+    const clamped = await fetch(`${base}/api/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ foregroundMs: 1_000, backgroundMs: 5_000 }),
+    });
+    expect(clamped.status).toBe(200);
+    expect(applied[1]).toEqual({ fg: 60_000, bg: 900_000 });
+
+    // 非数字 → 400；非 PUT → 405
+    // 非对象 body（字符串/数字/数组）→ 400，不静默重置默认档
+    for (const bad of ['"fast"', "123", "[]"]) {
+      const r = await fetch(`${base}/api/settings`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: bad,
+      });
+      expect(r.status, `body=${bad}`).toBe(400);
+    }
+    const bad = await fetch(`${base}/api/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ foregroundMs: "fast" }),
+    });
+    expect(bad.status).toBe(400);
+    const wrongMethod = await fetch(`${base}/api/settings`, { method: "GET" });
+    expect(wrongMethod.status).toBe(405);
+    // 非本机 Host → 403（no-cors 写防护，原始 host 头）
+    const forbidden = await new Promise<{ status: number }>((resolve) => {
+      const req = request(
+        {
+          host: "127.0.0.1",
+          port: srv.port,
+          path: "/api/settings",
+          method: "PUT",
+          headers: { host: "evil.example" },
+        },
+        (res) => {
+          res.resume();
+          resolve({ status: res.statusCode ?? 0 });
+        },
+      );
+      req.end();
+    });
+    expect(forbidden.status).toBe(403);
+    await srv.close();
+  });
+
+  it("clampIntervalSettings：缺省/非有限值回落默认档（5min/60min）", () => {
+    expect(clampIntervalSettings(undefined, undefined)).toEqual({
+      foregroundMs: 300_000,
+      backgroundMs: 3_600_000,
+    });
+    expect(clampIntervalSettings(Number.NaN, Infinity)).toEqual({
+      foregroundMs: 300_000,
+      backgroundMs: 3_600_000,
+    });
+  });
+});

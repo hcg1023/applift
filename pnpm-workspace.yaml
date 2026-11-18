@@ -1,5 +1,8 @@
 packages:
   - packages/*
+  - apps/*
+  # Tauri 壳独立于 pnpm workspace（自带 node_modules/@tauri-apps/cli，不参与 -r build）
+  - "!apps/shell"
 allowBuilds:
   esbuild: true
   simple-git-hooks: true

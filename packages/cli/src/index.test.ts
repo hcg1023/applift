@@ -8,7 +8,8 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 // 热更路径会写 history.jsonl：APPLIFT_HOME 必须在 core 加载前重定向（该常量 import 时求值），
 // 否则测试污染真实 ~/.applift（此前 release 路径一直隐性依赖真实机器凭据，重定向后显形）。
@@ -427,33 +428,34 @@ describe("声明式 framework 守卫（发布命令无插件声明必须报错�
     }
   });
 });
-describe("beta/release 热更路由集成（判定 → 推荐 → 热更执行）", () => {
-  function otaProviderProject(recommendation: "ota" | "native" | "uncertain"): string {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-ota-"));
-    fs.writeFileSync(
-      path.join(dir, "package.json"),
-      JSON.stringify({ name: "ota-demo", dependencies: { "react-native": "0.84.0" } }),
-    );
-    fs.writeFileSync(
-      path.join(dir, "applift.config.ts"),
-      [
-        "import { rnFramework } from '@applift/core';",
-        "export default {",
-        "  plugins: [rnFramework(), {",
-        "    name: 'stub-update',",
-        "    'update:register': (providers) => providers.push({",
-        "      id: 'stub-update', frameworks: ['rn'],",
-        `      judge: () => ({ recommendation: '${recommendation}', confidence: 'high', evidence: [{ path: 'src/a.ts', rule: 'JS 层', note: '' }] }),`,
-        "      publishToBeta: async (ctx) => { (globalThis.__otaCaptured ??= []).push({ kind: 'publishToBeta', platform: ctx.platform }); return { versionName: '4.0.0-ota.1', versionId: 1 }; },",
-        "      promoteToProd: async (ctx) => { (globalThis.__otaCaptured ??= []).push({ kind: 'promoteToProd', platform: ctx.platform }); return { versionName: '4.0.0-ota.1' }; },",
-        "    }),",
-        "  }],",
-        "};",
-      ].join("\n"),
-    );
-    return dir;
-  }
+/** 桩热更工程：RN framework + stub update provider（judge 可配置推荐值；platforms 缺省全平台命中） */
+function otaProviderProject(recommendation: "ota" | "native" | "uncertain"): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-ota-"));
+  fs.writeFileSync(
+    path.join(dir, "package.json"),
+    JSON.stringify({ name: "ota-demo", dependencies: { "react-native": "0.84.0" } }),
+  );
+  fs.writeFileSync(
+    path.join(dir, "applift.config.ts"),
+    [
+      "import { rnFramework } from '@applift/core';",
+      "export default {",
+      "  plugins: [rnFramework(), {",
+      "    name: 'stub-update',",
+      "    'update:register': (providers) => providers.push({",
+      "      id: 'stub-update', frameworks: ['rn'],",
+      `      judge: () => ({ recommendation: '${recommendation}', confidence: 'high', evidence: [{ path: 'src/a.ts', rule: 'JS 层', note: '' }] }),`,
+      "      publishToBeta: async (ctx) => { (globalThis.__otaCaptured ??= []).push({ kind: 'publishToBeta', platform: ctx.platform }); return { versionName: '4.0.0-ota.1', versionId: 1 }; },",
+      "      promoteToProd: async (ctx) => { (globalThis.__otaCaptured ??= []).push({ kind: 'promoteToProd', platform: ctx.platform }); return { versionName: '4.0.0-ota.1' }; },",
+      "    }),",
+      "  }],",
+      "};",
+    ].join("\n"),
+  );
+  return dir;
+}
 
+describe("beta/release 热更路由集成（判定 → 推荐 → 热更执行）", () => {
   it("beta 判定 ota + --yes → 走热更（publishToBeta），不进原生管线", async () => {
     const dir = otaProviderProject("ota");
     const slot = globalThis as { __otaCaptured?: Array<{ kind: string; platform: string }> };
@@ -541,6 +543,29 @@ describe("beta/release 热更路由集成（判定 → 推荐 → 热更执行�
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+  it("release --dry-run 伪 TTY 下不弹 select（零侵入不变量：dry-run 自动用推荐值出计划）", async () => {
+    // 回归：resolveDeliveryMode 移除 dryRun 非交互触发后，TTY 下 release --dry-run
+    // 会落入 p.select 挂死伪 TTY 自动化；调用点须以 yes 代答复刻旧语义
+    const realTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+    const dir = otaProviderProject("ota");
+    const slot = globalThis as { __otaCaptured?: unknown[] };
+    slot.__otaCaptured = [];
+    try {
+      await program.parseAsync(["release", "harmony", "--cwd", dir, "--dry-run"], {
+        from: "user",
+      });
+      expect(slot.__otaCaptured).toEqual([]); // 判定走非交互分支出计划，未挂交互等待
+    } finally {
+      Object.defineProperty(process.stdout, "isTTY", {
+        value: realTTY,
+        configurable: true,
+      });
+
+      delete slot.__otaCaptured;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   it("非交互（无 TTY）且判定 uncertain、未给 --delivery/--yes → 直接报错要求显式指定，不挂交互", async () => {
     const dir = otaProviderProject("uncertain");
@@ -601,6 +626,134 @@ describe("beta/release 热更路由集成（判定 → 推荐 → 热更执行�
           from: "user",
         }),
       ).rejects.toThrow(/判定为原生发版[\s\S]*--delivery native/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("beta --dry-run --json 判定预览（发版向导第一步，不发布）", () => {
+  it("beta <platform> --dry-run --json 输出判定预览，不进任何发布分支", async () => {
+    const dir = otaProviderProject("ota");
+    const slot = globalThis as { __otaCaptured?: unknown[] };
+    slot.__otaCaptured = [];
+    const out = vi.spyOn(process.stdout, "write").mockImplementation((b) => {
+      return true;
+    });
+    try {
+      await program.parseAsync(["beta", "android", "--cwd", dir, "--dry-run", "--json"], {
+        from: "user",
+      });
+      // stdout 纯 JSON 契约：整体可解析 = 判定日志（clack log 走 stderr）未混入
+      const r = JSON.parse(out.mock.calls.flat().join("")) as {
+        platform: string;
+        provider: string | null;
+        recommendation: string | null;
+        confidence: string | null;
+        evidence: Array<{ path: string; rule: string }>;
+        note: string;
+      };
+      expect(r.platform).toBe("android");
+      expect(r.provider).toBe("stub-update");
+      expect(r.recommendation).toBe("ota");
+      expect(r.confidence).toBe("high");
+      expect(r.evidence.length).toBeGreaterThan(0);
+      expect(r.evidence[0]).toMatchObject({ path: "src/a.ts", rule: "JS 层" });
+      expect(r.note).toContain("ota");
+      // 不发布：不调热更 provider，history 无该工程新条目
+      expect(slot.__otaCaptured).toEqual([]);
+      const entries = core.readEntries(
+        { channel: "stub-update" },
+        path.join(testHome, "history.jsonl"),
+      );
+      expect(entries.filter((e) => e.cwd === dir)).toHaveLength(0);
+    } finally {
+      out.mockRestore();
+      delete slot.__otaCaptured;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("beta --dry-run 无 provider 平台：provider/recommendation=null，原生语义", async () => {
+    // 桩 provider platforms 只含 android → beta harmony 路由 null（未接入热更）
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-dry-native-"));
+    fs.writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({ name: "dry-native", dependencies: { "react-native": "0.84.0" } }),
+    );
+    fs.writeFileSync(
+      path.join(dir, "applift.config.ts"),
+      [
+        "import { rnFramework } from '@applift/core';",
+        "export default {",
+        "  plugins: [rnFramework(), {",
+        "    name: 'scoped-update',",
+        "    'update:register': (providers) => providers.push({",
+        "      id: 'scoped-update', frameworks: ['rn'], platforms: ['android'],",
+        "      judge: () => ({ recommendation: 'ota', confidence: 'high', evidence: [] }),",
+        "      publishToBeta: async () => { throw new Error('不应走热更'); },",
+        "      promoteToProd: async () => ({ versionName: 'x' }),",
+        "    }),",
+        "  }],",
+        "};",
+      ].join("\n"),
+    );
+    const out = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      await program.parseAsync(["beta", "harmony", "--cwd", dir, "--dry-run", "--json"], {
+        from: "user",
+      });
+      const r = JSON.parse(out.mock.calls.flat().join("")) as {
+        provider: string | null;
+        recommendation: string | null;
+        confidence: string | null;
+        evidence: unknown[];
+        note: string;
+      };
+      expect(r.provider).toBeNull();
+      expect(r.recommendation).toBeNull();
+      expect(r.confidence).toBeNull();
+      expect(r.evidence).toEqual([]);
+      expect(r.note).toContain("原生");
+    } finally {
+      out.mockRestore();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("beta --dry-run 无 platform：入口守卫拒绝（多渠道并行无判定语义，不静默真实发布）", async () => {
+    // 多渠道 fixture：若无守卫，此调用会进入 pgyer 真实发布流程（探测产物 → 渠道上传 → 写 history）
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-dry-guard-"));
+    fs.writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({
+        name: "dry-guard",
+        version: "4.0.0",
+        dependencies: { "react-native": "0.84.0" },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(dir, "applift.config.ts"),
+      "import { rnFramework } from '@applift/core';\nexport default { plugins: [rnFramework()], beta: { pgyer: { platforms: ['android'] } } };",
+    );
+    try {
+      await expect(
+        program.parseAsync(["beta", "--cwd", dir, "--dry-run", "--yes"], { from: "user" }),
+      ).rejects.toThrow(/--dry-run 仅支持 beta <platform>/);
+      // 守卫在任何发布路径前中止：history 无该工程条目
+      const entries = core.readEntries({}, path.join(testHome, "history.jsonl"));
+      expect(entries.filter((e) => e.cwd === dir)).toHaveLength(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("beta --json 无 --dry-run：明确报错（不静默接受无人消费的机读旗标）", async () => {
+    const dir = otaProviderProject("ota");
+    try {
+      await expect(
+        program.parseAsync(["beta", "android", "--cwd", dir, "--json"], { from: "user" }),
+      ).rejects.toThrow(/--json 当前仅支持 --dry-run 判定预览/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -713,4 +866,211 @@ describe("未接入热更的平台走原生（provider.platforms 过滤）", () 
     const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
     expect(pkg.version).toBe("4.0.0");
   });
+});
+describe("beta --interactive-events（NDJSON 事件流，子进程级）", () => {
+  const CLI_BIN = fileURLToPath(new URL("../dist/bin.mjs", import.meta.url));
+  // 子进程不继承测试进程的环境改写：APPLIFT_HOME 必须显式传（否则 history 写真实 ~/.applift）
+  const childEnv = { ...process.env, APPLIFT_HOME: testHome };
+
+  /** 逐行解析子进程 stdout 的 NDJSON；waitFor 按谓词等事件，result 即结果事件 */
+  function collectEvents(proc: ChildProcess) {
+    const lines: Array<Record<string, unknown>> = [];
+    const waiters: Array<{
+      test: (l: Record<string, unknown>) => boolean;
+      resolve: (l: Record<string, unknown>) => void;
+    }> = [];
+    let resultResolve: (l: Record<string, unknown>) => void;
+    const result = new Promise<Record<string, unknown>>((res) => (resultResolve = res));
+    let buf = "";
+    proc.stdout!.on("data", (d: Buffer) => {
+      buf += d.toString();
+      let i: number;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const raw = buf.slice(0, i).trim();
+        buf = buf.slice(i + 1);
+        if (!raw) continue;
+        let e: Record<string, unknown>;
+        try {
+          e = JSON.parse(raw) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        lines.push(e);
+        if (e.type === "result") resultResolve(e);
+        for (let k = waiters.length - 1; k >= 0; k--) {
+          if (waiters[k]!.test(e)) {
+            waiters[k]!.resolve(e);
+            waiters.splice(k, 1);
+          }
+        }
+      }
+    });
+    proc.stderr!.on("data", () => {}); // 排空防背压（判定日志走 stderr）
+    const waitFor = (test: (l: Record<string, unknown>) => boolean) =>
+      new Promise<Record<string, unknown>>((res) => {
+        const found = lines.find(test);
+        if (found) res(found);
+        else waiters.push({ test, resolve: res });
+      });
+    return { lines, waitFor, result };
+  }
+
+  const closed = (proc: ChildProcess) =>
+    new Promise<{ code: number | null }>((res) => proc.on("close", (code) => res({ code })));
+
+  it(
+    "判定确认经 stdin 回写后完成发布（hello → stage/judgement → confirm → result）",
+    { timeout: 60_000 },
+    async () => {
+      const dir = otaProviderProject("ota");
+      try {
+        const proc = spawn(
+          process.execPath,
+          [CLI_BIN, "beta", "android", "--interactive-events", "--cwd", dir],
+          { stdio: ["pipe", "pipe", "pipe"], env: childEnv },
+        );
+        const ev = collectEvents(proc);
+        const hello = await ev.waitFor((l) => l.type === "hello");
+        expect(ev.lines[0]).toBe(hello);
+        expect(hello).toMatchObject({ type: "hello", protocol: 1 });
+        const judge = await ev.waitFor((l) => l.type === "stage" && l.stage === "judge");
+        expect(judge).toBeDefined();
+        const judgement = (await ev.waitFor((l) => l.type === "judgement")) as {
+          recommendation: string;
+          provider: string;
+        };
+        expect(judgement.recommendation).toBe("ota");
+        expect(judgement.provider).toBe("stub-update");
+        const confirmEvt = (await ev.waitFor((l) => l.type === "confirm_required")) as {
+          id: string;
+          choices: Array<{ value: string; recommended?: boolean }>;
+        };
+        expect(confirmEvt.id).toBe("delivery");
+        expect(confirmEvt.choices.find((c) => c.value === "ota")?.recommended).toBe(true);
+        proc.stdin!.write(JSON.stringify({ type: "confirm", id: "delivery", value: "ota" }) + "\n");
+        await ev.waitFor((l) => l.type === "stage" && l.stage === "publish");
+        const result = (await ev.result) as { ok: boolean; summary: Record<string, unknown> };
+        expect(result.ok).toBe(true);
+        expect(result.summary).toMatchObject({
+          versionName: "4.0.0-ota.1",
+          channel: "stub-update",
+          mode: "ota",
+        });
+        expect(await closed(proc)).toMatchObject({ code: 0 });
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it(
+    "beta 无 --interactive-events：stdout 不是 NDJSON（零侵入）",
+    { timeout: 60_000 },
+    async () => {
+      const dir = otaProviderProject("ota");
+      try {
+        const { stdout } = spawnSync(
+          process.execPath,
+          [CLI_BIN, "beta", "android", "--yes", "--cwd", dir],
+          { encoding: "utf8", env: childEnv },
+        );
+        expect(stdout.split("\n")[0]!.startsWith("{")).toBe(false);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("多渠道并行（beta 无 platform）+ --interactive-events → 入口报错", async () => {
+    await expect(
+      program.parseAsync(["beta", "--interactive-events", "--cwd", process.cwd()], {
+        from: "user",
+      }),
+    ).rejects.toThrow(/--interactive-events 仅支持单平台路径/);
+  });
+
+  it("--interactive-events 与 --json 互斥（含 --dry-run 三 flag 同传）→ 入口报错", async () => {
+    await expect(
+      program.parseAsync(
+        ["beta", "android", "--interactive-events", "--json", "--dry-run", "--cwd", process.cwd()],
+        { from: "user" },
+      ),
+    ).rejects.toThrow(/--interactive-events 与 --json 互斥/);
+  });
+
+  it("--interactive-events + --bump（显式）→ 入口报错（bump 编排未事件化）", async () => {
+    await expect(
+      program.parseAsync(
+        ["beta", "android", "--interactive-events", "--bump", "--cwd", process.cwd()],
+        { from: "user" },
+      ),
+    ).rejects.toThrow(/--interactive-events 暂不支持 --bump/);
+  });
+
+  it(
+    "beta.autoBump=true + flag：不触发 bump 编排（confirm 回写即 explicit，绕过三态引导），stdout 流完整",
+    { timeout: 60_000 },
+    async () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "applift-autobump-"));
+      fs.writeFileSync(
+        path.join(dir, "package.json"),
+        JSON.stringify({
+          name: "ota-demo",
+          version: "4.0.0",
+          dependencies: { "react-native": "0.84.0" },
+        }),
+      );
+      fs.writeFileSync(
+        path.join(dir, "applift.config.ts"),
+        [
+          "import { rnFramework } from '@applift/core';",
+          "export default {",
+          "  beta: { autoBump: true },",
+          "  plugins: [rnFramework(), {",
+          "    name: 'stub-update',",
+          "    'update:register': (providers) => providers.push({",
+          "      id: 'stub-update', frameworks: ['rn'],",
+          "      judge: () => ({ recommendation: 'native', confidence: 'high', evidence: [{ path: 'src/native.kt', rule: '原生代码', note: '' }] }),",
+          "      publishToBeta: async () => { throw new Error('不应走热更'); },",
+          "      promoteToProd: async () => ({ versionName: 'x' }),",
+          "    }),",
+          "  }],",
+          "};",
+        ].join("\n"),
+      );
+      spawnSync("git", ["init", "-q"], { cwd: dir });
+      spawnSync("git", ["config", "user.email", "t@t"], { cwd: dir });
+      spawnSync("git", ["config", "user.name", "t"], { cwd: dir });
+      spawnSync("git", ["add", "-A"], { cwd: dir });
+      spawnSync("git", ["commit", "-qm", "init"], { cwd: dir });
+      try {
+        const proc = spawn(
+          process.execPath,
+          [CLI_BIN, "beta", "android", "--interactive-events", "--cwd", dir],
+          { stdio: ["pipe", "pipe", "pipe"], env: childEnv },
+        );
+        const ev = collectEvents(proc);
+        const confirmEvt = await ev.waitFor((l) => l.type === "confirm_required");
+        expect(confirmEvt.id).toBe("delivery");
+        proc.stdin!.write(
+          JSON.stringify({ type: "confirm", id: "delivery", value: "native" }) + "\n",
+        );
+        const result = (await ev.result) as { ok: boolean; error?: string };
+        expect(result.ok).toBe(false);
+        expect(result.error).toMatch(/未找到构建产物/);
+        // stdout 流完整性：所有行都是合法 NDJSON 事件（无 clack 文本混入）
+        expect(ev.lines.length).toBeGreaterThan(0);
+        expect(ev.lines.every((l) => typeof l.type === "string")).toBe(true);
+        expect(ev.lines[0]).toMatchObject({ type: "hello", protocol: 1 });
+        expect(ev.lines.at(-1)).toMatchObject({ type: "result", ok: false });
+        expect(await closed(proc)).toMatchObject({ code: 1 });
+        // autoBump 未生效：工程版本未被改动（bump 编排未被调用）
+        expect(JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")).version).toBe(
+          "4.0.0",
+        );
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });

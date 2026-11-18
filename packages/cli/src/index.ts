@@ -39,6 +39,7 @@ import {
   tagReleaseVersion,
   suggestFramework,
   collectReleaseDiff,
+  type DeliveryJudgement,
   routeDelivery,
   detectBundleIds,
   findArtifacts,
@@ -64,6 +65,7 @@ import {
   type FrameworkAdapter,
 } from "@applift/core";
 import { discoverXiaomiIcon, resolveChannelTarget } from "./target.js";
+import { EventChannel } from "./events.js";
 
 /** 发布链路守卫：framework 必须来自插件声明，未声明直接报错（不静默兜底） */
 function requireFramework(cwd: string, extra: FrameworkAdapter[]): FrameworkAdapter {
@@ -76,11 +78,26 @@ function requireFramework(cwd: string, extra: FrameworkAdapter[]): FrameworkAdap
   return framework;
 }
 
-/** 热更路由结果：mode=ota 时携带匹配的 provider；explicit=用户显式选定（--delivery 或交互 select） */
+/** 热更路由结果：mode=ota 时携带匹配的 provider；explicit=用户显式选定（--delivery 或交互 select）。
+ * judgement 随行携带：beta --dry-run 预览报告直接消费（provider/置信度/证据），不二次调 judge */
 interface DeliveryDecision {
   mode: "ota" | "native";
   provider?: UpdateProvider;
   explicit: boolean;
+  judgement?: DeliveryJudgement;
+}
+
+/** beta --dry-run --json 的 stdout 报告（applift-ui 发版向导第一步消费）：判定预览，不发布 */
+interface BetaDryRunReport {
+  platform: string;
+  /** 判定 provider id；null = 无热更 provider（原生路径） */
+  provider: string | null;
+  /** 判定推荐；null = 未路由（无 provider） */
+  recommendation: "ota" | "native" | "uncertain" | null;
+  confidence: "high" | "medium" | "low" | null;
+  evidence: Array<{ path: string; rule: string; note?: string }>;
+  /** 人读摘要（UI 直接展示） */
+  note: string;
 }
 
 /**
@@ -92,8 +109,15 @@ async function resolveDeliveryMode(
   cwd: string,
   host: PluginHost | undefined,
   framework: FrameworkAdapter,
-  opts: { yes: boolean; delivery?: string; json?: boolean; dryRun?: boolean },
+  opts: {
+    yes: boolean;
+    delivery?: string;
+    json?: boolean;
+    /** 预览模式（beta --dry-run）：只判定不解析投递方式——uncertain 照实携带不中止 */
+    preview?: boolean;
+  },
   platform?: string,
+  channel?: EventChannel,
 ): Promise<DeliveryDecision | null> {
   const providers: UpdateProvider[] = [];
   await host?.broadcast("update:register", { cwd }, providers);
@@ -108,6 +132,22 @@ async function resolveDeliveryMode(
   // 判定 ctx.anchor 与 diff 同锚点（collectReleaseDiff 内部即 latestVersionAnchor）；ref 兼容 tag 名与 sha
   const anchor = diff === null ? undefined : latestVersionAnchor(cwd)?.ref;
   const route = await routeDelivery(providers, { cwd, framework, anchor }, diff ?? [], platform);
+  // 事件流：judge 边界 + 判定结果（字段与 BetaDryRunReport 同口径）；无 route 时照实携带 null
+  if (channel) {
+    channel.emit({ type: "stage", stage: "judge" });
+    channel.emit({
+      type: "judgement",
+      platform: platform ?? "",
+      recommendation: route?.judgement.recommendation ?? null,
+      confidence: route?.judgement.confidence ?? null,
+      provider: route?.provider.id ?? null,
+      evidence: (route?.judgement.evidence ?? []).slice(0, 50).map((e) => ({
+        path: e.path,
+        rule: e.rule,
+        ...(e.note ? { note: e.note } : {}),
+      })),
+    });
+  }
   if (!route) {
     if (opts.delivery === "ota") {
       throw new Error(
@@ -117,19 +157,33 @@ async function resolveDeliveryMode(
     return null;
   }
   const { provider, judgement } = route;
-  p.log.info(
-    `本次发布判定：${pc.bold(judgement.recommendation)}（confidence: ${judgement.confidence}，by ${provider.id}）`,
-  );
-  for (const e of judgement.evidence.slice(0, 20)) {
-    p.log.message(`  ${pc.dim(e.path)} — ${e.rule}${e.note ? pc.dim(`（${e.note}）`) : ""}`);
+  if (!channel) {
+    // 判定日志：--json 下走 stderr（stdout 纯 JSON 契约）——clack log 写 stdout，混入会破坏整体可解析
+    if (opts.json)
+      process.stderr.write(
+        `本次发布判定：${judgement.recommendation}（confidence: ${judgement.confidence}，by ${provider.id}）\n`,
+      );
+    else
+      p.log.info(
+        `本次发布判定：${pc.bold(judgement.recommendation)}（confidence: ${judgement.confidence}，by ${provider.id}）`,
+      );
+    for (const e of judgement.evidence.slice(0, 20)) {
+      const line = `  ${pc.dim(e.path)} — ${e.rule}${e.note ? pc.dim(`（${e.note}）`) : ""}`;
+      if (opts.json) process.stderr.write(`${line}\n`);
+      else p.log.message(line);
+    }
   }
+  // 预览：不解析 mode、不确认、不中止（uncertain 是合法输出）——mode 占位 ota，预览调用方不消费它
+  if (opts.preview) return { mode: "ota", explicit: false, provider, judgement };
+
   let mode: "ota" | "native";
   let explicit: boolean;
   if (opts.delivery === "ota" || opts.delivery === "native") {
     mode = opts.delivery;
     explicit = true;
-  } else if (opts.yes || opts.json || opts.dryRun || !process.stdout.isTTY) {
-    // 非交互（--yes / --json / --dry-run / 无 TTY）：用推荐值；灰区必须显式指定，不猜
+  } else if (!channel && (opts.yes || opts.json || !process.stdout.isTTY)) {
+    // 非交互（--yes / --json / 无 TTY）：用推荐值；灰区必须显式指定，不猜。
+    // --dry-run 不在此列：预览模式 uncertain 也照实输出（不发布就没有"代答"风险）
     if (judgement.recommendation === "uncertain") {
       throw new Error(
         "判定不确定（灰区）：非交互模式无法代答，请用 --delivery ota|native 显式指定投递方式",
@@ -137,6 +191,22 @@ async function resolveDeliveryMode(
     }
     mode = judgement.recommendation;
     explicit = false;
+  } else if (channel) {
+    // 事件流交互：channel 即交互信道（子进程 stdout 非 TTY，不能落入非交互分支被代答）。
+    // 与 --yes 组合时仍走确认——flag 是 UI 协议，确认权在协议侧
+    mode = (await channel.confirm("delivery", "投递方式", [
+      {
+        value: "ota",
+        label: `热更（推荐：${judgement.recommendation === "ota" ? "是" : "否"}）`,
+        recommended: judgement.recommendation === "ota",
+      },
+      {
+        value: "native",
+        label: "原生包（直接用现有产物发内测）",
+        recommended: judgement.recommendation === "native",
+      },
+    ])) as "ota" | "native";
+    explicit = true; // 协议回写即用户意图（含选原生包：用户看过 judgement 证据后拍板）
   } else {
     const choice = await p.select({
       message: "投递方式",
@@ -152,7 +222,7 @@ async function resolveDeliveryMode(
     mode = choice;
     explicit = true; // 交互选择即用户意图（含选原生包：用户看过证据后拍板）
   }
-  return { mode, explicit, provider: mode === "ota" ? provider : undefined };
+  return { mode, explicit, provider: mode === "ota" ? provider : undefined, judgement };
 }
 
 const program = new Command("applift");
@@ -556,6 +626,21 @@ program
     },
   );
 
+/** beta 命令选项（action 包装层与主体共用） */
+interface BetaCmdOpts {
+  artifact?: string;
+  note?: string;
+  via?: string;
+  installPassword?: string;
+  bump?: boolean | string;
+  delivery?: string;
+  yes?: boolean;
+  dryRun?: boolean;
+  json?: boolean;
+  interactiveEvents?: boolean;
+  cwd: string;
+}
+
 program
   .command("beta")
   .description(
@@ -571,514 +656,677 @@ program
     "投递方式：ota（热更）| native（原生包）；缺省按判定推荐，CI uncertain 时必须显式",
   )
   .option("--yes", "跳过 bump/发布确认（CI）")
+  .option("--dry-run", "只出判定预览，不发布")
+  .option("--json", "结构化输出（stdout 给机器，渲染抑制）")
   .option(
     "--bump [level]",
     "判定为原生·需 bump 时自动声明版本（major|minor|patch|<semver>，缺省用推断）；完成后引导重建",
   )
   .option("--cwd <dir>", "项目目录", process.cwd())
-  .action(
-    async (
-      platform: string | undefined,
-      cmdOpts: {
-        artifact?: string;
-        note?: string;
-        via?: string;
-        installPassword?: string;
-        bump?: boolean | string;
-        delivery?: string;
-        yes?: boolean;
-        cwd: string;
-      },
-    ) => {
-      setupChannels();
-      const {
-        host,
-        extraFrameworks: pluginFrameworks,
-        config: projCfg,
-      } = await loadPluginHost(cmdOpts.cwd);
-      const globalCfg = loadGlobalConfig().config;
-
-      // profile 解析链：projects.json 个人选择（applift use）> 项目配置团队默认。
-      // 提到热更路由之前：OTA 路径 publishToBeta 的 ctx 也要带凭据（PUSHY_API_TOKEN）。
-      // 无凭据文件/无该 profile 时降级为空：纯热更项目可不配渠道凭据，缺键报错延迟到
-      // 消费处（OTA → PUSHY_API_TOKEN fail-fast；原生渠道 → 各渠道 required 的精确提示）
-      let creds: Record<string, string> = {};
-      try {
-        creds = resolveProfile(
-          loadCredentialsLayered(cmdOpts.cwd),
-          resolveProfileFor(cmdOpts.cwd, projCfg.profile, undefined, globalCfg.defaultProfile),
-          KNOWN_CREDENTIAL_KEYS,
-        );
-      } catch {
-        // 原生路径下渠道侧会给出缺哪个键的报错；profile 名拼错可由 doctor 的 profile 来源展示定位
-      }
-
-      // ---------- 热更路由（有 UpdateProvider 插件时判定推荐；--delivery 显式覆盖）----------
-      // 路由在 bump 之前：热更路径不动原生版本号。无 platform（多渠道并行）时不路由（原生多渠道语义）。
-      if (!platform && (cmdOpts.bump !== undefined || projCfg.beta?.autoBump === true))
-        p.log.warn(
-          "多渠道并行发布（beta 无平台参数）不经过热更判定：--bump / beta.autoBump 不生效",
-        );
-      if (platform) {
-        const fw = requireFramework(cmdOpts.cwd, pluginFrameworks);
-        const decision = await resolveDeliveryMode(
-          cmdOpts.cwd,
-          host,
-          fw,
-          {
-            yes: Boolean(cmdOpts.yes),
-            delivery: cmdOpts.delivery,
-          },
-          platform,
-        );
-        if (decision?.mode === "ota" && decision.provider) {
-          if (cmdOpts.bump !== undefined || projCfg.beta?.autoBump === true)
-            p.log.warn("判定为热更（ota）：--bump / beta.autoBump 不生效（热更不动原生版本号）");
-          if (!decision.provider.publishToBeta)
-            throw new Error(
-              `热更 provider「${decision.provider.id}」未提供内测发布（publishToBeta）——该 provider 仅支持正式发布，直接 applift release ${platform}`,
-            );
-          const r = await decision.provider.publishToBeta({
-            cwd: cmdOpts.cwd,
-            framework: fw,
-            platform,
-            note: cmdOpts.note,
-            credentials: creds,
-            artifact: cmdOpts.artifact ? path.resolve(cmdOpts.artifact) : undefined,
-          });
-          p.log.success(
-            `热更 beta 已发布：${pc.bold(r.versionName)}（测试设备将静默收到，验证后 applift release 发布正式）`,
-          );
-          // 热更同样进 history（审计断链会让 history/doctor 对热更发布失明）
-          appendEntry({
-            ts: Date.now(),
-            cwd: path.resolve(cmdOpts.cwd), // 绝对路径：审计跨目录可读（用户传 --cwd . 时相对路径无意义）
-            artifactSha256: "", // ppk 是先行产出的构建产物（--artifact/探测，路径在 provider 内解析），此处不重复哈希
-            channel: decision.provider.id,
-            action: "stage",
-            ok: true,
-            ref: String(r.versionId),
-            artifactVersion: r.versionName,
-          });
-          await host?.broadcast(
-            "notify",
-            { cwd: cmdOpts.cwd },
-            {
-              stage: [
-                {
-                  channel: decision.provider.id,
-                  label: `热更测试（${platform}）`,
-                  ok: true,
-                  plan: {
-                    channel: decision.provider.id,
-                    platform: platform as ReleasePlanEntry["platform"],
-                    artifactVersion: r.versionName,
-                    action: "stage-only",
-                    afterApproval: "none(beta)",
-                  },
-                },
-              ],
-              submit: [],
-            },
-          );
-          return;
-        }
-        // 判定 native 且非用户显式选择：三态引导（原生·需 bump / 原生·已声明）。
-        // 显式选 native（--delivery native 或交互 select）= 用户看过证据后拍板，直接走下方原生内测路径
-        if (decision?.mode === "native" && !decision.explicit) {
-          const releasedTag = latestSemverTag(cmdOpts.cwd);
-          const mine = readProjectVersions(cmdOpts.cwd, fw).find((v) => v.platform === platform);
-          const declared = compareDeclared(mine?.versionName, releasedTag);
-          if (declared === "unknown")
-            p.log.warn(
-              `工程版本 ${mine?.versionName ?? "?"} 非 semver，无法与发布 tag 比较——按需 bump 处理`,
-            );
-          if (declared === "ahead") {
-            // 已声明（工程版本领先最近发布 tag）：只需重建 + 重跑，再 bump 会烧版本号
-            throw new Error(
-              [
-                `工程版本 ${mine?.versionName} 已声明（领先最近发布 tag ${releasedTag ?? "（无 tag）"}），无需再 bump：`,
-                "  1. 重新构建测试包（产物内嵌派生测试版本）",
-                `  2. 重跑: applift beta ${platform} --delivery native`,
-                "（重跑发原生包必须 --delivery native 显式指定：正常声明后锚点已推进、判定会推荐热更）",
-              ].join("\n"),
-            );
-          }
-          // 原生·需 bump：--bump / beta.autoBump 直接声明（写文件 + CHANGELOG + commit，不打 tag）
-          if (cmdOpts.bump !== undefined || projCfg.beta?.autoBump === true) {
-            const level =
-              typeof cmdOpts.bump === "string" && cmdOpts.bump !== "" ? cmdOpts.bump : undefined;
-            const globalCfg = loadGlobalConfig().config;
-            await runBumpOrchestration({
-              cwd: cmdOpts.cwd,
-              framework: fw,
-              config: projCfg,
-              bump: level ?? true,
-              yes: cmdOpts.yes,
-              assumeYes: globalCfg.assumeYes,
-              commit: true,
-              tag: false,
-            });
-            p.log.info(`下一步：重新构建 ${platform} 测试包（产物内嵌派生测试版本）`);
-            p.log.info(`然后重跑: ${pc.cyan(`applift beta ${platform} --delivery native`)}`);
-            return;
-          }
-          let recommend = "";
-          try {
-            const plan = planBump({
-              cwd: cmdOpts.cwd,
-              framework: fw,
-              versionCode: projCfg.version?.versionCode as VersionCodeConfig | undefined,
-            });
-            recommend = `\n  推荐版本：${plan.nextVersion}（${plan.reason}）\n`;
-          } catch {
-            // 推断失败（如各端无 semver 基线）→ 省略推荐行，引导文案仍完整
-          }
-          throw new Error(
-            [
-              "本次改动判定为原生发版（含原生代码，无法热更），需要发新原生版本：" + recommend,
-              `  1. applift version bump   或   applift beta ${platform} --bump   声明下一版（写文件 + CHANGELOG + commit）`,
-              "  2. 重新构建（产物内嵌新版本）",
-              `  3. 重跑 applift beta ${platform} --delivery native 发内测`,
-              "（已构建新版本包？用 --delivery native 或交互选择「原生包」跳过此引导）",
-            ].join("\n"),
-          );
-        }
-        if (
-          decision?.mode === "native" &&
-          decision.explicit &&
-          (cmdOpts.bump !== undefined || projCfg.beta?.autoBump === true)
-        )
-          p.log.warn(
-            "--delivery native 显式走原生发布：--bump / beta.autoBump 不生效（发布以已构建产物为准）",
-          );
-      }
-
-      const detected = detectBundleIds(cmdOpts.cwd);
-
-      // 已接入热更的平台集合（provider.platforms 并集）：beta 版本感知探测用
-      const allProviders: UpdateProvider[] = [];
-      await host?.broadcast("update:register", { cwd: cmdOpts.cwd }, allProviders);
-      const hotPlatforms = new Set(allProviders.flatMap((p) => p.platforms ?? []));
-
-      /** 产物探测：--artifact 直用（渠道自行校验扩展名）；否则按平台 patterns 找最新且扩展名匹配的产物 */
-      const findArtifactFor = (plat: string, exts: string[]): string | undefined => {
-        if (cmdOpts.artifact) {
-          const explicit = path.resolve(cmdOpts.artifact);
-          return exts.includes(path.extname(explicit).toLowerCase()) ? explicit : undefined;
-        }
-        // 声明性守卫对 --artifact 路径同样生效（防未声明插件静默跑完发布）
-        const framework = requireFramework(cmdOpts.cwd, pluginFrameworks);
-        const patterns = projCfg.artifacts?.[plat] ?? framework?.artifactPatterns(plat) ?? [];
-        const found = findArtifacts(cmdOpts.cwd, patterns).filter((f) =>
-          exts.includes(path.extname(f).toLowerCase()),
-        );
-        // 版本语义：热更平台的 beta 吃派生测试包（快捷路径同款校验）
-        const expected = expectedArtifactVersion(
-          cmdOpts.cwd,
-          framework,
-          plat,
-          "beta",
-          hotPlatforms,
-          projCfg.version?.beta,
-        );
-        const picked = pickArtifactByVersion(found, expected);
-        if (expected && picked.mismatched)
-          throw new Error(
-            `未探测到 ${plat} 测试包 ${expected}（现存 ${picked.mismatched
-              .map((f) => path.basename(f))
-              .slice(0, 3)
-              .join(
-                ", ",
-              )}）——测试分发的包版本名必须是 ${expected}，请构建测试包后再发，或 --artifact 显式指定`,
-          );
-        return picked.artifact;
-      };
-
-      // ---------- 无 platform：读 config.beta 多渠道并行发布 ----------
-      if (!platform) {
-        const beta = projCfg.beta;
-        if (!beta || (!beta.pgyer && !beta.agc && !beta.testflight)) {
-          throw new Error(
-            'beta 无参数需要在 applift.config.ts 配置 beta 段（pgyer / "agc" / testflight 至少一个），或用 beta <platform> 快捷路径',
-          );
-        }
-        const PGYER_EXTS: Record<string, string[]> = {
-          android: [".apk"],
-          ios: [".ipa"],
-          harmony: [".hap"],
-        };
-        const tasks: Array<{ label: string; run: () => Promise<string> }> = [];
-
-        if (beta.pgyer) {
-          const pgyer = registry.get("pgyer");
-          if (!pgyer) throw new Error("pgyer 渠道未注册");
-          for (const plat of beta.pgyer.platforms) {
-            tasks.push({
-              label: `pgyer(${plat})`,
-              run: async () => {
-                const exts = PGYER_EXTS[plat] ?? [];
-                const artifactPath = findArtifactFor(plat, exts);
-                if (!artifactPath)
-                  throw new Error(
-                    `未找到 ${plat} 构建产物（${exts.join("/")}），先构建或用 --artifact 指定`,
-                  );
-                const ctx = makeContext(
-                  pgyer,
-                  creds,
-                  resolveChannelTarget("pgyer", projCfg, detected),
-                  artifactPath,
-                  cmdOpts.note,
-                  { installPassword: cmdOpts.installPassword ?? beta.pgyer?.installPassword },
-                );
-                warnDuplicateVersion("pgyer", artifactPath);
-                const r = await pgyer.stage(ctx);
-                await notifyStageAfter(host, "pgyer", plat, ctx, r, cmdOpts.cwd);
-                if (!r.ok) throw new Error(r.error ?? "上传失败");
-                appendEntry({
-                  ts: Date.now(),
-                  cwd: path.resolve(cmdOpts.cwd),
-                  artifactSha256: sha256File(artifactPath),
-                  channel: "pgyer",
-                  action: "stage",
-                  ok: true,
-                  ref: r.ref,
-                  artifactVersion: readArtifactVersion(artifactPath)?.versionName,
-                });
-                return `蒲公英 ${path.basename(artifactPath)} 发布成功，扫码即装`;
-              },
-            });
-          }
-        }
-
-        if (beta.agc) {
-          const agc = registry.get("agc");
-          if (!agc) throw new Error("agc 渠道未注册");
-          const agcCfg = beta.agc;
-          tasks.push({
-            label: "agc",
-            run: async () => {
-              const artifactPath = findArtifactFor("harmony", [".app"]);
-              if (!artifactPath)
-                throw new Error(
-                  "未找到 harmony .app 整包（DevEco「构建 App」产物），先构建或用 --artifact 指定",
-                );
-              const ctx = makeContext(
-                agc,
-                creds,
-                {
-                  ...resolveChannelTarget("agc", projCfg, detected),
-                  releaseType: "6",
-                  ...(agcCfg.submit ? { submitTest: "true" } : {}),
-                  ...(agcCfg.group ? { testGroup: agcCfg.group } : {}),
-                  testType: String(agcCfg.testType),
-                  // cleanup 默认 true（schema 缺省）；显式 false 时渠道跳过旧测试版本清理（stop+delete）
-                  ...(agcCfg.cleanup === false ? { cleanup: "false" } : {}),
-                  ...(agcCfg.privacyPolicy ? { privacyPolicy: agcCfg.privacyPolicy } : {}),
-                  ...(agcCfg.appDesc ? { appDesc: agcCfg.appDesc } : {}),
-                },
-                artifactPath,
-                cmdOpts.note,
-              );
-              warnDuplicateVersion("agc", artifactPath);
-              const r = await agc.stage(ctx);
-              await notifyStageAfter(host, "agc", "harmony", ctx, r, cmdOpts.cwd);
-              if (!r.ok) throw new Error(r.error ?? "AGC 测试发布失败");
-              appendEntry({
-                ts: Date.now(),
-                cwd: path.resolve(cmdOpts.cwd),
-                artifactSha256: sha256File(artifactPath),
-                channel: "agc",
-                action: agcCfg.submit ? "submit" : "stage",
-                ok: true,
-                ref: r.ref,
-                artifactVersion: readArtifactVersion(artifactPath)?.versionName,
-              });
-              return agcCfg.submit
-                ? `AGC 测试版本已提交审核（versionId: ${r.ref ?? "?"}）`
-                : `AGC 测试版本已就绪（versionId: ${r.ref ?? "?"}，未提审）`;
-            },
-          });
-        }
-
-        if (beta.testflight) {
-          const asc = registry.get("asc");
-          if (!asc) throw new Error("asc 渠道未注册");
-          const tfNote = beta.testflight.note;
-          tasks.push({
-            label: "testflight",
-            run: async () => {
-              const artifactPath = findArtifactFor("ios", [".ipa"]);
-              if (!artifactPath)
-                throw new Error("未找到 ios .ipa 产物，先构建或用 --artifact 指定");
-              const ctx = makeContext(
-                asc,
-                creds,
-                resolveChannelTarget("asc", projCfg, detected),
-                artifactPath,
-                cmdOpts.note ?? tfNote,
-              );
-              warnDuplicateVersion("asc", artifactPath);
-              const r = await asc.stage(ctx);
-              await notifyStageAfter(host, "asc", "ios", ctx, r, cmdOpts.cwd);
-              if (!r.ok) throw new Error(r.error ?? "上传失败");
-              appendEntry({
-                ts: Date.now(),
-                cwd: path.resolve(cmdOpts.cwd),
-                artifactSha256: sha256File(artifactPath),
-                channel: "asc",
-                action: "stage",
-                ok: true,
-                ref: r.ref,
-                artifactVersion: readArtifactVersion(artifactPath)?.versionName,
-              });
-              return `TestFlight 上传成功 ${path.basename(artifactPath)}（Apple 处理完成后 TestFlight 可见）`;
-            },
-          });
-        }
-
-        process.stderr.write(`内测多渠道并行发布：${tasks.map((t) => t.label).join("、")}\n`);
-        const settled = await Promise.allSettled(tasks.map((t) => t.run()));
-        let failed = false;
-        settled.forEach((r, i) => {
-          const { label } = tasks[i]!;
-          if (r.status === "fulfilled") {
-            process.stderr.write(`${pc.green("✓")} ${label} — ${r.value}\n`);
-          } else {
-            failed = true;
-            // 与 renderSummary 同链：errorHints 人话化 + 脱敏（beta 路径此前是裸码，AGC 204144692 高频受害）
-            const hints = label === "agc" ? registry.get("agc")?.errorHints : undefined;
-            const raw = String((r.reason as Error)?.message ?? r.reason);
-            process.stderr.write(
-              `${pc.red("✗")} ${label} — ${humanizeError(hints, redactText(raw))}\n`,
-            );
-          }
-        });
-        if (failed) process.exitCode = 1;
-        return;
-      }
-
-      // ---------- 快捷路径：beta <platform> ----------
-      let artifactPath = cmdOpts.artifact ? path.resolve(cmdOpts.artifact) : undefined;
-      if (!artifactPath) {
-        const framework = requireFramework(cmdOpts.cwd, pluginFrameworks);
-        const patterns =
-          projCfg.artifacts?.[platform] ?? framework?.artifactPatterns(platform) ?? [];
-        // 双产物工程防串包（与 release 探测同口径）：AGC 测试发布只收 .app（渠道终验同判），
-        // mtime 更新的 internaltesting .hap（刚跑完蒲公英轮）不得抢位——2026-10-25 实测踩坑
-        const viaExts = platform === "harmony" && cmdOpts.via !== "pgyer" ? [".app"] : undefined;
-        const found = (
-          viaExts
-            ? findArtifacts(cmdOpts.cwd, patterns).filter((f) =>
-                viaExts.includes(path.extname(f).toLowerCase()),
-              )
-            : findArtifacts(cmdOpts.cwd, patterns)
-        ) as string[];
-        // 版本语义：热更平台的 beta 吃派生测试包（测试设备收测试线热更）
-        const providers: UpdateProvider[] = [];
-        await host?.broadcast("update:register", { cwd: cmdOpts.cwd }, providers);
-        const hotPlatforms = new Set(providers.flatMap((p) => p.platforms ?? []));
-        const expected = expectedArtifactVersion(
-          cmdOpts.cwd,
-          framework,
-          platform,
-          "beta",
-          hotPlatforms,
-          projCfg.version?.beta,
-        );
-        const picked = pickArtifactByVersion(found, expected);
-        if (expected && picked.mismatched)
-          throw new Error(
-            `未探测到测试包 ${expected}（现存 ${picked.mismatched
-              .map((f) => path.basename(f))
-              .slice(0, 3)
-              .join(
-                ", ",
-              )}）——测试分发的包版本名必须是 ${expected}，请构建测试包后再发，或 --artifact 显式指定`,
-          );
-        artifactPath = picked.artifact;
-      }
-      if (!artifactPath) throw new Error("未找到构建产物：先构建或用 --artifact 指定");
-      // bump 启用时对最终发布产物终验（--artifact 显式给旧包也拦得住）
-      if (!fs.existsSync(artifactPath)) throw new Error(`产物不存在: ${artifactPath}`);
-      const s = p.spinner();
-
-      // harmony 分流：默认 AGC 测试发布（releaseType=6，指定设备内测），--via pgyer 走蒲公英
-      if (platform === "harmony" && cmdOpts.via !== "pgyer") {
-        const agc = registry.get("agc");
-        if (!agc) throw new Error("agc 渠道未注册");
-        const target = resolveChannelTarget("agc", projCfg, detected);
-        warnDuplicateVersion("agc", artifactPath);
-        s.start(`AGC 测试发布 ${path.basename(artifactPath)}`);
-        const agcCfg = projCfg.beta?.agc;
-        const ctx = makeContext(
-          agc,
-          creds,
-          {
-            ...target,
-            releaseType: "6",
-            ...(agcCfg?.submit ? { submitTest: "true" } : {}),
-            ...(agcCfg?.group ? { testGroup: agcCfg.group } : {}),
-            testType: String(agcCfg?.testType ?? 3),
-            // cleanup 默认 true（schema 缺省）；显式 false 时渠道跳过旧测试版本清理（stop+delete）
-            ...(agcCfg?.cleanup === false ? { cleanup: "false" } : {}),
-            ...(agcCfg?.privacyPolicy ? { privacyPolicy: agcCfg.privacyPolicy } : {}),
-            ...(agcCfg?.appDesc ? { appDesc: agcCfg.appDesc } : {}),
-          },
-          artifactPath,
-          cmdOpts.note,
-        );
-        const r = await agc.stage({
-          ...ctx,
-          emit: (e) => {
-            if (e.type === "warn") s.message(pc.yellow(`⚠ ${redactText(e.message)}`));
-            else if (e.type === "progress") s.message(pc.dim(redactText(e.detail)));
-          },
-        });
-        await notifyStageAfter(host, "agc", platform, ctx, r, cmdOpts.cwd);
-        if (r.ok) {
-          s.stop(
-            agcCfg?.submit
-              ? `AGC 测试版本已提交审核 ✓（versionId: ${r.ref ?? "?"}，群组: ${agcCfg.group ?? "默认"}）`
-              : `AGC 测试版本已就绪 ${pc.green("✓")}（未提交审核），到控制台「测试」提交并指定测试群组`,
-          );
-        } else {
-          s.stop(
-            `AGC 测试发布失败: ${humanizeError(registry.get("agc")?.errorHints, redactText(r.error ?? ""))}`,
-          );
-          process.exitCode = 1;
-        }
-        return;
-      }
-
-      const pgyer = registry.get("pgyer");
-      if (!pgyer) throw new Error("pgyer 渠道未注册");
-      warnDuplicateVersion("pgyer", artifactPath);
-      s.start(`蒲公英上传 ${path.basename(artifactPath)}`);
-      const ctx = makeContext(
-        pgyer,
-        creds,
-        resolveChannelTarget("pgyer", projCfg, detected),
-        artifactPath,
-        cmdOpts.note,
-        { installPassword: cmdOpts.installPassword },
+  .option("--interactive-events", "NDJSON 事件流（stdout 事件/stdin 确认回写；供 UI 消费）")
+  .action(async (platform: string | undefined, cmdOpts: BetaCmdOpts) => {
+    // 旗标守卫（任何发布路径前、事件流构造前）：--dry-run/--json 目前只有单平台判定预览一个消费点，
+    // 静默忽略会让「预览」意图在多渠道路径变成真实发布（探测 → 上传 → 写 history）
+    if (cmdOpts.dryRun && !platform)
+      throw new Error("--dry-run 仅支持 beta <platform> 单平台判定预览");
+    if (cmdOpts.json && !cmdOpts.dryRun)
+      throw new Error(
+        "--json 当前仅支持 --dry-run 判定预览（完整机读输出走 --interactive-events）",
       );
-      const r = await pgyer.stage({
-        ...ctx,
-        emit: (e) => {
-          if (e.type === "warn") s.message(pc.yellow(`⚠ ${redactText(e.message)}`));
-          else if (e.type === "progress") s.message(pc.dim(redactText(e.detail)));
+    // 事件流与 --json 抢 stdout：dry-run 分支 json 优先级更高会写多行 JSON 报告且不发 result，流即损坏
+    if (cmdOpts.interactiveEvents && cmdOpts.json)
+      throw new Error(
+        "--interactive-events 与 --json 互斥（判定结果走 judgement 事件，报告走 result 事件）",
+      );
+    // 一期 UI 只走单平台向导：多渠道并行的事件流语义（进度归并/部分失败）未定案
+    if (cmdOpts.interactiveEvents && !platform)
+      throw new Error("--interactive-events 仅支持单平台路径：applift beta <platform>");
+    // --bump 显式 flag + 事件流：bump 编排（clack 直写 stdout + p.confirm 消费 stdin）未事件化。
+    // autoBump 不需要入口守卫：confirm 回写即 explicit，三态引导（autoBump 消费点）在事件流下不可达，
+    // 分支内仍有防御性守卫兜底
+    if (cmdOpts.interactiveEvents && cmdOpts.bump !== undefined)
+      throw new Error(
+        "--interactive-events 暂不支持 --bump（bump 编排未事件化）：请移除 --bump 或单独跑 applift version bump",
+      );
+    if (!cmdOpts.interactiveEvents) return runBeta(platform, cmdOpts);
+    const events = new EventChannel((line) => process.stdout.write(line));
+    try {
+      return await runBeta(platform, cmdOpts, events);
+    } catch (e) {
+      // stdout 纯 NDJSON 契约：失败也以 result(ok:false) 收口；人读报错仍由 bin catch 走 stderr
+      events.emit({
+        type: "result",
+        ok: false,
+        summary: {},
+        error: redactText(e instanceof Error ? e.message : String(e)),
+      });
+      throw e; // exitCode=1 现有语义不变
+    } finally {
+      // stdin 监听不关，子进程发完事件也不会自然退出（UI 侧 spawn 会挂到超时）
+      events.close();
+    }
+  });
+
+/**
+ * beta 主体（原 action 内联体平移；events 存在 = --interactive-events 模式）。
+ * 事件流模式 stdout 是纯 NDJSON：clack log/spinner 都写 stdout，主路径关键输出经 say/* 改走事件
+ */
+async function runBeta(platform: string | undefined, cmdOpts: BetaCmdOpts, events?: EventChannel) {
+  const say = {
+    info: (msg: string, styled = msg) =>
+      events ? events.emit({ type: "log", level: "info", msg }) : p.log.info(styled),
+    warn: (msg: string, styled = msg) =>
+      events ? events.emit({ type: "log", level: "warn", msg }) : p.log.warn(styled),
+    success: (msg: string, styled = msg) =>
+      events ? events.emit({ type: "log", level: "info", msg }) : p.log.success(styled),
+  };
+  setupChannels();
+  const {
+    host,
+    extraFrameworks: pluginFrameworks,
+    config: projCfg,
+  } = await loadPluginHost(cmdOpts.cwd);
+  const globalCfg = loadGlobalConfig().config;
+
+  // profile 解析链：projects.json 个人选择（applift use）> 项目配置团队默认。
+  // 提到热更路由之前：OTA 路径 publishToBeta 的 ctx 也要带凭据（PUSHY_API_TOKEN）。
+  // 无凭据文件/无该 profile 时降级为空：纯热更项目可不配渠道凭据，缺键报错延迟到
+  // 消费处（OTA → PUSHY_API_TOKEN fail-fast；原生渠道 → 各渠道 required 的精确提示）
+  let creds: Record<string, string> = {};
+  try {
+    creds = resolveProfile(
+      loadCredentialsLayered(cmdOpts.cwd),
+      resolveProfileFor(cmdOpts.cwd, projCfg.profile, undefined, globalCfg.defaultProfile),
+      KNOWN_CREDENTIAL_KEYS,
+    );
+  } catch {
+    // 原生路径下渠道侧会给出缺哪个键的报错；profile 名拼错可由 doctor 的 profile 来源展示定位
+  }
+
+  // ---------- 热更路由（有 UpdateProvider 插件时判定推荐；--delivery 显式覆盖）----------
+  // 路由在 bump 之前：热更路径不动原生版本号。无 platform（多渠道并行）时不路由（原生多渠道语义）。
+  if (!platform && (cmdOpts.bump !== undefined || projCfg.beta?.autoBump === true))
+    p.log.warn("多渠道并行发布（beta 无平台参数）不经过热更判定：--bump / beta.autoBump 不生效");
+  if (platform) {
+    const fw = requireFramework(cmdOpts.cwd, pluginFrameworks);
+    const decision = await resolveDeliveryMode(
+      cmdOpts.cwd,
+      host,
+      fw,
+      {
+        yes: Boolean(cmdOpts.yes),
+        delivery: cmdOpts.delivery,
+        json: Boolean(cmdOpts.json),
+        preview: Boolean(cmdOpts.dryRun),
+      },
+      platform,
+      events,
+    );
+    // ---------- 判定预览（--dry-run）：只报告不发布——发版向导第一步消费 ----------
+    if (cmdOpts.dryRun) {
+      const j = decision?.judgement;
+      const report: BetaDryRunReport = j
+        ? {
+            platform,
+            provider: decision?.provider?.id ?? null,
+            recommendation: j.recommendation,
+            confidence: j.confidence,
+            evidence: j.evidence.slice(0, 50).map((e) => ({
+              path: e.path,
+              rule: e.rule,
+              ...(e.note ? { note: e.note } : {}),
+            })),
+            note: `判定：${j.recommendation}（${j.confidence}）`,
+          }
+        : {
+            platform,
+            provider: null,
+            recommendation: null,
+            confidence: null,
+            evidence: [],
+            note: "未接入热更（原生路径）",
+          };
+      // stdout 纯 JSON 契约（与 doctor/validate 同写法）：console.log 绕过测试捕获
+      if (cmdOpts.json) process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+      else if (events) {
+        // 事件流下的预览：判定已随 judgement 事件输出，这里补 log + result 收口（stdout 不落人读文本）
+        say.info(report.note);
+        events.emit({
+          type: "result",
+          ok: true,
+          summary: {
+            mode: "preview",
+            recommendation: report.recommendation,
+            provider: report.provider,
+          },
+        });
+      } else p.log.message(report.note);
+      return; // 不进任何发布分支（热更/原生/多渠道全短路）
+    }
+    if (decision?.mode === "ota" && decision.provider) {
+      if (cmdOpts.bump !== undefined || projCfg.beta?.autoBump === true)
+        say.warn("判定为热更（ota）：--bump / beta.autoBump 不生效（热更不动原生版本号）");
+      if (!decision.provider.publishToBeta)
+        throw new Error(
+          `热更 provider「${decision.provider.id}」未提供内测发布（publishToBeta）——该 provider 仅支持正式发布，直接 applift release ${platform}`,
+        );
+      events?.emit({ type: "stage", stage: "publish" });
+      const r = await decision.provider.publishToBeta({
+        cwd: cmdOpts.cwd,
+        framework: fw,
+        platform,
+        note: cmdOpts.note,
+        credentials: creds,
+        artifact: cmdOpts.artifact ? path.resolve(cmdOpts.artifact) : undefined,
+      });
+      say.success(
+        `热更 beta 已发布：${r.versionName}（测试设备将静默收到，验证后 applift release 发布正式）`,
+        `热更 beta 已发布：${pc.bold(r.versionName)}（测试设备将静默收到，验证后 applift release 发布正式）`,
+      );
+      events?.emit({
+        type: "result",
+        ok: true,
+        summary: {
+          versionName: r.versionName,
+          channel: decision.provider.id,
+          mode: "ota",
         },
       });
-      await notifyStageAfter(host, "pgyer", platform, ctx, r, cmdOpts.cwd);
-      if (r.ok) {
-        s.stop(`蒲公英发布成功 ${pc.green("✓")} 扫码即装`);
-      } else {
-        s.stop(`蒲公英上传失败: ${redactText(r.error ?? "")}`);
-        process.exitCode = 1;
+      // 热更同样进 history（审计断链会让 history/doctor 对热更发布失明）
+      appendEntry({
+        ts: Date.now(),
+        cwd: path.resolve(cmdOpts.cwd), // 绝对路径：审计跨目录可读（用户传 --cwd . 时相对路径无意义）
+        artifactSha256: "", // ppk 是先行产出的构建产物（--artifact/探测，路径在 provider 内解析），此处不重复哈希
+        channel: decision.provider.id,
+        action: "stage",
+        ok: true,
+        ref: String(r.versionId),
+        artifactVersion: r.versionName,
+        phase: "beta",
+        platform: platform,
+      });
+      await host?.broadcast(
+        "notify",
+        { cwd: cmdOpts.cwd },
+        {
+          stage: [
+            {
+              channel: decision.provider.id,
+              label: `热更测试（${platform}）`,
+              ok: true,
+              plan: {
+                channel: decision.provider.id,
+                platform: platform as ReleasePlanEntry["platform"],
+                artifactVersion: r.versionName,
+                action: "stage-only",
+                afterApproval: "none(beta)",
+              },
+            },
+          ],
+          submit: [],
+        },
+      );
+      return;
+    }
+    // 判定 native 且非用户显式选择：三态引导（原生·需 bump / 原生·已声明）。
+    // 显式选 native（--delivery native 或交互 select）= 用户看过证据后拍板，直接走下方原生内测路径
+    if (decision?.mode === "native" && !decision.explicit) {
+      const releasedTag = latestSemverTag(cmdOpts.cwd);
+      const mine = readProjectVersions(cmdOpts.cwd, fw).find((v) => v.platform === platform);
+      const declared = compareDeclared(mine?.versionName, releasedTag);
+      if (declared === "unknown")
+        say.warn(
+          `工程版本 ${mine?.versionName ?? "?"} 非 semver，无法与发布 tag 比较——按需 bump 处理`,
+        );
+      if (declared === "ahead") {
+        // 已声明（工程版本领先最近发布 tag）：只需重建 + 重跑，再 bump 会烧版本号
+        throw new Error(
+          [
+            `工程版本 ${mine?.versionName} 已声明（领先最近发布 tag ${releasedTag ?? "（无 tag）"}），无需再 bump：`,
+            "  1. 重新构建测试包（产物内嵌派生测试版本）",
+            `  2. 重跑: applift beta ${platform} --delivery native`,
+            "（重跑发原生包必须 --delivery native 显式指定：正常声明后锚点已推进、判定会推荐热更）",
+          ].join("\n"),
+        );
       }
-    },
+      // 原生·需 bump：--bump / beta.autoBump 直接声明（写文件 + CHANGELOG + commit，不打 tag）
+      if (cmdOpts.bump !== undefined || projCfg.beta?.autoBump === true) {
+        // bump 编排（clack 直写 stdout + p.confirm 消费 stdin）未事件化：与事件流互斥。
+        // autoBump 来自项目配置，UI 无法回避——必须在此 fail-fast（wrapper catch 自动补 result(ok:false)）
+        if (events)
+          throw new Error(
+            "--interactive-events 暂不支持 --bump / beta.autoBump（bump 编排未事件化）：请移除 --bump 或单独跑 applift version bump",
+          );
+        const level =
+          typeof cmdOpts.bump === "string" && cmdOpts.bump !== "" ? cmdOpts.bump : undefined;
+        const globalCfg = loadGlobalConfig().config;
+        await runBumpOrchestration({
+          cwd: cmdOpts.cwd,
+          framework: fw,
+          config: projCfg,
+          bump: level ?? true,
+          yes: cmdOpts.yes,
+          assumeYes: globalCfg.assumeYes,
+          commit: true,
+          tag: false,
+        });
+        say.info(`下一步：重新构建 ${platform} 测试包（产物内嵌派生测试版本）`);
+        say.info(
+          `然后重跑: applift beta ${platform} --delivery native`,
+          `然后重跑: ${pc.cyan(`applift beta ${platform} --delivery native`)}`,
+        );
+        return;
+      }
+      let recommend = "";
+      try {
+        const plan = planBump({
+          cwd: cmdOpts.cwd,
+          framework: fw,
+          versionCode: projCfg.version?.versionCode as VersionCodeConfig | undefined,
+        });
+        recommend = `\n  推荐版本：${plan.nextVersion}（${plan.reason}）\n`;
+      } catch {
+        // 推断失败（如各端无 semver 基线）→ 省略推荐行，引导文案仍完整
+      }
+      throw new Error(
+        [
+          "本次改动判定为原生发版（含原生代码，无法热更），需要发新原生版本：" + recommend,
+          `  1. applift version bump   或   applift beta ${platform} --bump   声明下一版（写文件 + CHANGELOG + commit）`,
+          "  2. 重新构建（产物内嵌新版本）",
+          `  3. 重跑 applift beta ${platform} --delivery native 发内测`,
+          "（已构建新版本包？用 --delivery native 或交互选择「原生包」跳过此引导）",
+        ].join("\n"),
+      );
+    }
+    if (
+      decision?.mode === "native" &&
+      decision.explicit &&
+      (cmdOpts.bump !== undefined || projCfg.beta?.autoBump === true)
+    )
+      say.warn(
+        "--delivery native 显式走原生发布：--bump / beta.autoBump 不生效（发布以已构建产物为准）",
+      );
+  }
+
+  const detected = detectBundleIds(cmdOpts.cwd);
+
+  // 已接入热更的平台集合（provider.platforms 并集）：beta 版本感知探测用
+  const allProviders: UpdateProvider[] = [];
+  await host?.broadcast("update:register", { cwd: cmdOpts.cwd }, allProviders);
+  const hotPlatforms = new Set(allProviders.flatMap((p) => p.platforms ?? []));
+
+  /** 产物探测：--artifact 直用（渠道自行校验扩展名）；否则按平台 patterns 找最新且扩展名匹配的产物 */
+  const findArtifactFor = (plat: string, exts: string[]): string | undefined => {
+    if (cmdOpts.artifact) {
+      const explicit = path.resolve(cmdOpts.artifact);
+      return exts.includes(path.extname(explicit).toLowerCase()) ? explicit : undefined;
+    }
+    // 声明性守卫对 --artifact 路径同样生效（防未声明插件静默跑完发布）
+    const framework = requireFramework(cmdOpts.cwd, pluginFrameworks);
+    const patterns = projCfg.artifacts?.[plat] ?? framework?.artifactPatterns(plat) ?? [];
+    const found = findArtifacts(cmdOpts.cwd, patterns).filter((f) =>
+      exts.includes(path.extname(f).toLowerCase()),
+    );
+    // 版本语义：热更平台的 beta 吃派生测试包（快捷路径同款校验）
+    const expected = expectedArtifactVersion(
+      cmdOpts.cwd,
+      framework,
+      plat,
+      "beta",
+      hotPlatforms,
+      projCfg.version?.beta,
+    );
+    const picked = pickArtifactByVersion(found, expected);
+    if (expected && picked.mismatched)
+      throw new Error(
+        `未探测到 ${plat} 测试包 ${expected}（现存 ${picked.mismatched
+          .map((f) => path.basename(f))
+          .slice(0, 3)
+          .join(
+            ", ",
+          )}）——测试分发的包版本名必须是 ${expected}，请构建测试包后再发，或 --artifact 显式指定`,
+      );
+    return picked.artifact;
+  };
+
+  // ---------- 无 platform：读 config.beta 多渠道并行发布 ----------
+  if (!platform) {
+    const beta = projCfg.beta;
+    if (!beta || (!beta.pgyer && !beta.agc && !beta.testflight)) {
+      throw new Error(
+        'beta 无参数需要在 applift.config.ts 配置 beta 段（pgyer / "agc" / testflight 至少一个），或用 beta <platform> 快捷路径',
+      );
+    }
+    const PGYER_EXTS: Record<string, string[]> = {
+      android: [".apk"],
+      ios: [".ipa"],
+      harmony: [".hap"],
+    };
+    const tasks: Array<{ label: string; run: () => Promise<string> }> = [];
+
+    if (beta.pgyer) {
+      const pgyer = registry.get("pgyer");
+      if (!pgyer) throw new Error("pgyer 渠道未注册");
+      for (const plat of beta.pgyer.platforms) {
+        tasks.push({
+          label: `pgyer(${plat})`,
+          run: async () => {
+            const exts = PGYER_EXTS[plat] ?? [];
+            const artifactPath = findArtifactFor(plat, exts);
+            if (!artifactPath)
+              throw new Error(
+                `未找到 ${plat} 构建产物（${exts.join("/")}），先构建或用 --artifact 指定`,
+              );
+            const ctx = makeContext(
+              pgyer,
+              creds,
+              resolveChannelTarget("pgyer", projCfg, detected),
+              artifactPath,
+              cmdOpts.note,
+              { installPassword: cmdOpts.installPassword ?? beta.pgyer?.installPassword },
+            );
+            warnDuplicateVersion("pgyer", artifactPath);
+            const r = await pgyer.stage(ctx);
+            await notifyStageAfter(host, "pgyer", plat, ctx, r, cmdOpts.cwd);
+            if (!r.ok) throw new Error(r.error ?? "上传失败");
+            appendEntry({
+              ts: Date.now(),
+              cwd: path.resolve(cmdOpts.cwd),
+              artifactSha256: sha256File(artifactPath),
+              channel: "pgyer",
+              action: "stage",
+              ok: true,
+              ref: r.ref,
+              artifactVersion: readArtifactVersion(artifactPath)?.versionName,
+              phase: "beta",
+              platform: plat,
+            });
+            return `蒲公英 ${path.basename(artifactPath)} 发布成功，扫码即装`;
+          },
+        });
+      }
+    }
+
+    if (beta.agc) {
+      const agc = registry.get("agc");
+      if (!agc) throw new Error("agc 渠道未注册");
+      const agcCfg = beta.agc;
+      tasks.push({
+        label: "agc",
+        run: async () => {
+          const artifactPath = findArtifactFor("harmony", [".app"]);
+          if (!artifactPath)
+            throw new Error(
+              "未找到 harmony .app 整包（DevEco「构建 App」产物），先构建或用 --artifact 指定",
+            );
+          const ctx = makeContext(
+            agc,
+            creds,
+            {
+              ...resolveChannelTarget("agc", projCfg, detected),
+              releaseType: "6",
+              ...(agcCfg.submit ? { submitTest: "true" } : {}),
+              ...(agcCfg.group ? { testGroup: agcCfg.group } : {}),
+              testType: String(agcCfg.testType),
+              // cleanup 默认 true（schema 缺省）；显式 false 时渠道跳过旧测试版本清理（stop+delete）
+              ...(agcCfg.cleanup === false ? { cleanup: "false" } : {}),
+              ...(agcCfg.privacyPolicy ? { privacyPolicy: agcCfg.privacyPolicy } : {}),
+              ...(agcCfg.appDesc ? { appDesc: agcCfg.appDesc } : {}),
+            },
+            artifactPath,
+            cmdOpts.note,
+          );
+          warnDuplicateVersion("agc", artifactPath);
+          const r = await agc.stage(ctx);
+          await notifyStageAfter(host, "agc", "harmony", ctx, r, cmdOpts.cwd);
+          if (!r.ok) throw new Error(r.error ?? "AGC 测试发布失败");
+          appendEntry({
+            ts: Date.now(),
+            cwd: path.resolve(cmdOpts.cwd),
+            artifactSha256: sha256File(artifactPath),
+            channel: "agc",
+            action: agcCfg.submit ? "submit" : "stage",
+            ok: true,
+            ref: r.ref,
+            artifactVersion: readArtifactVersion(artifactPath)?.versionName,
+            phase: "beta",
+            platform: "harmony",
+          });
+          return agcCfg.submit
+            ? `AGC 测试版本已提交审核（versionId: ${r.ref ?? "?"}）`
+            : `AGC 测试版本已就绪（versionId: ${r.ref ?? "?"}，未提审）`;
+        },
+      });
+    }
+
+    if (beta.testflight) {
+      const asc = registry.get("asc");
+      if (!asc) throw new Error("asc 渠道未注册");
+      const tfNote = beta.testflight.note;
+      tasks.push({
+        label: "testflight",
+        run: async () => {
+          const artifactPath = findArtifactFor("ios", [".ipa"]);
+          if (!artifactPath) throw new Error("未找到 ios .ipa 产物，先构建或用 --artifact 指定");
+          const ctx = makeContext(
+            asc,
+            creds,
+            resolveChannelTarget("asc", projCfg, detected),
+            artifactPath,
+            cmdOpts.note ?? tfNote,
+          );
+          warnDuplicateVersion("asc", artifactPath);
+          const r = await asc.stage(ctx);
+          await notifyStageAfter(host, "asc", "ios", ctx, r, cmdOpts.cwd);
+          if (!r.ok) throw new Error(r.error ?? "上传失败");
+          appendEntry({
+            ts: Date.now(),
+            cwd: path.resolve(cmdOpts.cwd),
+            artifactSha256: sha256File(artifactPath),
+            channel: "asc",
+            action: "stage",
+            ok: true,
+            ref: r.ref,
+            artifactVersion: readArtifactVersion(artifactPath)?.versionName,
+            phase: "beta",
+            platform: "ios",
+          });
+          return `TestFlight 上传成功 ${path.basename(artifactPath)}（Apple 处理完成后 TestFlight 可见）`;
+        },
+      });
+    }
+
+    process.stderr.write(`内测多渠道并行发布：${tasks.map((t) => t.label).join("、")}\n`);
+    const settled = await Promise.allSettled(tasks.map((t) => t.run()));
+    let failed = false;
+    settled.forEach((r, i) => {
+      const { label } = tasks[i]!;
+      if (r.status === "fulfilled") {
+        process.stderr.write(`${pc.green("✓")} ${label} — ${r.value}\n`);
+      } else {
+        failed = true;
+        // 与 renderSummary 同链：errorHints 人话化 + 脱敏（beta 路径此前是裸码，AGC 204144692 高频受害）
+        const hints = label === "agc" ? registry.get("agc")?.errorHints : undefined;
+        const raw = String((r.reason as Error)?.message ?? r.reason);
+        process.stderr.write(
+          `${pc.red("✗")} ${label} — ${humanizeError(hints, redactText(raw))}\n`,
+        );
+      }
+    });
+    if (failed) process.exitCode = 1;
+    return;
+  }
+
+  // ---------- 快捷路径：beta <platform> ----------
+  let artifactPath = cmdOpts.artifact ? path.resolve(cmdOpts.artifact) : undefined;
+  if (!artifactPath) {
+    const framework = requireFramework(cmdOpts.cwd, pluginFrameworks);
+    const patterns = projCfg.artifacts?.[platform] ?? framework?.artifactPatterns(platform) ?? [];
+    // 双产物工程防串包（与 release 探测同口径）：AGC 测试发布只收 .app（渠道终验同判），
+    // mtime 更新的 internaltesting .hap（刚跑完蒲公英轮）不得抢位——2026-10-25 实测踩坑
+    const viaExts = platform === "harmony" && cmdOpts.via !== "pgyer" ? [".app"] : undefined;
+    const found = (
+      viaExts
+        ? findArtifacts(cmdOpts.cwd, patterns).filter((f) =>
+            viaExts.includes(path.extname(f).toLowerCase()),
+          )
+        : findArtifacts(cmdOpts.cwd, patterns)
+    ) as string[];
+    // 版本语义：热更平台的 beta 吃派生测试包（测试设备收测试线热更）
+    const providers: UpdateProvider[] = [];
+    await host?.broadcast("update:register", { cwd: cmdOpts.cwd }, providers);
+    const hotPlatforms = new Set(providers.flatMap((p) => p.platforms ?? []));
+    const expected = expectedArtifactVersion(
+      cmdOpts.cwd,
+      framework,
+      platform,
+      "beta",
+      hotPlatforms,
+      projCfg.version?.beta,
+    );
+    const picked = pickArtifactByVersion(found, expected);
+    if (expected && picked.mismatched)
+      throw new Error(
+        `未探测到测试包 ${expected}（现存 ${picked.mismatched
+          .map((f) => path.basename(f))
+          .slice(0, 3)
+          .join(
+            ", ",
+          )}）——测试分发的包版本名必须是 ${expected}，请构建测试包后再发，或 --artifact 显式指定`,
+      );
+    artifactPath = picked.artifact;
+  }
+  if (!artifactPath) throw new Error("未找到构建产物：先构建或用 --artifact 指定");
+  // bump 启用时对最终发布产物终验（--artifact 显式给旧包也拦得住）
+  if (!fs.existsSync(artifactPath)) throw new Error(`产物不存在: ${artifactPath}`);
+  const s = p.spinner();
+
+  // harmony 分流：默认 AGC 测试发布（releaseType=6，指定设备内测），--via pgyer 走蒲公英
+  if (platform === "harmony" && cmdOpts.via !== "pgyer") {
+    const agc = registry.get("agc");
+    if (!agc) throw new Error("agc 渠道未注册");
+    const target = resolveChannelTarget("agc", projCfg, detected);
+    warnDuplicateVersion("agc", artifactPath);
+    events?.emit({ type: "stage", stage: "upload" });
+    if (!events) s.start(`AGC 测试发布 ${path.basename(artifactPath)}`);
+    const agcCfg = projCfg.beta?.agc;
+    const ctx = makeContext(
+      agc,
+      creds,
+      {
+        ...target,
+        releaseType: "6",
+        ...(agcCfg?.submit ? { submitTest: "true" } : {}),
+        ...(agcCfg?.group ? { testGroup: agcCfg.group } : {}),
+        testType: String(agcCfg?.testType ?? 3),
+        // cleanup 默认 true（schema 缺省）；显式 false 时渠道跳过旧测试版本清理（stop+delete）
+        ...(agcCfg?.cleanup === false ? { cleanup: "false" } : {}),
+        ...(agcCfg?.privacyPolicy ? { privacyPolicy: agcCfg.privacyPolicy } : {}),
+        ...(agcCfg?.appDesc ? { appDesc: agcCfg.appDesc } : {}),
+      },
+      artifactPath,
+      cmdOpts.note,
+    );
+    const r = await agc.stage({
+      ...ctx,
+      emit: (e) => {
+        if (events) {
+          // 事件流：进度/警告走事件（spinner 写 stdout 会污染 NDJSON）
+          if (e.type === "warn")
+            events.emit({ type: "log", level: "warn", msg: redactText(e.message) });
+          else if (e.type === "progress")
+            events.emit({
+              type: "progress",
+              stage: "upload",
+              channel: "agc",
+              msg: redactText(e.detail),
+            });
+          return;
+        }
+        if (e.type === "warn") s.message(pc.yellow(`⚠ ${redactText(e.message)}`));
+        else if (e.type === "progress") s.message(pc.dim(redactText(e.detail)));
+      },
+    });
+    await notifyStageAfter(host, "agc", platform, ctx, r, cmdOpts.cwd);
+    const agcSummary = {
+      versionName: readArtifactVersion(artifactPath)?.versionName ?? null,
+      channel: "agc",
+      mode: "native",
+    };
+    if (r.ok) {
+      if (events) {
+        say.success(
+          agcCfg?.submit
+            ? `AGC 测试版本已提交审核（versionId: ${r.ref ?? "?"}，群组: ${agcCfg.group ?? "默认"}）`
+            : `AGC 测试版本已就绪（未提交审核），到控制台「测试」提交并指定测试群组`,
+        );
+        events.emit({ type: "result", ok: true, summary: agcSummary });
+      } else
+        s.stop(
+          agcCfg?.submit
+            ? `AGC 测试版本已提交审核 ✓（versionId: ${r.ref ?? "?"}，群组: ${agcCfg.group ?? "默认"}）`
+            : `AGC 测试版本已就绪 ${pc.green("✓")}（未提交审核），到控制台「测试」提交并指定测试群组`,
+        );
+    } else {
+      const agcError = humanizeError(registry.get("agc")?.errorHints, redactText(r.error ?? ""));
+      if (events) events.emit({ type: "result", ok: false, summary: agcSummary, error: agcError });
+      else s.stop(`AGC 测试发布失败: ${agcError}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  const pgyer = registry.get("pgyer");
+  if (!pgyer) throw new Error("pgyer 渠道未注册");
+  warnDuplicateVersion("pgyer", artifactPath);
+  events?.emit({ type: "stage", stage: "upload" });
+  if (!events) s.start(`蒲公英上传 ${path.basename(artifactPath)}`);
+  const ctx = makeContext(
+    pgyer,
+    creds,
+    resolveChannelTarget("pgyer", projCfg, detected),
+    artifactPath,
+    cmdOpts.note,
+    { installPassword: cmdOpts.installPassword },
   );
+  const r = await pgyer.stage({
+    ...ctx,
+    emit: (e) => {
+      if (events) {
+        if (e.type === "warn")
+          events.emit({ type: "log", level: "warn", msg: redactText(e.message) });
+        else if (e.type === "progress")
+          events.emit({
+            type: "progress",
+            stage: "upload",
+            channel: "pgyer",
+            msg: redactText(e.detail),
+          });
+        return;
+      }
+      if (e.type === "warn") s.message(pc.yellow(`⚠ ${redactText(e.message)}`));
+      else if (e.type === "progress") s.message(pc.dim(redactText(e.detail)));
+    },
+  });
+  await notifyStageAfter(host, "pgyer", platform, ctx, r, cmdOpts.cwd);
+  const pgyerSummary = {
+    versionName: readArtifactVersion(artifactPath)?.versionName ?? null,
+    channel: "pgyer",
+    mode: "native",
+  };
+  if (r.ok) {
+    if (events) {
+      say.success("蒲公英发布成功，扫码即装");
+      events.emit({ type: "result", ok: true, summary: pgyerSummary });
+    } else s.stop(`蒲公英发布成功 ${pc.green("✓")} 扫码即装`);
+  } else {
+    const pgyerError = redactText(r.error ?? "");
+    if (events)
+      events.emit({ type: "result", ok: false, summary: pgyerSummary, error: pgyerError });
+    else s.stop(`蒲公英上传失败: ${pgyerError}`);
+    process.exitCode = 1;
+  }
+}
 
 program
   .command("release")
@@ -1179,10 +1427,11 @@ program
       host,
       framework,
       {
-        yes: Boolean(opts.yes) || Boolean(global.assumeYes),
+        // --dry-run 复刻旧语义：非交互出计划（自动用推荐值 + uncertain 中止），
+        // 避免 TTY 下弹 select 挂死伪 TTY 自动化（beta 走 preview 分支，不受影响）
+        yes: Boolean(opts.dryRun) || Boolean(opts.yes) || Boolean(global.assumeYes),
         delivery: opts.delivery,
         json: isJson,
-        dryRun: Boolean(opts.dryRun),
       },
       platform,
     );
@@ -1240,6 +1489,8 @@ program
         ok: true,
         artifactVersion: r.versionName,
         ref: r.rollout !== undefined ? `rollout:${r.rollout}%` : undefined,
+        phase: "release",
+        platform: platform,
       });
       await host?.broadcast(
         "notify",
@@ -1507,6 +1758,8 @@ program
         cwd: path.resolve(opts.cwd),
         artifactSha256: artifactSha256(),
         artifactVersion: e.artifactVersion ?? artifactVersionOf(),
+        phase: "release",
+        platform,
         ...ev,
       });
     };
@@ -1693,12 +1946,97 @@ function renderSummary(
     );
   }
 }
+/** doctor --json 结构化体检报告（ui-server 消费；字段来源与人读路径同源） */
+interface DoctorJsonReport {
+  ok: boolean;
+  cwd: string;
+  framework: { id: string; label: string } | null;
+  suggestedFramework: { id: string; label: string } | null;
+  bundleIds: { android?: string; harmony?: string; ios?: string; iosScheme?: string };
+  profiles: string[];
+  activeProfile: { name: string; source: string } | null;
+  stores: Array<{ id: string; credentialsOk: boolean; missing: string[] }>;
+  updateProviders: Array<{ id: string; platforms: string[] | null }>;
+  channels: string[];
+}
 
 program
   .command("doctor")
   .description("体检：框架/凭据/渠道配置")
   .option("--cwd <dir>", "项目目录", process.cwd())
-  .action(async (cmdOpts: { cwd: string }) => {
+  .option("--json", "结构化输出（stdout 给机器）")
+  .action(async (cmdOpts: { cwd: string; json?: boolean }) => {
+    setupChannels();
+    if (cmdOpts.json) {
+      // stdout 纯 JSON 契约：人读渲染（p.intro/log）全部跳过，数据收集与人读路径同源同链
+      const { host } = await loadPluginHost(cmdOpts.cwd);
+      const registered: FrameworkAdapter[] = [];
+      await host?.broadcast("framework:register", { cwd: cmdOpts.cwd }, registered);
+      let framework: FrameworkAdapter | null = null;
+      try {
+        framework = resolveFramework(cmdOpts.cwd, registered);
+      } catch {
+        framework = null; // 声明错误（多个/不匹配）：机读形态以 framework=null 表达，建议字段照常探测
+      }
+      const ids = detectBundleIds(cmdOpts.cwd);
+      const creds = loadCredentialsLayered(cmdOpts.cwd);
+      const profileNames = Object.keys(creds.profiles);
+      const { config } = await loadProjectConfig(cmdOpts.cwd);
+      // 与人读路径同链：projects.json 个人选择 > 项目配置团队默认 > 全局 defaultProfile
+      const { profile, source: profileSource } = resolveProfileSource(
+        cmdOpts.cwd,
+        config.profile,
+        undefined,
+        loadGlobalConfig().config.defaultProfile,
+      );
+      const stores = Object.keys(config.android?.stores ?? {});
+      // 与人读路径同构：仅在配置了渠道时解析凭据（resolveProfile 对缺 profile 报错，两路径同形）；
+      // 机读契约多一层降级：profile 缺失不让报告中断——credRecord 落 {}（全渠道 missing），
+      // missing 清单必须送达消费方（GUI 据此引导补凭据），人读路径的报错文案不受影响
+      let credRecord: Record<string, string> | undefined;
+      if (stores.length > 0) {
+        try {
+          credRecord = resolveProfile(creds, profile, KNOWN_CREDENTIAL_KEYS);
+        } catch {
+          credRecord = {};
+        }
+      }
+      // 逐渠道凭据核对与人读路径同规则：「或」型键任一备选存在即过；无元数据的渠道视为无必填键
+      const storeRows = stores.map((id) => {
+        const missing = (REQUIRED_KEYS_BY_CHANNEL[id] ?? []).filter((k) =>
+          k.includes(" 或 ") ? !k.split(" 或 ").some((alt) => credRecord?.[alt]) : !credRecord?.[k],
+        );
+        return { id, credentialsOk: missing.length === 0, missing };
+      });
+      const updateProviders: UpdateProvider[] = [];
+      await host?.broadcast("update:register", { cwd: cmdOpts.cwd }, updateProviders);
+      const suggested = framework ? null : suggestFramework(cmdOpts.cwd);
+      const report: DoctorJsonReport = {
+        ok: profileNames.length > 0 && storeRows.every((s) => s.credentialsOk),
+        cwd: cmdOpts.cwd,
+        framework: framework ? { id: framework.id, label: framework.label } : null,
+        suggestedFramework: suggested ? { id: suggested.id, label: suggested.label } : null,
+        bundleIds: {
+          android: ids.androidPkgName,
+          harmony: ids.harmonyBundleName,
+          ios: ids.iosBundleId,
+          iosScheme: ids.iosScheme,
+        },
+        profiles: profileNames,
+        activeProfile: credRecord ? { name: profile, source: profileSource } : null,
+        stores: storeRows,
+        updateProviders: updateProviders.map((pr) => ({
+          id: pr.id,
+          platforms: pr.platforms ?? null,
+        })),
+        channels: config.beta
+          ? (["pgyer", "agc", "testflight"] as const).filter((c) => config.beta?.[c])
+          : [],
+      };
+      process.stdout.write(JSON.stringify(report, null, 2) + "\n"); // console.log 持有独立 stdout 引用，绕过测试捕获；与 channels --json 同写法
+      if (!report.ok) process.exitCode = 1; // 与人读路径一致：存在待修复项 exit 1（CI 可判失败）
+      return;
+    }
     setupChannels();
     p.intro(pc.bgBlue(pc.black(" applift doctor ")));
     // 框架段：声明（插件注册）为事实，探测仅作建议——两者不一致时提示
@@ -1856,6 +2194,10 @@ import { registerListingCommand } from "./listing.js";
 registerListingCommand(program, { setup: setupChannels, registry });
 import { REQUIRED_KEYS_BY_CHANNEL, CHANNEL_HINTS, KNOWN_CREDENTIAL_KEYS } from "./channel-meta.js";
 registerLifecycleCommands(program, { setup: setupChannels, registry });
+import { registerValidateCommand } from "./validate.js";
+registerValidateCommand(program, { setup: setupChannels, registry });
+import { registerUiCommand } from "./ui-command.js";
+registerUiCommand(program);
 
 program
   .command("channels")

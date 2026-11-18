@@ -18,10 +18,12 @@ import {
   loadCredentialsLayered,
   resolveProfile,
   redactText,
+  PluginHost,
+  resolvePlugins,
 } from "@applift/core";
 import { resolveChannelTarget } from "./target.js";
 import type { Command } from "commander";
-import type { ChannelRegistry } from "@applift/core";
+import type { Channel, ChannelRegistry, MobilePlatform } from "@applift/core";
 import { KNOWN_CREDENTIAL_KEYS } from "./channel-meta.js";
 
 /** 各渠道在 init/status 场景需要的凭据键与获取指引（导出供与 CREDENTIAL_GROUPS 一致性测试对拍） */
@@ -75,6 +77,21 @@ export const CREDENTIAL_GROUPS: Record<string, string[]> = {
   yyb: ["YYB_USER_ID", "YYB_ACCESS_SECRET", "YYB_APP_ID"],
   asc: ["ASC_KEY_ID", "ASC_ISSUER_ID"],
 };
+
+/**
+ * status 条目的平台归属：status 渠道清单来自 config.android.stores（android），
+ * 但 agc/asc 渠道本身可被 --stores 点名查询——按渠道 id 映射真实平台。
+ * 插件渠道可用 Channel.platform 自带声明，优先于 id 映射。
+ */
+export function platformForChannel(
+  id: string,
+  channel?: Pick<Channel, "platform">,
+): MobilePlatform {
+  if (channel?.platform) return channel.platform;
+  if (id === "agc") return "harmony";
+  if (id === "asc") return "ios";
+  return "android";
+}
 
 export function registerLifecycleCommands(
   program: Command,
@@ -267,7 +284,15 @@ export default defineConfig({
     .option("--json", "结构化输出（stdout 给机器）")
     .action(async (cmdOpts: { stores?: string; cwd: string; json?: boolean }) => {
       registryRef.setup();
-      const { config } = await loadProjectConfig(cmdOpts.cwd);
+      const { config, raw } = await loadProjectConfig(cmdOpts.cwd);
+      // 插件自定义渠道同样可被 status 查询（与发布链路共用同一注册表；重复注册由插件自防幂等）
+      const plugins = resolvePlugins(raw);
+      if (plugins.length > 0)
+        await new PluginHost(plugins).broadcast(
+          "channel:register",
+          { cwd: cmdOpts.cwd },
+          registryRef.registry,
+        );
       const creds = loadCredentialsLayered(cmdOpts.cwd);
       const profile = resolveProfile(
         creds,
@@ -289,17 +314,26 @@ export default defineConfig({
       const isJson = Boolean(cmdOpts.json);
       const results: Array<{
         channel: string;
+        platform: string; // 渠道 id 经 platformForChannel 映射：agc→harmony、asc→ios、其余→android
+        version?: string; // ReviewStatus 无线上版本——一期不造数据，置 undefined
         state: string;
         live?: boolean;
         reason?: string;
         error?: string;
+        fetchedAt: string; // 单渠道时间戳（ISO）
       }> = [];
       let hasError = false;
       if (!isJson) p.intro(pc.bgBlue(pc.black(" applift status ")));
       for (const id of storeIds) {
         const channel = registryRef.registry.get(id);
         if (!channel) {
-          results.push({ channel: id, state: "unknown", error: "未知渠道" });
+          results.push({
+            channel: id,
+            platform: platformForChannel(id),
+            state: "unknown",
+            error: "未知渠道",
+            fetchedAt: new Date().toISOString(),
+          });
           hasError = true;
           if (!isJson) p.log.error(`${id}: 未知渠道`);
           continue;
@@ -307,12 +341,23 @@ export default defineConfig({
         // target 取值链与 release 一致：stores 渠道配置 > 平台段配置 > 包名自动推导
         const target = resolveChannelTarget(id, config, detected);
         if (!channel.capabilities.status) {
-          results.push({ channel: id, state: "unknown", error: "该渠道状态查询暂未接入" });
+          results.push({
+            channel: id,
+            platform: platformForChannel(id, channel),
+            state: "unknown",
+            error: "该渠道状态查询暂未接入",
+            fetchedAt: new Date().toISOString(),
+          });
           continue;
         }
         try {
           const st = await channel.status({ credentials: profile, target });
-          results.push({ channel: id, ...st });
+          results.push({
+            channel: id,
+            ...st, // 渠道返回值先展开：CLI 补充字段（platform/fetchedAt）不被渠道覆盖
+            platform: platformForChannel(id, channel),
+            fetchedAt: new Date().toISOString(),
+          });
           if (!isJson) {
             const icon =
               st.state === "approved"
@@ -335,12 +380,22 @@ export default defineConfig({
         } catch (e) {
           // status 查询抛错可能内嵌凭据/响应体：--json results 与人话提示共用同一脱敏值
           const msg = redactText((e as Error).message);
-          results.push({ channel: id, state: "unknown", error: msg });
+          results.push({
+            channel: id,
+            platform: platformForChannel(id, channel),
+            state: "unknown",
+            error: msg,
+            fetchedAt: new Date().toISOString(),
+          });
           hasError = true;
           if (!isJson) p.log.error(`${channel.label}: ${msg}`);
         }
       }
-      if (isJson) process.stdout.write(JSON.stringify({ status: results }, null, 2) + "\n");
+      // StatusReport：ui-server StatusAggregator 消费（顶层 fetchedAt + 每项 platform/fetchedAt）
+      if (isJson)
+        process.stdout.write(
+          JSON.stringify({ fetchedAt: new Date().toISOString(), results }, null, 2) + "\n",
+        );
       else p.outro("状态查询完成");
       if (hasError) process.exitCode = 1;
     });

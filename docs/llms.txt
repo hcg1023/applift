@@ -31,7 +31,7 @@
 ## 语义约定（机器消费）
 
 - **退出码**：0=全部成功，1=有失败（逐渠道错误在 stderr/JSON）；listing 任一渠道失败 exit 1；status 中"暂未接入状态查询"的渠道不计入退出码
-- **--json**：stdout 输出结构化 JSON（stage 模式返回 `{stage:[...]}`，每项含 `ref`（渠道草稿引用，无则 null）；submit 模式返回 `{submit:[...]}`，每项含 `ref`（提审后的渠道引用，无则 null）；status 返回 `{status:[...]}`；dry-run 返回 `{dryRun,plans,errors}`）；渠道进度与人类渲染走 stderr
+- **--json**：stdout 输出结构化 JSON（stage 模式返回 `{stage:[...]}`，每项含 `ref`（渠道草稿引用，无则 null）；submit 模式返回 `{submit:[...]}`，每项含 `ref`（提审后的渠道引用，无则 null）；status 返回 `{fetchedAt,results:[...]}`（顶层 fetchedAt 为 ISO 时间戳，每项含 `platform`（android/ios/harmony，按渠道 id 推导）与 `fetchedAt` 单渠道时间戳）；dry-run 返回 `{dryRun,plans,errors}`）；渠道进度与人类渲染走 stderr
 - **错误格式**：`<渠道> 缺少 <KEY>（<获取指引>）`——可直接把指引转述给用户
 - **两段式安全**：stage 只传草稿；submit = 提审 = 审核通过自动上架（iOS 默认亦自动 `ios.release:"auto"`；`ios.release:"manual"` 或 `--release-mode manual` 改手动；`--release-time` 定时上架，与 `--release-mode` 互斥）
 

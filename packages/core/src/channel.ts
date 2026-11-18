@@ -10,7 +10,8 @@
  */
 import type { Platform } from "./framework.js";
 
-/** 渠道能力声明（编排与确认界面据此渲染/拦截） */
+/** 移动三端平台（status/发布归属用；比宽 Platform 窄——渠道归属不含桌面端） */
+export type MobilePlatform = "android" | "ios" | "harmony";
 export interface ChannelCapabilities {
   /** 支持只传包不提审（小米 push 一体 → false，submit 即上传） */
   stage: boolean;
@@ -95,6 +96,11 @@ export type ReviewStatus =
 export interface Channel {
   id: string;
   label: string;
+  /**
+   * 平台归属声明（可选）：插件渠道可自带（如 pushy=android、私有渠道=harmony）；
+   * status 等按渠道 id 推平台的消费方优先读此声明，缺省回落 id 映射（agc→harmony、asc→ios、其余→android）。
+   */
+  platform?: MobilePlatform;
   capabilities: ChannelCapabilities;
   /** 平台错误码 → 人话提示（平台内聚：与本渠道实现放一起，humanize 层消费） */
   errorHints?: Record<string, string>;

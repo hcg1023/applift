@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>applift</title>
+    <style>
+      body {
+        margin: 0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        font-family: -apple-system, "PingFang SC", sans-serif;
+        color: #1f2933;
+        background: #f5f7fa;
+      }
+      .ring {
+        width: 36px;
+        height: 36px;
+        border: 3px solid #d6dbe1;
+        border-top-color: #2563eb;
+        border-radius: 50%;
+        animation: spin 0.9s linear infinite;
+      }
+      .ring.idle {
+        display: none;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      p {
+        margin: 0;
+        font-size: 14px;
+        color: #52606d;
+      }
+      #err {
+        color: #c0392b;
+        max-width: 420px;
+        text-align: center;
+      }
+      button {
+        display: none;
+        padding: 8px 22px;
+        font-size: 14px;
+        color: #fff;
+        background: #2563eb;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.6;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="ring" id="ring"></div>
+    <p id="msg">正在连接 applift 服务…</p>
+    <p id="err"></p>
+    <button id="retry">重试</button>
+    <script>
+      // 失败态（?reason= 由壳导航时注入）：显示原因 + 重试按钮 → invoke 壳 retry_server_start。
+      // 连接中由壳负责自动导航，页面不自行轮询（避免壳/页面双重重试）。
+      const reason = new URLSearchParams(location.search).get("reason");
+      if (reason) {
+        document.getElementById("err").textContent = reason;
+        document.getElementById("msg").textContent = "连接 applift 服务失败";
+        document.getElementById("ring").classList.add("idle");
+        const btn = document.getElementById("retry");
+        btn.style.display = "block";
+        btn.addEventListener("click", () => {
+          btn.disabled = true;
+          btn.textContent = "重试中…";
+          const invoke = window.__TAURI_INTERNALS__?.invoke;
+          if (!invoke) {
+            btn.disabled = false;
+            btn.textContent = "重试";
+            return;
+          }
+          invoke("retry_server_start")
+            .then(() => {
+              btn.textContent = "已连接";
+            })
+            .catch((e) => {
+              btn.disabled = false;
+              btn.textContent = "重试";
+              document.getElementById("err").textContent = String(e);
+            });
+        });
+      }
+    </script>
+  </body>
+</html>

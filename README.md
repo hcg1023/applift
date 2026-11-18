@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/brand/assets/logo-mark.svg" width="128" alt="applift logo" /></p>
+
 # applift
 
 > 框架无关的多端 App 发版 CLI——React Native / Flutter / 原生（Android/iOS/鸿蒙）/ Electron / Tauri × 10 发布渠道，一套凭据、一套命令。
@@ -155,11 +157,82 @@ applift release harmony --delivery ota --rollout 20   # 测试通道最新热更
 
 平台枚举开放（含 windows/macos/linux），桌面商店（winget/Homebrew 等）与游戏商店均为纯插件扩展。
 
+## 图形控制台（applift ui）
+
+```bash
+applift ui                 # 启动：后台常驻服务 + 打开浏览器（默认 http://127.0.0.1:47600）
+applift ui                 # 再跑幂等：只在现活端口上开浏览器，不重复起服务
+applift ui --no-open       # 不自动开浏览器（CI / 无头）
+applift ui --port 48080    # 自定义端口
+applift ui --stop          # 停止服务（无运行实例时提示，不算失败）
+```
+
+- 能力（一期）：多项目渠道状态总览（轮询聚合 + 状态跃迁动态时间线 + 未读角标）、beta 发版向导（判定预览 → 分平台确认 → 执行 → 结果）、通用设置（轮询间隔 / 通知 / 外观）；断连时自动重连并显示横幅，恢复后增量同步。
+- 数据链路：UI 服务逐项目 spawn `applift status --json`（分级轮询：前台默认 5 分钟 / 后台默认 1 小时，下限护栏 1 分钟 / 15 分钟），状态跃迁经 WebSocket 即推；发版走 `beta --interactive-events` 子进程桥（确认在页内回写，人保留拍板权）。
+- 安全边界：服务仅监听 `127.0.0.1`（不监听局域网）；`/api/shutdown` 与发版任务路由校验 Host 头（仅认 127.0.0.1 / localhost，防其他网页跨站直发与 DNS rebinding）；无多用户鉴权——远程部署不在一期范围。
+- 通知：页面打开时尝试系统通知（浏览器 Notification 授权拒绝自动降级为总览未读角标）；添加项目为路径手输（浏览器无安全的目录选择能力）。
+
+### 桌面壳（Tauri，applift.app）
+
+```bash
+# 前置：先在仓库根构建（壳打包内嵌 ui 前端产物与 ui-server bundle）
+pnpm install && pnpm build
+# 仓库内构建（macOS 出 dmg / Windows 出 NSIS 安装包；需 Rust 工具链）
+cd apps/shell && npm ci && npm run build        # 产物：src-tauri/target*/release/bundle/
+# 开发形态（连本仓 ui-server dist，资源不打包）
+cd apps/shell && npm run dev
+```
+
+- **形态**：Tauri 2 薄壳（托盘常驻 + 主窗口 + 左键弹窗 + 原生通知/目录选择对话框），界面与 webui 同一份前端（壳内走 HostAdapter 原生实现）。壳不发布 npm——产物只有安装包（CI artifact 分发）。
+- **前置**：本机 Node ≥ 20（壳不捆绑 Node：缺失时首屏引导页给下载链接）；applift 检索链 = 工程内 `node_modules/.bin` > 全局 PATH > 页内引导 `npm install -g @applift/cli`。
+- **卸载**：macOS 拖废纸篓 / Windows 控制面板。若开启过「登录自启」，macOS 需手动删 `~/Library/LaunchAgents/applift.plist`（插件按应用名生成该文件；Windows 卸载器自动清注册表 Run 项）。
+
+- **CI**：`shell` job（macos-latest 出 universal dmg、windows-latest 出 NSIS exe，artifact 上传）；cargo test 全桩、无真网络交互。
+
 ## AI / CI
 
 - `--json` 结构化输出（channels/status/history/listing/release 支持；stdout 纯净，进度走 stderr）；退出码 0=全成 1=有败
-- `applift channels --json` 自发现；`--yes` 无人值守；错误信息自带"缺什么键去哪拿"
-- Agent 技能文档：`SKILL.md`（可装入 Claude Code/Cursor）/ `docs/llms.txt`
+- `applift channels --json` 自发现；`--yes` 无人值守；错误信息自带"缺什么键去哪拿"；Agent 技能文档：`SKILL.md`（可装入 Claude Code/Cursor）/ `docs/llms.txt`
+
+### 机读接口（applift-ui / Agent 消费）
+
+| 命令                                           | 用途                                            | stdout 形态                                               |
+| ---------------------------------------------- | ----------------------------------------------- | --------------------------------------------------------- |
+| `applift validate <path> --json`               | 目录是否为合法 applift 工程（添加项目即时校验） | `ProjectValidation` 单对象                                |
+| `applift doctor --cwd <dir> --json`            | 体检报告：框架/包名/凭据/渠道逐项核对           | `DoctorJsonReport` 单对象                                 |
+| `applift beta <platform> --dry-run --json`     | 热更判定预览（只判定不发布，无需凭据）          | `BetaDryRunReport` 单对象                                 |
+| `applift beta <platform> --interactive-events` | 发版向导全流程事件流（见下）                    | stdout=NDJSON 事件，stdin=确认回写                        |
+| `applift status --stores a,b --json`           | 各渠道审核状态矩阵                              | `{fetchedAt, results[]}`（每项含 `platform`/`fetchedAt`） |
+
+`validate` 报告要点：`ok`/`configFound`/`framework`（声明或 null）/`suggestedFramework`/`bundleIds`/`platforms`/`appliftAvailable`（工程依赖是否可执行 applift）；config 缺失或解析失败产出 `ok:false` 报告而非中断。`doctor --json` 与人读路径同源同链，profile 缺失时降级为 `ok:false` 仍出完整报告（`stores[].missing` 清单照常送达，UI 据此引导补凭据）。
+
+`validate` 服务端降级（ui-server 添加项目路径）：CLI 定位走检索链（工程内 > 全局 > 服务内兜底）；命中工程内旧版（<0.13 无 `validate` 命令，判据 `unknown command 'validate'`）或子进程超时（20s，判据「命令超时」文案）时，降级为目录内配置文件探测（存在 `applift.config.{ts,mts,js,mjs,cjs,json}` 即 `ok:true`，`appliftAvailable` 按工程 `.bin` 实测不伪造）——添加项目不被工程锁定的 CLI 版本阻塞，状态/发版仍用工程版本。
+
+`beta --dry-run` 守卫：`--dry-run` 仅支持单平台（无 platform 拒绝）；`--json` 仅支持 `--dry-run` 判定预览（完整机读输出走 `--interactive-events`）。报告含 `provider`/`recommendation`（ota|native|uncertain，可为 null=未接入热更）/`confidence`/`evidence`/`note`（人读摘要）。
+
+#### `--interactive-events` 协议（NDJSON）
+
+stdout 每行一个 JSON 事件，stdin 每行一个 JSON 回写；首事件 `hello` 携带协议版本，末事件 `result` 收口（失败也是 result，`ok:false` + `error`）。确认等待上限 10 分钟，超时 CLI 主动取消。互斥守卫：与 `--json` 互斥；仅支持单平台路径；不支持 `--bump`（`beta.autoBump` 在事件流下跳过 bump 引导、直接原生管线）。
+
+```
+→ {"type":"hello","protocol":1,"cli":"0.13.0"}
+→ {"type":"stage","stage":"judge"}
+→ {"type":"judgement","platform":"harmony","recommendation":"native","confidence":"high","provider":"rn-update","evidence":[{"path":"android/app/src/main/MainActivity.kt","rule":"原生代码"}]}
+→ {"type":"confirm_required","id":"delivery","question":"投递方式","choices":[{"value":"ota","label":"热更（推荐：否）","recommended":false},{"value":"native","label":"原生包（直接用现有产物发内测）","recommended":true}]}
+← {"type":"confirm","id":"delivery","value":"native"}        # stdin 回写一行 JSON
+→ {"type":"stage","stage":"upload"}
+→ {"type":"progress","stage":"upload","channel":"pgyer","msg":"上传中"}
+→ {"type":"log","level":"info","msg":"蒲公英发布成功"}
+→ {"type":"result","ok":true,"summary":{"mode":"native","channel":"pgyer","versionName":"4.0.0"}}
+```
+
+`result.summary.mode` 取值：`ota`（热更发布）/ `native`（原生发布）/ `preview`（`--dry-run` 判定预览）。事件流下投递决策恒为用户拍板（confirm 回写即 explicit），原生判定直接走发布管线（失败如「未找到构建产物」以 `result(ok:false)` 收口）；三态 bump 引导仅存在于非事件流模式（stderr + exit 1，不发事件）。
+
+字段细则：
+
+- `stage` 事件取值枚举：`judge`（热更判定）/ `publish`（ota 热更发布，仅 ota 路径）/ `upload`（native 原生传包，仅 native 路径）。`progress.stage` 与最近一次 `stage` 事件同值。
+- `pct` 为保留字段（0-100 进度百分比）：当前渠道 API 均无确定性进度，一期不填；消费方按可选处理，不得假设必现。
+- ui-server WS 桥（`ws://127.0.0.1:<port>/ws`）在 CLI 事件外另有下行封装：`{"t":"task","taskId","data":<CLI 事件>}` 逐事件转发；`{"t":"task.end","taskId","code"}` 任务收口（子进程退出码）；`{"t":"tasks","data":[...]}` 新连接时回看的归档任务（最近 20 条，ring buffer）。上行 `{"t":"confirm",...}` / `{"t":"task.cancel",...}` 按 taskId 路由。
 
 ## 开发
 

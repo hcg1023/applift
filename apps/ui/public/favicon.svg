@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="fL" x1="0" y1="0" x2="1" y2="0.7">
+      <stop offset="0" stop-color="#9ed2ff"/><stop offset="0.5" stop-color="#4f8df9"/><stop offset="1" stop-color="#17337f"/>
+    </linearGradient>
+    <linearGradient id="fR" x1="0" y1="0" x2="1" y2="0.7">
+      <stop offset="0" stop-color="#3e6fe3"/><stop offset="0.5" stop-color="#20499f"/><stop offset="1" stop-color="#0b1b4e"/>
+    </linearGradient>
+    <linearGradient id="fB" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#eaf4ff"/><stop offset="0.5" stop-color="#a8cfff"/><stop offset="1" stop-color="#5b99f4"/>
+    </linearGradient>
+    <linearGradient id="fS" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#8fc4ff"/>
+    </linearGradient>
+  </defs>
+  <!-- 曜石底 squircle（与正标同 824 网格，深色略提亮保 16px 对比） -->
+  <path d="M285.4 100 C183.0 100 100 183.0 100 285.4 L100 738.6 C100 841.0 183.0 924 285.4 924 L738.6 924 C841.0 924 924 841.0 924 738.6 L924 285.4 C924 183.0 841.0 100 738.6 100 Z" fill="#0b0e16"/>
+  <!-- 左腿（受光，冰蓝→深蓝）与右腿（背光，靛蓝→暗夜）：交叠出中央棱线 -->
+  <path d="M474 300 L262 792 L346 792 L558 300 Z" fill="url(#fL)"/>
+  <path d="M550 300 L762 792 L678 792 L466 300 Z" fill="url(#fR)"/>
+  <!-- 受光棱线高光（大图同款左侧亮线） -->
+  <path d="M474 304 L266 786" stroke="#d9ebff" stroke-opacity="0.75" stroke-width="10" fill="none" stroke-linecap="round"/>
+  <!-- 悬浮横梁（最亮玻璃件，上下留缝——「抬起」的横梁） -->
+  <path d="M448 580 L576 580 L616 668 L408 668 Z" fill="url(#fB)"/>
+  <path d="M452 585 L572 585" stroke="#ffffff" stroke-opacity="0.9" stroke-width="8" stroke-linecap="round" fill="none"/>
+  <!-- 顶部脱离四芒火花 + 光环（与正标同位：顶点之上） -->
+  <circle cx="512" cy="208" r="58" fill="none" stroke="#7cc4ff" stroke-opacity="0.5" stroke-width="8"/>
+  <path d="M512 168 C519 199 522 202 552 208 C522 214 519 217 512 248 C505 217 502 214 472 208 C502 202 505 199 512 168 Z" fill="url(#fS)"/>
+</svg>

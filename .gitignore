@@ -9,3 +9,5 @@ packages/core/src/**/*.d.ts
 
 # 本地 agent 工具会话产物
 .workbuddy/
+playwright-report/
+test-results/

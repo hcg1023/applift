@@ -156,6 +156,8 @@ describe("stage:after 广播（stage+submit 一体路径与 runStage 对称）",
     const channel: Channel = {
       id: "spy-ch",
       label: "桩",
+      // Channel.platform 可选声明（A2-6 新契约）：插件渠道自带平台归属，status 消费方优先读它
+      platform: "harmony",
       capabilities: { stage: true, submit: true, scheduled: false, status: false },
       plan: async () => ({
         channel: "spy-ch",

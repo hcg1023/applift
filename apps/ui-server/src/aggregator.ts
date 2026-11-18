@@ -1,0 +1,374 @@
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import type { AppliftRunner } from "./runner.js";
+import { atomicWriteFile, uiDataHome, type ProjectRegistry } from "./registry.js";
+
+export interface ChannelSnapshot {
+  channel: string;
+  platform: string;
+  state: string;
+  live?: boolean;
+  reason?: string;
+  error?: string;
+  fetchedAt: string;
+}
+
+export interface ProjectSnapshot {
+  projectId: string;
+  channels: ChannelSnapshot[];
+  fetchedAt: string;
+  /** false = CLI 不可用（非零退出且 stdout 无法解析出 StatusReport） */
+  ok: boolean;
+  /** ok=false 时的真因（status 原始输出尾段 / 探测异常信息）——UI 直显，不再静默 */
+  error?: string;
+}
+
+export type FeedEvent = {
+  id: string;
+  ts: number;
+  projectId: string;
+  channel: string;
+  kind: "state_change";
+  from: string;
+  to: string;
+};
+
+export interface AggregatorTimers {
+  setInterval: typeof setInterval;
+  clearInterval: typeof clearInterval;
+}
+
+/** status --json 的 StatusReport（阶段一 lifecycle.ts 契约） */
+interface StatusReport {
+  fetchedAt?: string;
+  results?: Array<Partial<ChannelSnapshot>>;
+}
+
+/** 档位护栏：前台最短 1min，后台最短 15min（防误配打爆渠道 API） */
+const FG_MIN_MS = 60_000;
+const BG_MIN_MS = 15 * 60_000;
+const FG_DEFAULT_MS = 5 * 60_000;
+const BG_DEFAULT_MS = 60 * 60_000;
+/** 单项目 status 子进程超时 */
+const STATUS_TIMEOUT_MS = 30_000; // 真实 doctor/status 亚秒级；偶发挂死 30s 内暴露（120s 会让 UI 长时间停在加载中）
+
+const clamp = (v: number, min: number) => Math.max(v, min);
+
+/** 服务端轮询档位持久化形态（settings.json；PUT /api/settings 契约） */
+export interface IntervalSettings {
+  foregroundMs: number;
+  backgroundMs: number;
+}
+
+/** PUT /api/settings 的 clamp 复用护栏：非有限值回落默认档，与 setIntervals 同一规则 */
+export function clampIntervalSettings(
+  foregroundMs?: unknown,
+  backgroundMs?: unknown,
+): IntervalSettings {
+  return {
+    foregroundMs:
+      typeof foregroundMs === "number" && Number.isFinite(foregroundMs)
+        ? clamp(foregroundMs, FG_MIN_MS)
+        : FG_DEFAULT_MS,
+    backgroundMs:
+      typeof backgroundMs === "number" && Number.isFinite(backgroundMs)
+        ? clamp(backgroundMs, BG_MIN_MS)
+        : BG_DEFAULT_MS,
+  };
+}
+/** baseline 轮转阈值：追加前超 1MiB 则保留后半写回 */
+const BASELINE_ROTATE_BYTES = 1024 * 1024;
+
+export function defaultBaselinePath(): string {
+  return join(uiDataHome(), "state-history.jsonl");
+}
+
+export class StatusAggregator {
+  readonly baselinePath: string;
+  private readonly registry: ProjectRegistry;
+  private readonly runnerFactory: (cwd: string) => AppliftRunner;
+  private readonly onSnapshot: (s: ProjectSnapshot) => void;
+  private readonly onFeed: (e: FeedEvent) => void;
+  private readonly timers: AggregatorTimers;
+  private fgMs = FG_DEFAULT_MS;
+  private bgMs = BG_DEFAULT_MS;
+  private visible = true;
+  private timerId: NodeJS.Timeout | undefined;
+  /** (projectId \t channel) → 最近一次有效 state（内存即重启恢复自 baseline 文件） */
+  private lastState = new Map<string, string>();
+  private refreshInFlight: Promise<void> | undefined;
+
+  constructor(deps: {
+    registry: ProjectRegistry;
+    runnerFactory: (cwd: string) => AppliftRunner;
+    onSnapshot: (s: ProjectSnapshot) => void;
+    onFeed: (e: FeedEvent) => void;
+    baselinePath?: string;
+    timers?: AggregatorTimers;
+  }) {
+    this.registry = deps.registry;
+    this.runnerFactory = deps.runnerFactory;
+    this.onSnapshot = deps.onSnapshot;
+    this.onFeed = deps.onFeed;
+    this.baselinePath = deps.baselinePath ?? defaultBaselinePath();
+    this.timers = deps.timers ?? ({ setInterval, clearInterval } as AggregatorTimers);
+    this.loadBaseline();
+  }
+
+  /** 重启恢复：读 state-history.jsonl，每个 key 取最后一条 */
+  private loadBaseline(): void {
+    let text: string;
+    try {
+      text = readFileSync(this.baselinePath, "utf8");
+    } catch {
+      return; // 无基线文件 → 首轮全量不产生事件
+    }
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const rec = JSON.parse(line) as {
+          projectId?: string;
+          channel?: string;
+          to?: string;
+          state?: string;
+        };
+        if (!rec.projectId || !rec.channel) continue;
+        const state = rec.to ?? rec.state;
+        if (state) this.lastState.set(`${rec.projectId}\t${rec.channel}`, state);
+      } catch {
+        // 单行损坏 → 跳过，不拖垮整份基线
+      }
+    }
+  }
+
+  /** 当前档位间隔（前台/后台）——公开给 /api/health 透出服务端真话 */
+  currentIntervalMs(): number {
+    return this.visible ? this.fgMs : this.bgMs;
+  }
+
+  private restartTimer(): void {
+    if (this.timerId !== undefined) this.timers.clearInterval(this.timerId);
+    this.timerId = this.timers.setInterval(() => {
+      // 回调/工厂抛错已在 refreshNow 内隔离；此处兜底防拒绝逸出到进程级 unhandledRejection
+      this.refreshNow().catch(() => {});
+    }, this.currentIntervalMs());
+  }
+
+  setVisible(v: boolean): void {
+    const tierChanged = v !== this.visible;
+    this.visible = v;
+    // 首次调用或档位变化才重建定时器；同档幂等（保住 interval 句柄不重置倒计时）
+    if (this.timerId === undefined || tierChanged) this.restartTimer();
+  }
+
+  /** 停止轮询定时器（优雅关闭链路调用；基线已落盘，重启可恢复） */
+  stop(): void {
+    if (this.timerId !== undefined) {
+      this.timers.clearInterval(this.timerId);
+      this.timerId = undefined;
+    }
+  }
+
+  setIntervals(foregroundMs: number, backgroundMs: number): void {
+    // NaN/Infinity 会被 Math.max 原样放过（NaN 间隔 → setInterval 0ms 背靠背打 API），非有限值回落默认档
+    this.fgMs = Number.isFinite(foregroundMs) ? clamp(foregroundMs, FG_MIN_MS) : FG_DEFAULT_MS;
+    this.bgMs = Number.isFinite(backgroundMs) ? clamp(backgroundMs, BG_MIN_MS) : BG_DEFAULT_MS;
+    if (this.timerId !== undefined) this.restartTimer();
+  }
+
+  /** 全部项目立即一轮（项目间串行；与进行中的一轮合并，防定时器+手动叠加） */
+  refreshNow(): Promise<void> {
+    if (this.refreshInFlight) return this.refreshInFlight;
+    this.refreshInFlight = this.runOnce().finally(() => {
+      this.refreshInFlight = undefined;
+    });
+    return this.refreshInFlight;
+  }
+
+  private async runOnce(): Promise<void> {
+    for (const entry of this.registry.list()) {
+      let report: StatusReport | null = null;
+      try {
+        // 工厂在 try 内：同步抛错同样降级为 ok=false 快照，不打断后续项目
+        const runner = this.runnerFactory(entry.path);
+        // 渠道发现：doctor --json 拿 stores+beta 渠道（qy-driver 等渠道全在 beta 段的工程，
+        // status 缺省回落 config.android.stores 为空会 exit 1）；失败/旧版 CLI → null 退回现状
+        const discovered = await this.discoverChannels(runner);
+        if (discovered !== null && discovered.length === 0) {
+          // 纯无渠道工程：ok=true 空 channels（不是错误）
+          this.emitSnapshot({
+            projectId: entry.id,
+            channels: [],
+            fetchedAt: new Date().toISOString(),
+            ok: true,
+          });
+          continue;
+        }
+        const res = await runner.run(
+          discovered === null
+            ? ["status", "--json"]
+            : ["status", "--json", "--stores", discovered.join(",")],
+          { timeoutMs: STATUS_TIMEOUT_MS },
+        );
+        report = this.parseReport(res);
+        // exit 1 只是 CI 信号：错误渠道以 error 条目进 results，stdout 合法即采用（ok=true）；
+        // 仅 stdout 不可解析（report=null）才降级——error 带原始输出尾段（反复出现的「查不到」靠它定位真因）
+        const ok = report !== null;
+        if (!ok) {
+          this.emitSnapshot({
+            projectId: entry.id,
+            channels: [],
+            fetchedAt: new Date().toISOString(),
+            ok: false,
+            error: `status 输出不可解析（code=${res.code}）：${(res.stderr || res.stdout || "").trim().slice(-300)}`,
+          });
+          continue;
+        }
+        const channels = (report?.results ?? [])
+          .map((r) => ({
+            channel: r.channel ?? "unknown",
+            platform: r.platform ?? "unknown",
+            state: r.state ?? "unknown",
+            live: r.live,
+            reason: r.reason,
+            error: r.error,
+            fetchedAt: r.fetchedAt ?? new Date().toISOString(),
+          }))
+          // 未知渠道（如 beta 段 testflight 无 Channel 实现，doctor 无法在发现侧过滤）：
+          // 不进 channels、不算失败——消费侧按 error 文案剔除
+          .filter((c) => !(c.error ?? "").includes("未知渠道"));
+        const snapshot: ProjectSnapshot = {
+          projectId: entry.id,
+          channels,
+          fetchedAt: report?.fetchedAt ?? new Date().toISOString(),
+          ok,
+        };
+        if (ok) await this.diffAndPersist(snapshot);
+        this.emitSnapshot(snapshot);
+      } catch (e) {
+        // 子进程层异常（spawn 失败、落盘失败等）同样降级为 ok=false 快照；error 透传异常信息（不再静默）
+        const msg = `探测异常：${e instanceof Error ? e.message : String(e)}`.slice(0, 300);
+        console.error(`[aggregator] ${entry.path} ${msg}`);
+        this.emitSnapshot({
+          projectId: entry.id,
+          channels: [],
+          fetchedAt: new Date().toISOString(),
+          ok: false,
+          error: msg,
+        });
+      }
+    }
+  }
+
+  /** 回调隔离：消费端抛错只影响它自己这一条，不逃逸进轮询循环/进程 */
+  private emitSnapshot(s: ProjectSnapshot): void {
+    try {
+      this.onSnapshot(s);
+    } catch {
+      // 吞掉：ui-server 主进程存活优先于单个订阅者
+    }
+  }
+
+  /** doctor --json 渠道发现：stores[].id（android.stores 段）+ channels（beta 段）合并去重。
+   *  doctor exit 1（凭据缺失）不影响发现——stdout 合法 JSON 即采信；
+   *  spawn 失败 / 无 --json 的旧版 CLI / stdout 不可解析 → null（退回不传 --stores 的现状行为） */
+  private async discoverChannels(runner: AppliftRunner): Promise<string[] | null> {
+    let res: { code: number; stdout: string; stderr: string };
+    try {
+      res = await runner.run(["doctor", "--json"], { timeoutMs: STATUS_TIMEOUT_MS });
+    } catch {
+      return null;
+    }
+    const text = res.stdout.trim();
+    if (!text.startsWith("{")) return null; // 旧版 CLI：unknown option 报错走 stderr，stdout 无 JSON
+    try {
+      const report = JSON.parse(text) as {
+        stores?: Array<{ id?: string }>;
+        channels?: unknown;
+        bundleIds?: { ios?: string | null };
+      };
+      const ids = [
+        ...(report.stores ?? []).flatMap((s) => (typeof s?.id === "string" ? [s.id] : [])),
+        ...(Array.isArray(report.channels)
+          ? report.channels.filter((c): c is string => typeof c === "string")
+          : []),
+      ];
+      // iOS 工程的商店状态面 = ASC（ios 段无 stores 声明——iOS 商店只有 App Store，渠道固定）：
+      // doctor stores 只反映 android.stores，bundleIds.ios 存在即补 asc，否则 iOS 工程永远查不到状态
+      if (typeof report.bundleIds?.ios === "string" && report.bundleIds.ios !== "") ids.push("asc");
+      return [...new Set(ids)];
+    } catch {
+      return null;
+    }
+  }
+
+  /** 非零退出 + stdout 可解析 → 有数据的 ok=false；stdout 无法解析 → null */
+  private parseReport(res: { code: number; stdout: string; stderr: string }): StatusReport | null {
+    const text = res.stdout.trim();
+    if (!text.startsWith("{")) return null;
+    try {
+      const parsed = JSON.parse(text) as StatusReport;
+      return Array.isArray(parsed.results) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 跃迁检测 + baseline 落盘：unknown 态（渠道错误）不进基线，避免故障期噪音。
+   * 顺序：先全部落盘，成功后才更新内存基线并发出 FeedEvent（写失败→异常上抛→该轮降级 ok=false，内存与文件不分叉、事件不重发） */
+  private async diffAndPersist(snapshot: ProjectSnapshot): Promise<void> {
+    const now = Date.now();
+    const entries: Array<{ key: string; state: string }> = [];
+    const events: FeedEvent[] = [];
+    const lines: string[] = [];
+    for (const ch of snapshot.channels) {
+      if (ch.state === "unknown") continue;
+      const key = `${snapshot.projectId}\t${ch.channel}`;
+      const prev = this.lastState.get(key);
+      if (prev !== undefined && prev !== ch.state) {
+        events.push({
+          id: randomUUID(),
+          ts: now,
+          projectId: snapshot.projectId,
+          channel: ch.channel,
+          kind: "state_change",
+          from: prev,
+          to: ch.state,
+        });
+      }
+      entries.push({ key, state: ch.state });
+      // 每次有效状态都落一行（含首次 from=to）：重启恢复的完整基线
+      lines.push(
+        JSON.stringify({
+          ts: now,
+          projectId: snapshot.projectId,
+          channel: ch.channel,
+          from: prev ?? ch.state,
+          to: ch.state,
+        }),
+      );
+    }
+    if (lines.length === 0) return;
+    await mkdir(dirname(this.baselinePath), { recursive: true });
+    // 轮转：追加前超阈值 → 保留后半行原子写回（内存基线 lastState 不受影响，事件不重发）
+    const st = await stat(this.baselinePath).catch(() => null);
+    if (st !== null && st.size > BASELINE_ROTATE_BYTES) {
+      const all = (await readFile(this.baselinePath, "utf8"))
+        .split("\n")
+        .filter((l) => l.trim() !== "");
+      const kept = all.slice(Math.floor(all.length / 2));
+      await atomicWriteFile(this.baselinePath, kept.join("\n") + "\n");
+    }
+    await appendFile(this.baselinePath, lines.join("\n") + "\n", "utf8");
+    for (const e of entries) this.lastState.set(e.key, e.state);
+    for (const e of events) {
+      try {
+        this.onFeed(e);
+      } catch {
+        // 同 emitSnapshot：订阅者抛错不炸进程
+      }
+    }
+  }
+}

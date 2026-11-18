@@ -1,0 +1,489 @@
+import { afterAll, describe, expect, it } from "vitest";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { request as httpRequest } from "node:http";
+import { startUiServer } from "./http.js";
+import { cliBinPath, validateBin, validateProject } from "./routes.js";
+import { ProjectRegistry } from "./registry.js";
+import type { ProjectEntry } from "./registry.js";
+
+const tmpDirs: string[] = [];
+afterAll(async () => {
+  await Promise.all(tmpDirs.map((d) => rm(d, { recursive: true, force: true })));
+});
+
+async function mkdtempStatic(html: string, extra?: Record<string, string>): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "ui-server-"));
+  tmpDirs.push(dir);
+  await writeFile(join(dir, "index.html"), html, "utf8");
+  for (const [name, content] of Object.entries(extra ?? {})) {
+    await writeFile(join(dir, name), content, "utf8");
+  }
+  return dir;
+}
+
+describe("startUiServer", () => {
+  it("健康检查 + 静态托管", async () => {
+    const dir = await mkdtempStatic("<html>hi</html>");
+    const srv = await startUiServer({ staticDir: dir, port: 0 });
+    const health = await fetch(`http://127.0.0.1:${srv.port}/api/health`).then((r) => r.json());
+    expect(health).toEqual({ ok: true, version: expect.any(String) });
+    const html = await fetch(`http://127.0.0.1:${srv.port}/`).then((r) => r.text());
+    expect(html).toContain("hi");
+    await srv.close();
+  });
+
+  it("绑定 127.0.0.1（非 0.0.0.0）", async () => {
+    const dir = await mkdtempStatic("<html>x</html>");
+    const srv = await startUiServer({ staticDir: dir, port: 0 });
+    expect(srv.httpServer.address()).toMatchObject({ address: "127.0.0.1" });
+    await srv.close();
+  });
+
+  it("CORS：ACAO 仅回显壳 origin 白名单；恶意 Origin 无任何 CORS 头；静态资源不带", async () => {
+    const dir = await mkdtempStatic("<html>x</html>");
+    const srv = await startUiServer({ staticDir: dir, port: 0 });
+    type Res = {
+      status: number;
+      acao?: string;
+      vary?: string;
+      methods?: string;
+    };
+    const request = (path: string, method: string, headers: Record<string, string>) => {
+      const { promise, resolve } = Promise.withResolvers<Res>();
+      const req = httpRequest(
+        { host: "127.0.0.1", port: srv.port, path, method, headers },
+        (res) => {
+          resolve({
+            status: res.statusCode ?? 0,
+            acao: res.headers["access-control-allow-origin"],
+            vary: res.headers.vary,
+            methods: res.headers["access-control-allow-methods"],
+          });
+          res.resume();
+        },
+      );
+      req.end();
+      return promise;
+    };
+    // 壳 origin：ACAO 回显 + Vary: Origin + 预检放行
+    for (const shellOrigin of [
+      "tauri://localhost",
+      "http://tauri.localhost",
+      "https://tauri.localhost",
+    ]) {
+      const r = await request("/api/health", "GET", { origin: shellOrigin });
+      expect(r.acao).toBe(shellOrigin);
+      expect(r.vary).toBe("Origin");
+      const p = await request("/api/projects", "OPTIONS", {
+        origin: shellOrigin,
+        "access-control-request-method": "POST",
+      });
+      expect(p.status).toBe(204);
+      expect(p.acao).toBe(shellOrigin);
+      expect(p.methods).toContain("POST");
+    }
+    // 恶意 origin：无 ACAO（浏览器默认拦截），预检仍 204 但不带放行头
+    const evil = await request("/api/health", "GET", { origin: "https://evil.example" });
+    expect(evil.acao).toBeUndefined();
+    const evilPreflight = await request("/api/projects", "OPTIONS", {
+      origin: "https://evil.example",
+      "access-control-request-method": "POST",
+    });
+    expect(evilPreflight.status).toBe(204);
+    expect(evilPreflight.acao).toBeUndefined();
+    expect(evilPreflight.methods).toBeUndefined();
+    // 无 Origin（同源/Rust 客户端）：无 CORS 头，正常 200
+    const plain = await request("/api/health", "GET", {});
+    expect(plain.status).toBe(200);
+    expect(plain.acao).toBeUndefined();
+    // 静态资源：永不带 CORS 头
+    const html = await request("/", "GET", { origin: "tauri://localhost" });
+    expect(html.acao).toBeUndefined();
+    await srv.close();
+  });
+
+  it("静态文件按扩展名给 MIME；未知路径 404", async () => {
+    const dir = await mkdtempStatic("<html>i</html>", { "app.js": "console.log(1)" });
+    const srv = await startUiServer({ staticDir: dir, port: 0 });
+    const js = await fetch(`http://127.0.0.1:${srv.port}/app.js`);
+    expect(js.status).toBe(200);
+    // MIME 按扩展名给出；nosniff 是叠加的安全头而非替换 content-type
+    expect(js.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+    // 目录落 index.html：html MIME 必须映射（误删会变 application/octet-stream → 浏览器下载）
+    const html = await fetch(`http://127.0.0.1:${srv.port}/`);
+    expect(html.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(js.headers.get("x-content-type-options")).toBe("nosniff");
+    const miss = await fetch(`http://127.0.0.1:${srv.port}/nope.txt`);
+    expect(miss.status).toBe(404);
+    await srv.close();
+  });
+
+  it("POST body >1MiB → 413 并中止读取", async () => {
+    const dir = await mkdtempStatic("<html>x</html>");
+    const registry = new ProjectRegistry(join(dir, "projects.json"));
+    const srv = await startUiServer({ staticDir: dir, port: 0, registry });
+    const { port } = srv;
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
+    const req = httpRequest(
+      { host: "127.0.0.1", port, path: "/api/projects", method: "POST" },
+      (res) => {
+        res.resume();
+        res.on("end", () => resolve(res.statusCode ?? 0));
+      },
+    );
+    req.on("error", (err: NodeJS.ErrnoException) => {
+      // 服务端中止读取后客户端写侧可能先见 EPIPE/ECONNRESET——响应已到达即视为成功
+      if (err.code === "EPIPE" || err.code === "ECONNRESET") resolve(413);
+      else reject(err);
+    });
+    req.write("x".repeat(2 * 1024 * 1024));
+    req.end();
+    expect(await promise).toBe(413);
+    await srv.close();
+  });
+
+  it("close 后端口不再服务", async () => {
+    const dir = await mkdtempStatic("<html>c</html>");
+    const srv = await startUiServer({ staticDir: dir, port: 0 });
+    const { port } = srv;
+    await srv.close();
+    await expect(fetch(`http://127.0.0.1:${port}/api/health`)).rejects.toThrow();
+  });
+});
+
+// fetch 会先归一化点段，测不到服务端守卫——用 http.request 发原始 path
+async function rawGet(port: number, path: string): Promise<number> {
+  return new Promise((resolveGet, rejectGet) => {
+    const req = httpRequest({ host: "127.0.0.1", port, path }, (res) => {
+      res.resume();
+      res.on("end", () => resolveGet(res.statusCode ?? 0));
+    });
+    req.on("error", rejectGet);
+    req.end();
+  });
+}
+
+async function rawDelete(port: number, path: string): Promise<number> {
+  return new Promise((resolveDelete, rejectDelete) => {
+    const req = httpRequest({ host: "127.0.0.1", port, path, method: "DELETE" }, (res) => {
+      res.resume();
+      res.on("end", () => resolveDelete(res.statusCode ?? 0));
+    });
+    req.on("error", rejectDelete);
+    req.end();
+  });
+}
+
+describe("路径穿越守卫（原始 path）", () => {
+  it.each([["/%2e%2e/%2e%2e/etc/passwd"], ["/foo/..%5c..%5c/etc/passwd"], ["//etc/passwd"]])(
+    "%s → 404",
+    async (path) => {
+      const dir = await mkdtempStatic("<html>t</html>");
+      const srv = await startUiServer({ staticDir: dir, port: 0 });
+      expect(await rawGet(srv.port, path)).toBe(404);
+      await srv.close();
+    },
+  );
+
+  it("畸形百分号序列 /%zz → 404（非 500）", async () => {
+    const dir = await mkdtempStatic("<html>m</html>");
+    const srv = await startUiServer({ staticDir: dir, port: 0 });
+    expect(await rawGet(srv.port, "/%zz")).toBe(404);
+    await srv.close();
+  });
+
+  // 哨兵文件回归：staticRoot 外层放 secret.txt，反斜杠逃逸必须被 `..` 守卫拦下。
+  // 若移除守卫，resolve 会把 /..\secret.txt 归一化到父目录 → 200 泄漏（实证会变红）。
+  it("哨兵文件：/..%5csecret.txt 逃逸 staticRoot → 404", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "ui-server-sentinel-"));
+    tmpDirs.push(parent);
+    await writeFile(join(parent, "secret.txt"), "top-secret", "utf8");
+    const dir = join(parent, "static");
+    await mkdir(dir);
+    await writeFile(join(dir, "index.html"), "<html>s</html>", "utf8");
+    const srv = await startUiServer({ staticDir: dir, port: 0 });
+    expect(await rawGet(srv.port, "/..%5csecret.txt")).toBe(404);
+    await srv.close();
+  });
+});
+
+describe("/api/projects REST 路由", () => {
+  it("POST 合法工程目录 200；GET 列表；DELETE 移除", async () => {
+    const staticDir = await mkdtempStatic("<html>p</html>");
+    const storeDir = await mkdtemp(join(tmpdir(), "ui-server-store-"));
+    tmpDirs.push(storeDir);
+    const projDir = join(storeDir, "my-app");
+    await mkdir(projDir);
+    await writeFile(join(projDir, "applift.config.ts"), "export default {}", "utf8");
+    // 工程级 applift（指 repo dist）：validate 走检索链时工程命中优先——不依赖开发机全局安装版本
+    //（全局可能是旧版 0.7.x，validate 行为不同 → 400），同时覆盖「工程 > 全局」链序
+    const projBin = join(projDir, "node_modules", ".bin");
+    await mkdir(projBin, { recursive: true });
+    const repoBin = fileURLToPath(new URL("../../../packages/cli/dist/bin.mjs", import.meta.url));
+    await symlink(repoBin, join(projBin, "applift"));
+    const srv = await startUiServer({
+      staticDir,
+      registry: new ProjectRegistry(join(storeDir, "projects.json")),
+    });
+    const base = `http://127.0.0.1:${srv.port}`;
+
+    const added = await fetch(`${base}/api/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: projDir }),
+    });
+    expect(added.status).toBe(200);
+    const addedBody = (await added.json()) as { ok: boolean; project: ProjectEntry };
+    expect(addedBody.ok).toBe(true);
+    expect(addedBody.project.name).toBe("my-app");
+
+    const list = await fetch(`${base}/api/projects`).then((r) => r.json());
+    expect(list).toMatchObject({ ok: true, projects: [{ id: addedBody.project.id }] });
+
+    const removed = await fetch(`${base}/api/projects/${addedBody.project.id}`, {
+      method: "DELETE",
+    });
+    expect(removed.status).toBe(200);
+    const afterDelete = await fetch(`${base}/api/projects`).then((r) => r.json());
+    expect(afterDelete).toMatchObject({ projects: [] });
+    await srv.close();
+  });
+
+  it("POST 空目录 400 带 error 与 report", async () => {
+    const staticDir = await mkdtempStatic("<html>e</html>");
+    const emptyDir = await mkdtemp(join(tmpdir(), "ui-server-empty-"));
+    tmpDirs.push(emptyDir);
+    const srv = await startUiServer({
+      staticDir,
+      registry: new ProjectRegistry(join(emptyDir, "..", "store", "projects.json")),
+    });
+    const res = await fetch(`http://127.0.0.1:${srv.port}/api/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: emptyDir }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { ok: boolean; error: string; report: { ok: boolean } };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBeTruthy();
+    expect(body.report.ok).toBe(false);
+    await srv.close();
+  });
+
+  it("POST 缺 path 400；DELETE 未知 id 404", async () => {
+    const staticDir = await mkdtempStatic("<html>v</html>");
+    const storeDir = await mkdtemp(join(tmpdir(), "ui-server-store2-"));
+    tmpDirs.push(storeDir);
+    const srv = await startUiServer({
+      staticDir,
+      registry: new ProjectRegistry(join(storeDir, "projects.json")),
+    });
+    const base = `http://127.0.0.1:${srv.port}`;
+    const bad = await fetch(`${base}/api/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(bad.status).toBe(400);
+    const miss = await fetch(`${base}/api/projects/none`, { method: "DELETE" });
+    expect(miss.status).toBe(404);
+    await srv.close();
+  });
+
+  it("POST 非字符串 path → 400（非 500）；DELETE 畸形百分号编码 → 404（非 500）", async () => {
+    const staticDir = await mkdtempStatic("<html>x</html>");
+    const storeDir = await mkdtemp(join(tmpdir(), "ui-server-store3-"));
+    tmpDirs.push(storeDir);
+    const srv = await startUiServer({
+      staticDir,
+      registry: new ProjectRegistry(join(storeDir, "projects.json")),
+    });
+    const base = `http://127.0.0.1:${srv.port}`;
+
+    const badType = await fetch(`${base}/api/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: 123 }),
+    });
+    expect(badType.status).toBe(400);
+
+    expect(await rawDelete(srv.port, "/api/projects/%zz")).toBe(404);
+    await srv.close();
+  });
+});
+
+describe("cliBinPath（C-1 发布布局 bin 定位）", () => {
+  const prev = process.env.APPLIFT_CLI_BIN;
+  const restore = (): void => {
+    if (prev === undefined) delete process.env.APPLIFT_CLI_BIN;
+    else process.env.APPLIFT_CLI_BIN = prev;
+  };
+
+  it("APPLIFT_CLI_BIN 存在时优先（`applift ui` spawn server 时注入真实 bin 绝对路径）", () => {
+    process.env.APPLIFT_CLI_BIN = "/npm/lib/node_modules/@applift/cli/dist/bin.mjs";
+    expect(cliBinPath()).toBe("/npm/lib/node_modules/@applift/cli/dist/bin.mjs");
+    restore();
+  });
+
+  it("env 缺失回退仓库相对路径（开发布局）；空白 env 视同缺失", () => {
+    delete process.env.APPLIFT_CLI_BIN;
+    expect(cliBinPath()).toMatch(/packages[\\/]cli[\\/]dist[\\/]bin\.mjs$/);
+    process.env.APPLIFT_CLI_BIN = "   ";
+    expect(cliBinPath()).toMatch(/packages[\\/]cli[\\/]dist[\\/]bin\.mjs$/);
+    restore();
+  });
+});
+
+describe("validateBin（T5 打包壳：validate 走检索链）", () => {
+  const prev = process.env.APPLIFT_CLI_BIN;
+  const restore = (): void => {
+    if (prev === undefined) delete process.env.APPLIFT_CLI_BIN;
+    else process.env.APPLIFT_CLI_BIN = prev;
+  };
+  const projDir = join(tmpdir(), `ui-server-validate-bin-${process.pid}`);
+
+  afterAll(() => {
+    rmSync(projDir, { recursive: true, force: true });
+  });
+
+  it("工程 node_modules/.bin/applift 存在 → 单元素 bin（直 spawn shim）", () => {
+    delete process.env.APPLIFT_CLI_BIN;
+    mkdirSync(join(projDir, "node_modules", ".bin"), { recursive: true });
+    writeFileSync(join(projDir, "node_modules", ".bin", "applift"), "#!/bin/sh\n");
+    expect(validateBin(projDir)).toEqual([join(projDir, "node_modules", ".bin", "applift")]);
+  });
+
+  it("env 仍最高优先（applift ui 注入时短路工程命中）", () => {
+    process.env.APPLIFT_CLI_BIN = "/npm/lib/node_modules/@applift/cli/dist/bin.mjs";
+    expect(validateBin(projDir)).toEqual([
+      process.execPath,
+      "/npm/lib/node_modules/@applift/cli/dist/bin.mjs",
+    ]);
+    restore();
+  });
+
+  it("全缺（工程无 + 无全局 + 无 env）→ 回落仓库 dist（开发布局兜底）", () => {
+    delete process.env.APPLIFT_CLI_BIN;
+    const bin = validateBin(join(projDir, "no-such-subdir"));
+    // 开发机可能装有全局 applift：有全局时命中全局 shim（单元素），否则回落仓库 dist（双元素）
+    if (bin.length === 1) expect(typeof bin[0]).toBe("string");
+    else expect(bin[1]).toMatch(/packages[\\/]cli[\\/]dist[\\/]bin\.mjs$/);
+  });
+});
+
+describe("validateProject 旧版 CLI 降级（F6：工程内 <0.13 无 validate / shim 挂起）", () => {
+  const prev = process.env.APPLIFT_CLI_BIN;
+  const restore = (): void => {
+    if (prev === undefined) delete process.env.APPLIFT_CLI_BIN;
+    else process.env.APPLIFT_CLI_BIN = prev;
+  };
+  afterAll(restore);
+
+  /** 旧版 CLI 桩：exit 1 + commander unknown command 文案 */
+  async function writeOldCliStub(dir: string): Promise<string> {
+    const stub = join(dir, "old-cli.mjs");
+    await writeFile(
+      stub,
+      "process.stderr.write(\"error: unknown command 'validate'\\n\"); process.exit(1);\n",
+      "utf8",
+    );
+    return stub;
+  }
+
+  it("unknown command 'validate' → 配置探测降级：有 config 认工程 ok:true", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ui-server-old-cli-"));
+    tmpDirs.push(dir);
+    await writeFile(join(dir, "applift.config.ts"), "export default {}", "utf8");
+    process.env.APPLIFT_CLI_BIN = await writeOldCliStub(dir);
+    const report = await validateProject(dir);
+    expect(report.ok).toBe(true);
+  });
+
+  it("降级后无配置文件 → ok:false（不无条件放行）", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ui-server-no-config-"));
+    tmpDirs.push(dir);
+    process.env.APPLIFT_CLI_BIN = await writeOldCliStub(dir);
+    const report = await validateProject(dir);
+    expect(report.ok).toBe(false);
+  });
+
+  it("命令挂起超时（GUI 子进程环境 shim 形态）→ 同样降级 config 探测", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ui-server-hang-cli-"));
+    tmpDirs.push(dir);
+    await writeFile(join(dir, "applift.config.ts"), "export default {}", "utf8");
+    const stub = join(dir, "hang-cli.mjs");
+    await writeFile(stub, "setInterval(() => {}, 1000);\n", "utf8");
+    process.env.APPLIFT_CLI_BIN = stub;
+    const t0 = Date.now();
+    // 注入 3s 短超时：确定性触发降级分支（免真实 20s 等待；窗口留足高负载下 stub 冷启）
+    const report = await validateProject(dir, { timeoutMs: 3000 });
+    expect(report.ok).toBe(true); // 超时 → config 探测命中
+    expect(Date.now() - t0).toBeLessThan(10_000); // 未走满默认 20s 窗口
+  }, 15_000);
+
+  it("CLI 存在但执行崩溃（exit 3 非 unknown command）→ 不降级，ok:false", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ui-server-crash-cli-"));
+    tmpDirs.push(dir);
+    await writeFile(join(dir, "applift.config.ts"), "export default {}", "utf8");
+    const stub = join(dir, "crash-cli.mjs");
+    await writeFile(stub, 'process.stderr.write("boom\\n"); process.exit(3);\n', "utf8");
+    process.env.APPLIFT_CLI_BIN = stub;
+    const report = await validateProject(dir);
+    expect(report.ok).toBe(false);
+    expect(report.error).toContain("boom");
+  });
+
+  it("exit 0 但输出畸形（非 JSON）→ 不降级，ok:false", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ui-server-badout-"));
+    tmpDirs.push(dir);
+    await writeFile(join(dir, "applift.config.ts"), "export default {}", "utf8");
+    const stub = join(dir, "garbage-cli.mjs");
+    await writeFile(stub, "console.log('not json');\n", "utf8");
+    process.env.APPLIFT_CLI_BIN = stub;
+    const report = await validateProject(dir);
+    expect(report.ok).toBe(false);
+    expect(report.error).toContain("无法解析");
+  });
+});
+
+describe("/api/projects Host 校验（I-3）", () => {
+  it("非 GET 方法外域 Host → 403；GET 不受影响", async () => {
+    const staticDir = await mkdtempStatic("<html>h</html>");
+    const storeDir = await mkdtemp(join(tmpdir(), "ui-server-host-"));
+    tmpDirs.push(storeDir);
+    const srv = await startUiServer({
+      staticDir,
+      registry: new ProjectRegistry(join(storeDir, "projects.json")),
+    });
+
+    // node:http 原生请求伪造 Host（fetch 按 spec 静默丢弃 Host 禁改头）
+    const raw = (method: string, path: string, host: string): Promise<number> => {
+      const { promise, resolve } = Promise.withResolvers<number>();
+      const req = httpRequest(
+        {
+          host: "127.0.0.1",
+          port: srv.port,
+          path,
+          method,
+          headers: { host, "content-type": "application/json" },
+        },
+        (r) => resolve(r.statusCode ?? 0),
+      );
+      req.on("error", () => resolve(0));
+      req.end(method === "POST" ? JSON.stringify({}) : undefined);
+      return promise;
+    };
+
+    expect(await raw("POST", "/api/projects", "evil.example")).toBe(403);
+    expect(await raw("DELETE", "/api/projects/x", "evil.example")).toBe(403);
+    // GET 只读不受限（外域 Host 也放行——无副作用）
+    expect(await raw("GET", "/api/projects", "evil.example")).toBe(200);
+    // 本机 Host 写操作放行（过了 Host 关后按正常语义校验 body）
+    expect(await raw("POST", "/api/projects", "127.0.0.1")).toBe(400); // path 缺失 → 400（已过 Host 关）
+    await srv.close();
+  });
+});

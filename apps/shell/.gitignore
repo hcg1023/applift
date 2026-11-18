@@ -1,0 +1,5 @@
+node_modules/
+src-tauri/target/
+src-tauri/gen/
+# 打包资源装配目录（prepare-server-bundle.mjs 每次构建全量重建）
+src-tauri/resources/
