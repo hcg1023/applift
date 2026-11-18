@@ -47,7 +47,8 @@ html {
   font-size: 16px;
 }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", sans-serif;
   background: var(--bg);
   color: var(--label);
   margin: 0;

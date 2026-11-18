@@ -220,7 +220,8 @@ export default function ProjectPage({ id }: { id: string }) {
         <div className="hist-empty">加载中…</div>
       ) : history.length === 0 ? (
         <div className="hist-empty">
-          本项目还没有 applift 发版记录（用 applift 发的版才进历史；商店后台手动发的版看上方渠道状态）。
+          本项目还没有 applift 发版记录（用 applift
+          发的版才进历史；商店后台手动发的版看上方渠道状态）。
         </div>
       ) : (
         <div className="hist-list" id="historyList">

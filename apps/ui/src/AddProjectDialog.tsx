@@ -94,69 +94,69 @@ export default function AddProjectDialog({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <div className="dlg-body">
-                {rootsError !== null ? (
-                  <div className="state-box" id="rootsError">
-                    <div>起始根读取失败：{rootsError}</div>
-                    <button className="btn btn-sec" onClick={() => setRootsRetry((n) => n + 1)}>
-                      重试
-                    </button>
-                  </div>
-                ) : (
-                  <div className="fs-roots" id="fsRoots">
-                    {roots.map((r) => (
-                      <button
-                        key={r.path}
-                        className={`seg${r.path === dir ? " active" : ""}`}
-                        onClick={() => setDir(r.path)}
-                      >
-                        {r.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <Crumbs dir={dir} onPick={setDir} />
-                <div className="fs-list" id="fsList">
-                  {listError !== null ? (
-                    <div className="state-box">
-                      <div>目录读取失败：{listError}</div>
-                      <button className="btn btn-sec" onClick={() => setListRetry((n) => n + 1)}>
-                        重试
-                      </button>
-                    </div>
-                  ) : entries === null ? (
-                    <div className="state-box">
-                      <div className="spin" />
-                      读取目录…
-                    </div>
-                  ) : entries.length === 0 ? (
-                    <div className="state-box">此目录下没有子目录</div>
-                  ) : (
-                    entries.map((e) => (
-                      <div
-                        key={e.path}
-                        className={`fs-row${e.hasConfig ? " proj" : ""}`}
-                        data-name={e.name}
-                      >
-                        <button className="fs-name" onClick={() => setDir(e.path)} title={e.path}>
-                          📁 {e.name}
-                        </button>
-                        {e.hasConfig ? (
-                          <>
-                            <span className="fs-badge">applift 工程</span>
-                            <button
-                              className="btn btn-sec fs-pick"
-                              data-pick={e.path}
-                              disabled={adding}
-                              onClick={() => void add(e.path)}
-                            >
-                              选择
-                            </button>
-                          </>
-                        ) : null}
-                      </div>
-                    ))
-                  )}
+          {rootsError !== null ? (
+            <div className="state-box" id="rootsError">
+              <div>起始根读取失败：{rootsError}</div>
+              <button className="btn btn-sec" onClick={() => setRootsRetry((n) => n + 1)}>
+                重试
+              </button>
+            </div>
+          ) : (
+            <div className="fs-roots" id="fsRoots">
+              {roots.map((r) => (
+                <button
+                  key={r.path}
+                  className={`seg${r.path === dir ? " active" : ""}`}
+                  onClick={() => setDir(r.path)}
+                >
+                  {r.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <Crumbs dir={dir} onPick={setDir} />
+          <div className="fs-list" id="fsList">
+            {listError !== null ? (
+              <div className="state-box">
+                <div>目录读取失败：{listError}</div>
+                <button className="btn btn-sec" onClick={() => setListRetry((n) => n + 1)}>
+                  重试
+                </button>
               </div>
+            ) : entries === null ? (
+              <div className="state-box">
+                <div className="spin" />
+                读取目录…
+              </div>
+            ) : entries.length === 0 ? (
+              <div className="state-box">此目录下没有子目录</div>
+            ) : (
+              entries.map((e) => (
+                <div
+                  key={e.path}
+                  className={`fs-row${e.hasConfig ? " proj" : ""}`}
+                  data-name={e.name}
+                >
+                  <button className="fs-name" onClick={() => setDir(e.path)} title={e.path}>
+                    📁 {e.name}
+                  </button>
+                  {e.hasConfig ? (
+                    <>
+                      <span className="fs-badge">applift 工程</span>
+                      <button
+                        className="btn btn-sec fs-pick"
+                        data-pick={e.path}
+                        disabled={adding}
+                        onClick={() => void add(e.path)}
+                      >
+                        选择
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              ))
+            )}
+          </div>
         </div>
         {avail !== null ? (
           <div className="dlg-install" id="installHint">

@@ -148,7 +148,12 @@ describe("Settings 轮询 clamp", () => {
 });
 
 describe("AddProjectDialog 目录浏览器（webui）", () => {
-  const HOST = { notify: vi.fn(), pickDirectory: vi.fn(async () => null), setBadge: vi.fn(), isWindowVisible: () => true };
+  const HOST = {
+    notify: vi.fn(),
+    pickDirectory: vi.fn(async () => null),
+    setBadge: vi.fn(),
+    isWindowVisible: () => true,
+  };
 
   function fsClient(
     over: Partial<Record<"fsRoots" | "fsList" | "addProject" | "availability", unknown>> = {},
@@ -211,11 +216,15 @@ describe("AddProjectDialog 目录浏览器（webui）", () => {
     expect(document.querySelector("#addProjectDlg")).not.toBeNull();
     toastEl.remove();
   });
-
 });
 
 describe("AddProjectDialog 加固（错误态/重试/竞态）", () => {
-  const HOST = { notify: vi.fn(), pickDirectory: vi.fn(async () => null), setBadge: vi.fn(), isWindowVisible: () => true };
+  const HOST = {
+    notify: vi.fn(),
+    pickDirectory: vi.fn(async () => null),
+    setBadge: vi.fn(),
+    isWindowVisible: () => true,
+  };
 
   it("fsList 失败 → 错误态 + 重试再拉", async () => {
     const client = {
@@ -270,7 +279,12 @@ describe("AddProjectDialog 加固（错误态/重试/竞态）", () => {
 });
 
 describe("引导安装块（InstallBlock 三态 + 添加项目联动）", () => {
-  const HOST = { notify: vi.fn(), pickDirectory: vi.fn(async () => null), setBadge: vi.fn(), isWindowVisible: () => true };
+  const HOST = {
+    notify: vi.fn(),
+    pickDirectory: vi.fn(async () => null),
+    setBadge: vi.fn(),
+    isWindowVisible: () => true,
+  };
 
   /** 可控安装桩客户端：installApplift 返回固定 taskId，emitTask/emitEnd 手推事件 */
   function installClient(extra: Record<string, unknown> = {}) {

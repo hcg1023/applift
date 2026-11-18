@@ -223,104 +223,107 @@ export default function App() {
             <span className="conn-pill" id="connPill" hidden={!off}>
               重连中…
             </span>
-          {(["overview", "release"] as const).map((nav) => (
-            <button
-              key={nav}
-              className={`nav-item${nav === route.page ? " active" : ""}`}
-              data-nav={nav}
-              onClick={() => navigate(`#/${nav}`)}
-            >
-              {NAV_ICONS[nav]}
-              <span className="lbl">{nav === "overview" ? "总览" : "发版"}</span>
-              {nav === "overview" ? (
-                <span className="nav-badge" id="unreadBadge" hidden={unread === 0}>
-                  {unread > 9 ? "9+" : String(unread)}
-                </span>
-              ) : null}
-            </button>
-          ))}
-          <div className="nav-group-label">项目</div>
-          {client.state.projects.map((p) => {
-            const snap = client.state.snapshot(p.id);
-            const counts = snap?.ok === true ? client.state.counts(p.id) : null;
-            const dot =
-              snap === undefined || snap.ok !== true
-                ? "d-off"
-                : counts !== null && counts.err > 0
-                  ? "d-err"
-                  : counts !== null && counts.wait > 0
-                    ? "d-wait"
-                    : counts !== null && counts.ok > 0
-                      ? "d-ok"
-                      : "d-off";
-            return (
+            {(["overview", "release"] as const).map((nav) => (
               <button
-                key={p.id}
-                className={`nav-item nav-proj${route.page === "project" && route.id === p.id ? " active" : ""}`}
-                data-proj-nav={p.id}
-                onClick={() => navigate(`#/project/${encodeURIComponent(p.id)}`)}
-                title={p.path}
+                key={nav}
+                className={`nav-item${nav === route.page ? " active" : ""}`}
+                data-nav={nav}
+                onClick={() => navigate(`#/${nav}`)}
               >
-                <span className={`dot ${dot}`} />
-                <span className="lbl">{p.name}</span>
+                {NAV_ICONS[nav]}
+                <span className="lbl">{nav === "overview" ? "总览" : "发版"}</span>
+                {nav === "overview" ? (
+                  <span className="nav-badge" id="unreadBadge" hidden={unread === 0}>
+                    {unread > 9 ? "9+" : String(unread)}
+                  </span>
+                ) : null}
               </button>
-            );
-          })}
-          <button
-            className="nav-item nav-add"
-            id="navAddProject"
-            onClick={() => {
-              if (isTauriEnv()) {
-                // 与总览 openAdd 同款：系统目录对话框一步直达
-                void (async () => {
-                  const picked = await host.pickDirectory();
-                  if (picked === null) return;
-                  try {
-                    await client.addProject(picked);
-                    toast(`项目已添加：${picked.split("/").pop() ?? picked}`);
-                  } catch (err) {
-                    toast(err instanceof Error ? err.message : String(err));
-                  }
-                })();
-                return;
-              }
-              // webui：跳总览 + 事件信号（已挂载的 Overview 实时响应——无重挂载依赖）
-              navigate("#/overview");
-              window.dispatchEvent(new CustomEvent("applift-ui:add-project"));
-            }}
-          >
-            <span className="nav-add-plus">＋</span>
-            <span className="lbl">添加项目</span>
-          </button>
-          <div className="sidebar-foot">
+            ))}
+            <div className="nav-group-label">项目</div>
+            {client.state.projects.map((p) => {
+              const snap = client.state.snapshot(p.id);
+              const counts = snap?.ok === true ? client.state.counts(p.id) : null;
+              const dot =
+                snap === undefined || snap.ok !== true
+                  ? "d-off"
+                  : counts !== null && counts.err > 0
+                    ? "d-err"
+                    : counts !== null && counts.wait > 0
+                      ? "d-wait"
+                      : counts !== null && counts.ok > 0
+                        ? "d-ok"
+                        : "d-off";
+              return (
+                <button
+                  key={p.id}
+                  className={`nav-item nav-proj${route.page === "project" && route.id === p.id ? " active" : ""}`}
+                  data-proj-nav={p.id}
+                  onClick={() => navigate(`#/project/${encodeURIComponent(p.id)}`)}
+                  title={p.path}
+                >
+                  <span className={`dot ${dot}`} />
+                  <span className="lbl">{p.name}</span>
+                </button>
+              );
+            })}
             <button
-              className="icon-btn"
-              id="themeBtn"
-              title="切换外观"
-              aria-label="切换深浅外观"
-              onClick={() =>
-                setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark")
-              }
+              className="nav-item nav-add"
+              id="navAddProject"
+              onClick={() => {
+                if (isTauriEnv()) {
+                  // 与总览 openAdd 同款：系统目录对话框一步直达
+                  void (async () => {
+                    const picked = await host.pickDirectory();
+                    if (picked === null) return;
+                    try {
+                      await client.addProject(picked);
+                      toast(`项目已添加：${picked.split("/").pop() ?? picked}`);
+                    } catch (err) {
+                      toast(err instanceof Error ? err.message : String(err));
+                    }
+                  })();
+                  return;
+                }
+                // webui：跳总览 + 事件信号（已挂载的 Overview 实时响应——无重挂载依赖）
+                navigate("#/overview");
+                window.dispatchEvent(new CustomEvent("applift-ui:add-project"));
+              }}
             >
-              <SunIcon />
+              <span className="nav-add-plus">＋</span>
+              <span className="lbl">添加项目</span>
             </button>
-            <button
-              className={`icon-btn${route.page === "settings" ? " active" : ""}`}
-              id="settingsBtn"
-              data-nav="settings"
-              title="通用设置"
-              aria-label="通用设置"
-              onClick={() => navigate("#/settings")}
-            >
-              {NAV_ICONS.settings}
-            </button>
-          </div>
+            <div className="sidebar-foot">
+              <button
+                className="icon-btn"
+                id="themeBtn"
+                title="切换外观"
+                aria-label="切换深浅外观"
+                onClick={() =>
+                  setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark")
+                }
+              >
+                <SunIcon />
+              </button>
+              <button
+                className={`icon-btn${route.page === "settings" ? " active" : ""}`}
+                id="settingsBtn"
+                data-nav="settings"
+                title="通用设置"
+                aria-label="通用设置"
+                onClick={() => navigate("#/settings")}
+              >
+                {NAV_ICONS.settings}
+              </button>
+            </div>
           </nav>
           <main className="content" id="content">
             {route.page === "project" ? (
               <ProjectPage key={route.id} id={route.id ?? ""} />
             ) : route.page === "release" ? (
-              <ReleasePage key={route.releaseProjectId ?? "release"} preselectProjectId={route.releaseProjectId} />
+              <ReleasePage
+                key={route.releaseProjectId ?? "release"}
+                preselectProjectId={route.releaseProjectId}
+              />
             ) : route.page === "settings" ? (
               <SettingsPage theme={theme} onThemeChange={setTheme} />
             ) : (

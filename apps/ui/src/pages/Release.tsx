@@ -451,7 +451,10 @@ export default function ReleasePage({ preselectProjectId }: { preselectProjectId
     }
     const first = client.state.projects[0];
     if (first === undefined) return;
-    if (state.form.projectId === "" || client.state.projects.every((p) => p.id !== state.form.projectId)) {
+    if (
+      state.form.projectId === "" ||
+      client.state.projects.every((p) => p.id !== state.form.projectId)
+    ) {
       state.form.projectId = first.id;
       saveForm(state.form);
       force();
